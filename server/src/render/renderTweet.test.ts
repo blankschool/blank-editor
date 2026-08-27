@@ -1,71 +1,72 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { composeEditableTweetPng, composeTweetPng, renderTweetPng } from "./renderTweet.ts";
+import { renderTemplatePng } from "./renderTweet.ts";
 
-async function solidPng(r: number, g: number, b: number, size = 8): Promise<Buffer> {
-  return sharp({ create: { width: size, height: size, channels: 4, background: { r, g, b, alpha: 1 } } })
-    .png()
-    .toBuffer();
+function textOnlyDocument(text: string) {
+  return {
+    active: 0,
+    pages: [{
+      w: 300,
+      h: 100,
+      bg: "#000000",
+      els: [{ type: "text", name: "tweetText", x: 10, y: 10, w: 280, h: 40, text, size: 15 }],
+    }],
+  };
 }
 
-test("composes a PNG containing the minimal tweet card", async () => {
-  const avatar = await solidPng(200, 30, 30);
-  const buf = await composeTweetPng({
-    displayName: "Micael Crasto",
-    handle: "@MicaelCrasto",
-    tweetText: "hello world",
-    avatarBuffer: avatar,
-  });
+const noLayers = { texts: {}, images: {}, hidden: new Set<string>() };
+
+test("renders a text-only document to a PNG with no network calls needed", async () => {
+  const buf = await renderTemplatePng(textOnlyDocument("hello"), noLayers);
   const meta = await sharp(buf).metadata();
   assert.equal(meta.format, "png");
-  assert.equal(meta.width, 566);
-  assert.ok(meta.height && meta.height < 200);
+  assert.equal(meta.width, 300);
+  assert.equal(meta.height, 100);
 });
 
-test("the composited PNG is fully opaque where the avatar circle sits (no transparency leaking through)", async () => {
-  const avatar = await solidPng(200, 30, 30);
-  const buf = await composeTweetPng({
-    displayName: "x",
-    handle: "@x",
-    tweetText: "hi",
-    avatarBuffer: avatar,
-  });
-  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  // Center of the avatar circle: box is (16,16,40,40) -> center (36, 36).
-  const idx = (36 * info.width + 36) * info.channels;
-  assert.equal(data[idx + 3], 255); // alpha channel fully opaque
-});
-
-test("composes the dimensions saved in an editable template document", async () => {
-  const avatar = await solidPng(30, 120, 220);
+test("an image element whose saved src is already a data URI renders without fetching anything", async () => {
+  const tinyPng = await sharp({ create: { width: 2, height: 2, channels: 4, background: { r: 1, g: 2, b: 3, alpha: 1 } } })
+    .png()
+    .toBuffer();
+  const dataUrl = `data:image/png;base64,${tinyPng.toString("base64")}`;
   const document = {
     active: 0,
     pages: [{
-      w: 310,
-      h: 96,
+      w: 100,
+      h: 100,
       bg: "#000000",
-      els: [{ id: "avatar", type: "image", name: "avatar", x: 8, y: 8, w: 32, h: 32, radius: 16 }],
+      els: [{ type: "image", name: "avatar", x: 0, y: 0, w: 40, h: 40, src: dataUrl }],
     }],
   };
-  const png = await composeEditableTweetPng({
-    avatarBuffer: avatar,
-    displayName: "Nome",
-    handle: "@nome",
-    tweetText: "Texto",
-  }, document);
-  const metadata = await sharp(png).metadata();
-  assert.equal(metadata.width, 310);
-  assert.equal(metadata.height, 96);
+  const buf = await renderTemplatePng(document, noLayers);
+  const meta = await sharp(buf).metadata();
+  assert.equal(meta.format, "png");
 });
 
-test("renderTweetPng rejects a private-network avatar URL instead of silently fetching it", async () => {
+test("rejects a request whose image override points at a private address", async () => {
+  const document = {
+    active: 0,
+    pages: [{ w: 100, h: 100, bg: "#000", els: [{ type: "image", name: "avatar", x: 0, y: 0, w: 40, h: 40 }] }],
+  };
   await assert.rejects(() =>
-    renderTweetPng({
-      displayName: "x",
-      handle: "@x",
-      tweetText: "hi",
-      avatarUrl: "http://127.0.0.1:1/x.png",
-    }),
+    renderTemplatePng(document, { texts: {}, images: { avatar: "http://127.0.0.1:1/x.png" }, hidden: new Set() }),
   );
+});
+
+test("does not fetch an image layer that the request hides", async () => {
+  const document = {
+    active: 0,
+    pages: [{
+      w: 100,
+      h: 100,
+      bg: "#000",
+      // A src pointing at a private/unroutable host would make fetchImage throw if it were ever
+      // attempted — this documents that a hidden layer's image is never fetched at all.
+      els: [{ type: "image", name: "avatar", x: 0, y: 0, w: 40, h: 40, src: "http://127.0.0.1:1/x.png" }],
+    }],
+  };
+  const buf = await renderTemplatePng(document, { texts: {}, images: {}, hidden: new Set(["avatar"]) });
+  const meta = await sharp(buf).metadata();
+  assert.equal(meta.format, "png");
 });

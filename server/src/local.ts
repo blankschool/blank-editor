@@ -1,16 +1,93 @@
+import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
+import type { ApiKeySummary, TemplateRow } from "./db.ts";
 
-/** In-memory dependencies for local development; production continues to use Postgres. */
-export function createLocalDeps(apiKey: string, renderTweetPng: AppDeps["renderTweetPng"]): AppDeps {
-  const allowedHash = hashApiKey(apiKey);
+const SEED_TEMPLATE: TemplateRow = {
+  id: "tweet-screenshot",
+  kind: "tweet",
+  name: "Twitter mínimo",
+  document: {
+    name: "Twitter mínimo",
+    active: 0,
+    pages: [{
+      id: "tweet-page",
+      w: 1080,
+      h: 1350,
+      bg: "#000000",
+      els: [
+        { id: "avatar-field", type: "image", name: "avatar", x: 72, y: 140, w: 112, h: 112, radius: 56, src: "https://github.com/github.png" },
+        { id: "displayName-field", type: "text", name: "displayName", x: 204, y: 142, w: 804, h: 48, text: "Micael Crasto", font: "Inter", size: 40, weight: 700, align: "left", lh: 1.25, fill: "#E6E9EA" },
+        { id: "handle-field", type: "text", name: "handle", x: 204, y: 196, w: 804, h: 40, text: "@MicaelCrasto", font: "Inter", size: 34, weight: 400, align: "left", lh: 1.25, fill: "#71757A" },
+        { id: "tweetText-field", type: "text", name: "tweetText", x: 72, y: 308, w: 936, h: 902, text: "Template local funcionando de verdade.", font: "Inter", size: 46, weight: 400, align: "left", lh: 1.45, fill: "#E6E9EA" },
+      ],
+    }],
+  },
+};
+
+interface StoredApiKey extends ApiKeySummary {
+  keyHash: string;
+}
+
+/**
+ * In-memory dependencies for local development: no Postgres, state lives only for the process's
+ * lifetime, seeded with one template so the console has something to open on first run. The
+ * configured `apiKey` always works (for curl/n8n during development) alongside any key created
+ * through the app itself.
+ */
+export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["renderTemplatePng"]): AppDeps {
+  const configuredHash = hashApiKey(apiKey);
+  const templates = new Map<string, TemplateRow>([[SEED_TEMPLATE.id, SEED_TEMPLATE]]);
+  const apiKeys = new Map<string, StoredApiKey>();
+
   return {
-    findApiKeyOwner: async (keyHash) =>
-      keyHash === allowedHash ? { id: "local", name: "local development" } : null,
-    findTemplate: async (id, kind) =>
-      id === "tweet-screenshot" && kind === "tweet"
-        ? { id: "tweet-screenshot", kind: "tweet", name: "Twitter mínimo" }
-        : null,
-    renderTweetPng,
+    findApiKeyOwner: async (keyHash) => {
+      if (keyHash === configuredHash) return { id: "local", name: "local development" };
+      const owner = [...apiKeys.values()].find((k) => k.keyHash === keyHash && !k.revoked);
+      return owner ? { id: owner.id, name: owner.name } : null;
+    },
+
+    findTemplate: async (id) => templates.get(id) ?? null,
+
+    listTemplates: async () =>
+      [...templates.values()]
+        .map((t) => ({ id: t.id, name: t.name, updatedAt: new Date(0).toISOString() }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+
+    createTemplate: async ({ name, document }) => {
+      const row: TemplateRow = { id: randomUUID(), kind: "custom", name, document };
+      templates.set(row.id, row);
+      return row;
+    },
+
+    updateTemplate: async (id, { name, document }) => {
+      const existing = templates.get(id);
+      if (!existing) return null;
+      const updated: TemplateRow = {
+        ...existing,
+        name: name ?? existing.name,
+        document: document !== undefined ? document : existing.document,
+      };
+      templates.set(id, updated);
+      return updated;
+    },
+
+    listApiKeys: async () => [...apiKeys.values()].map(({ keyHash: _keyHash, ...summary }) => summary),
+
+    createApiKey: async (name) => {
+      const id = randomUUID();
+      const secret = `blk_local_${randomUUID().replace(/-/g, "")}`;
+      apiKeys.set(id, { id, name, createdAt: new Date().toISOString(), revoked: false, keyHash: hashApiKey(secret) });
+      return { id, name, secret, createdAt: apiKeys.get(id)!.createdAt };
+    },
+
+    revokeApiKey: async (id) => {
+      const existing = apiKeys.get(id);
+      if (!existing || existing.revoked) return false;
+      apiKeys.set(id, { ...existing, revoked: true });
+      return true;
+    },
+
+    renderTemplatePng,
   };
 }

@@ -2,27 +2,39 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, type AppDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
+import type { TemplateRow } from "./db.ts";
 
 const VALID_KEY = "blk_live_test";
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // just needs to be *a* buffer for these tests
+
+const TPL: TemplateRow = {
+  id: "tpl-1",
+  kind: "tweet",
+  name: "Tweet",
+  document: { active: 0, pages: [{ w: 566, h: 120, bg: "#000", els: [] }] },
+};
 
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
     findApiKeyOwner: async (keyHash) =>
       keyHash === hashApiKey(VALID_KEY) ? { id: "owner-1", name: "test key" } : null,
-    findTemplate: async (id) => (id === "tpl-1" ? { id: "tpl-1", kind: "tweet", name: "Tweet" } : null),
-    renderTweetPng: async () => PNG_BYTES,
+    findTemplate: async (id) => (id === TPL.id ? TPL : null),
+    listTemplates: async () => [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z" }],
+    createTemplate: async ({ name, document }) => ({ id: "new-tpl", kind: "custom", name, document }),
+    updateTemplate: async (id, input) => (id === TPL.id ? { ...TPL, ...input } : null),
+    listApiKeys: async () => [{ id: "key-1", name: "prod", createdAt: "2024-01-01T00:00:00.000Z", revoked: false }],
+    createApiKey: async (name) => ({ id: "new-key", name, secret: "blk_live_generated", createdAt: "2024-01-01T00:00:00.000Z" }),
+    revokeApiKey: async (id) => id === "key-1",
+    renderTemplatePng: async () => PNG_BYTES,
     ...overrides,
   };
 }
 
 const validBody = {
-  template: "tpl-1",
+  template: TPL.id,
   layers: {
     avatar: { image_url: "https://example.com/a.jpg" },
     displayName: { text: "Micael Crasto" },
-    handle: { text: "@MicaelCrasto" },
-    tweetText: { text: "hello" },
   },
 };
 
@@ -33,13 +45,15 @@ test("reports that the local API process is healthy", async () => {
   assert.deepEqual(JSON.parse(res.body), { ok: true });
 });
 
-test("rejects a request with no Authorization header", async () => {
+// --- POST /api/v1/render ----------------------------------------------------
+
+test("rejects a render request with no Authorization header", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "POST", url: "/api/v1/render", payload: validBody });
   assert.equal(res.statusCode, 401);
 });
 
-test("rejects a request with an unknown API key", async () => {
+test("rejects a render request with an unknown API key", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({
     method: "POST",
@@ -61,20 +75,6 @@ test("404s when the template id does not exist", async () => {
   assert.equal(res.statusCode, 404);
 });
 
-test("400s when a required layer is missing", async () => {
-  const app = buildApp(makeDeps());
-  const { avatar, ...layersWithoutAvatar } = validBody.layers;
-  const res = await app.inject({
-    method: "POST",
-    url: "/api/v1/render",
-    headers: { authorization: `Bearer ${VALID_KEY}` },
-    payload: { template: "tpl-1", layers: layersWithoutAvatar },
-  });
-  assert.equal(res.statusCode, 400);
-  const body = JSON.parse(res.body);
-  assert.match(body.error, /avatar/);
-});
-
 test("returns a PNG image on a valid authenticated request", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({
@@ -88,12 +88,12 @@ test("returns a PNG image on a valid authenticated request", async () => {
   assert.deepEqual(res.rawPayload, PNG_BYTES);
 });
 
-test("passes the mapped layer values through to renderTweetPng", async () => {
+test("renders using the template's own stored document and the request's parsed layers", async () => {
   let received: unknown;
   const app = buildApp(
     makeDeps({
-      renderTweetPng: async (input) => {
-        received = input;
+      renderTemplatePng: async (document, layers) => {
+        received = { document, layers };
         return PNG_BYTES;
       },
     }),
@@ -105,29 +105,74 @@ test("passes the mapped layer values through to renderTweetPng", async () => {
     payload: validBody,
   });
   assert.deepEqual(received, {
-    avatarUrl: "https://example.com/a.jpg",
-    displayName: "Micael Crasto",
-    handle: "@MicaelCrasto",
-    tweetText: "hello",
+    document: TPL.document,
+    layers: { texts: { displayName: "Micael Crasto" }, images: { avatar: "https://example.com/a.jpg" }, hidden: new Set() },
   });
 });
 
-test("passes the saved editable document through to the renderer", async () => {
-  const document = { active: 0, pages: [{ w: 566, h: 120, bg: "#000", els: [] }] };
-  let receivedDocument: unknown;
-  const app = buildApp(
-    makeDeps({
-      renderTweetPng: async (_input, editableDocument) => {
-        receivedDocument = editableDocument;
-        return PNG_BYTES;
-      },
-    }),
-  );
-  await app.inject({
-    method: "POST",
-    url: "/api/v1/render",
-    headers: { authorization: `Bearer ${VALID_KEY}` },
-    payload: { ...validBody, document },
-  });
-  assert.deepEqual(receivedDocument, document);
+// --- templates ---------------------------------------------------------------
+
+test("GET /api/v1/templates lists templates", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/templates" });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z" }]);
+});
+
+test("POST /api/v1/templates creates a template and 400s without a document", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "POST", url: "/api/v1/templates", payload: { name: "Novo", document: {} } });
+  assert.equal(ok.statusCode, 201);
+  assert.equal(JSON.parse(ok.body).name, "Novo");
+
+  const missing = await app.inject({ method: "POST", url: "/api/v1/templates", payload: { name: "Novo" } });
+  assert.equal(missing.statusCode, 400);
+});
+
+test("GET /api/v1/templates/:id returns the document, 404s when missing", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}` });
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(JSON.parse(ok.body), { id: TPL.id, name: TPL.name, document: TPL.document });
+
+  const missing = await app.inject({ method: "GET", url: "/api/v1/templates/nope" });
+  assert.equal(missing.statusCode, 404);
+});
+
+test("PUT /api/v1/templates/:id updates, 404s when missing", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "PUT", url: `/api/v1/templates/${TPL.id}`, payload: { name: "Renomeado" } });
+  assert.equal(ok.statusCode, 200);
+
+  const missing = await app.inject({ method: "PUT", url: "/api/v1/templates/nope", payload: { name: "x" } });
+  assert.equal(missing.statusCode, 404);
+});
+
+// --- API keys ------------------------------------------------------------------
+
+test("GET /api/v1/keys lists keys without exposing a secret", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/keys" });
+  const body = JSON.parse(res.body);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].secret, undefined);
+});
+
+test("POST /api/v1/keys creates a key and returns its plaintext secret once, 400s without a name", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "POST", url: "/api/v1/keys", payload: { name: "n8n" } });
+  assert.equal(ok.statusCode, 201);
+  assert.equal(JSON.parse(ok.body).secret, "blk_live_generated");
+
+  const missing = await app.inject({ method: "POST", url: "/api/v1/keys", payload: {} });
+  assert.equal(missing.statusCode, 400);
+});
+
+test("DELETE /api/v1/keys/:id revokes, 404s when already revoked or missing", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "DELETE", url: "/api/v1/keys/key-1" });
+  assert.equal(ok.statusCode, 204);
+
+  const missing = await app.inject({ method: "DELETE", url: "/api/v1/keys/nope" });
+  assert.equal(missing.statusCode, 404);
 });

@@ -1,5 +1,3 @@
-import type { RenderTweetInput } from "./renderTweet.ts";
-
 export interface LayerValue {
   text?: string;
   image_url?: string;
@@ -8,27 +6,28 @@ export interface LayerValue {
 
 export type Layers = Record<string, LayerValue>;
 
-class LayerValidationError extends Error {}
-
-function requireText(layers: Layers, name: string): string {
-  const value = layers[name]?.text;
-  if (!value) throw new LayerValidationError(`missing required layer "${name}" (expected { text: string })`);
-  return value;
+export interface ParsedLayers {
+  texts: Record<string, string>;
+  images: Record<string, string>;
+  hidden: Set<string>;
 }
 
 /**
- * Maps the legacy-compatible `layers` request shape (named layers with `text` / `image_url` / `hide`,
- * matching the BlankCanvas API contract) onto the concrete input the "tweet" template renderer needs.
+ * Splits the request's named `layers` (the legacy-compatible shape: `text` / `image_url` / `hide`
+ * per layer) into the maps the renderer needs. There's no fixed set of required layer names here
+ * — a template document already has default content for every element it declares; a layer only
+ * needs to appear in the request when the caller wants to override or hide it.
  */
-export function mapLayersToTweetInput(layers: Layers): RenderTweetInput {
-  const avatarUrl = layers.avatar?.image_url;
-  if (!avatarUrl) throw new LayerValidationError('missing required layer "avatar" (expected { image_url: string })');
+export function parseLayers(layers: Layers): ParsedLayers {
+  const texts: Record<string, string> = {};
+  const images: Record<string, string> = {};
+  const hidden = new Set<string>();
 
-  const displayName = requireText(layers, "displayName");
-  const handle = requireText(layers, "handle");
-  const tweetText = requireText(layers, "tweetText");
+  for (const [name, value] of Object.entries(layers)) {
+    if (value.text !== undefined) texts[name] = value.text;
+    if (value.image_url !== undefined) images[name] = value.image_url;
+    if (value.hide) hidden.add(name);
+  }
 
-  return { avatarUrl, displayName, handle, tweetText };
+  return { texts, images, hidden };
 }
-
-export { LayerValidationError };

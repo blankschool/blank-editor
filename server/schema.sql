@@ -5,7 +5,9 @@ create table if not exists templates (
   id text primary key,
   kind text not null,
   name text not null,
-  created_at timestamptz not null default now()
+  document jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists api_keys (
@@ -17,7 +19,3 @@ create table if not exists api_keys (
 );
 
 create index if not exists api_keys_key_hash_idx on api_keys (key_hash) where revoked_at is null;
-
-insert into templates (id, kind, name)
-values ('tweet-screenshot', 'tweet', 'Print de tweet')
-on conflict (id) do nothing;

@@ -13,10 +13,10 @@ const body = {
   },
 };
 
-test("local mode exposes the fixed tweet template behind its configured API key", async () => {
-  let received: unknown;
-  const deps = createLocalDeps("blk_local_test", async (input) => {
-    received = input;
+test("local mode exposes the seeded tweet template behind its configured API key", async () => {
+  let receivedDocument: unknown;
+  const deps = createLocalDeps("blk_local_test", async (document) => {
+    receivedDocument = document;
     return Buffer.from("png");
   });
   const app = buildApp(deps);
@@ -29,12 +29,7 @@ test("local mode exposes the fixed tweet template behind its configured API key"
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(received, {
-    avatarUrl: "https://example.com/avatar.png",
-    displayName: "Micael Crasto",
-    handle: "@MicaelCrasto",
-    tweetText: "Local de verdade",
-  });
+  assert.ok(receivedDocument, "the seeded template's document should reach the renderer");
 });
 
 test("local mode rejects any other API key", async () => {
@@ -46,4 +41,50 @@ test("local mode rejects any other API key", async () => {
     payload: body,
   });
   assert.equal(response.statusCode, 401);
+});
+
+test("a key created through the app works for rendering, and stops working once revoked", async () => {
+  const deps = createLocalDeps("blk_local_test", async () => Buffer.from("png"));
+  const app = buildApp(deps);
+
+  const created = await app.inject({ method: "POST", url: "/api/v1/keys", payload: { name: "n8n" } });
+  const { id, secret } = JSON.parse(created.body);
+
+  const rendered = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${secret}` },
+    payload: body,
+  });
+  assert.equal(rendered.statusCode, 200);
+
+  await app.inject({ method: "DELETE", url: `/api/v1/keys/${id}` });
+
+  const afterRevoke = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${secret}` },
+    payload: body,
+  });
+  assert.equal(afterRevoke.statusCode, 401);
+});
+
+test("a template created through the app can be listed, fetched and rendered by its own id", async () => {
+  const deps = createLocalDeps("blk_local_test", async () => Buffer.from("png"));
+  const app = buildApp(deps);
+
+  const document = { active: 0, pages: [{ w: 100, h: 100, bg: "#000", els: [] }] };
+  const created = await app.inject({ method: "POST", url: "/api/v1/templates", payload: { name: "Novo", document } });
+  const { id } = JSON.parse(created.body);
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/templates" });
+  assert.ok(JSON.parse(list.body).some((t: { id: string }) => t.id === id));
+
+  const rendered = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: "Bearer blk_local_test" },
+    payload: { template: id, layers: {} },
+  });
+  assert.equal(rendered.statusCode, 200);
 });

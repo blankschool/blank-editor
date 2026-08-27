@@ -1,7 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { buildApp, type AppDeps } from "./app.ts";
-import { createDb, findApiKeyOwner, findTemplate } from "./db.ts";
+import { hashApiKey } from "./auth.ts";
+import {
+  createDb,
+  createApiKey,
+  createTemplate,
+  findApiKeyOwner,
+  findTemplate,
+  listApiKeys,
+  listTemplates,
+  revokeApiKey,
+  updateTemplate,
+} from "./db.ts";
 import { createLocalDeps } from "./local.ts";
-import { renderTweetPng } from "./render/renderTweet.ts";
+import { renderTemplatePng } from "./render/renderTweet.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -17,11 +29,21 @@ if (DATABASE_URL) {
   const sql = createDb(DATABASE_URL);
   deps = {
     findApiKeyOwner: (keyHash) => findApiKeyOwner(sql, keyHash),
-    findTemplate: (id, kind) => findTemplate(sql, id, kind),
-    renderTweetPng,
+    findTemplate: (id) => findTemplate(sql, id),
+    listTemplates: () => listTemplates(sql),
+    createTemplate: ({ name, document }) => createTemplate(sql, { id: randomUUID(), kind: "custom", name, document }),
+    updateTemplate: (id, input) => updateTemplate(sql, id, input),
+    listApiKeys: () => listApiKeys(sql),
+    createApiKey: async (name) => {
+      const secret = `blk_live_${randomUUID().replace(/-/g, "")}`;
+      const created = await createApiKey(sql, { id: randomUUID(), name, keyHash: hashApiKey(secret) });
+      return { ...created, secret };
+    },
+    revokeApiKey: (id) => revokeApiKey(sql, id),
+    renderTemplatePng,
   };
 } else {
-  deps = createLocalDeps(LOCAL_API_KEY!, renderTweetPng);
+  deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);
 }
 
 const app = buildApp(deps);

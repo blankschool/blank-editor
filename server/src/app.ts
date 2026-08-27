@@ -1,25 +1,32 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
-import { mapLayersToTweetInput, LayerValidationError, type Layers } from "./render/layers.ts";
-import type { RenderTweetInput } from "./render/renderTweet.ts";
-import type { ApiKeyOwner, TemplateRow } from "./db.ts";
+import { parseLayers, type Layers } from "./render/layers.ts";
+import { renderTemplatePng } from "./render/renderTweet.ts";
+import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
 
 export interface AppDeps {
   findApiKeyOwner: (keyHash: string) => Promise<ApiKeyOwner | null>;
-  findTemplate: (id: string, kind: string) => Promise<TemplateRow | null>;
-  renderTweetPng: (input: RenderTweetInput, document?: unknown) => Promise<Buffer>;
+  findTemplate: (id: string) => Promise<TemplateRow | null>;
+  listTemplates: () => Promise<TemplateSummary[]>;
+  createTemplate: (input: { name: string; document: unknown }) => Promise<TemplateRow>;
+  updateTemplate: (id: string, input: { name?: string; document?: unknown }) => Promise<TemplateRow | null>;
+  listApiKeys: () => Promise<ApiKeySummary[]>;
+  createApiKey: (name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
+  revokeApiKey: (id: string) => Promise<boolean>;
+  renderTemplatePng: typeof renderTemplatePng;
 }
 
 interface RenderBody {
   template?: string;
   layers?: Layers;
-  document?: unknown;
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify();
 
   app.get("/health", async () => ({ ok: true }));
+
+  // --- rendering ---------------------------------------------------------
 
   app.post<{ Body: RenderBody }>("/api/v1/render", async (request, reply) => {
     const token = extractBearerToken(request.headers.authorization);
@@ -28,31 +35,69 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const owner = await deps.findApiKeyOwner(hashApiKey(token));
     if (!owner) return reply.code(401).send({ error: "invalid or revoked API key" });
 
-    const { template, layers, document } = request.body ?? {};
+    const { template, layers } = request.body ?? {};
     if (!template) return reply.code(400).send({ error: "missing required field: template" });
 
-    const row = await deps.findTemplate(template, "tweet");
+    const row = await deps.findTemplate(template);
     if (!row) return reply.code(404).send({ error: `template not found: ${template}` });
-
-    let input: RenderTweetInput;
-    try {
-      input = mapLayersToTweetInput(layers ?? {});
-    } catch (err) {
-      if (err instanceof LayerValidationError) return reply.code(400).send({ error: err.message });
-      throw err;
-    }
 
     let png: Buffer;
     try {
-      png = await deps.renderTweetPng(input, document);
+      png = await deps.renderTemplatePng(row.document, parseLayers(layers ?? {}));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Anything renderTweetPng throws today (SSRF guard, unreachable/oversized image) is a bad-input
-      // problem, not a server fault — surface it as 400 rather than a generic 500.
+      // Anything renderTemplatePng throws today (SSRF guard, bad document, unreachable/oversized
+      // image) is a bad-input problem, not a server fault — surface it as 400, not a generic 500.
       return reply.code(400).send({ error: message });
     }
 
     return reply.header("content-type", "image/png").send(png);
+  });
+
+  // --- templates -----------------------------------------------------------
+  // No auth on these yet — they're reached only through the app's own console, which is itself
+  // unauthenticated for now (single local user). This needs a real session check before this
+  // service is exposed publicly.
+
+  app.get("/api/v1/templates", async () => deps.listTemplates());
+
+  app.post<{ Body: { name?: string; document?: unknown } }>("/api/v1/templates", async (request, reply) => {
+    const { name, document } = request.body ?? {};
+    if (!name || !document) return reply.code(400).send({ error: "missing required field: name, document" });
+    const row = await deps.createTemplate({ name, document });
+    return reply.code(201).send({ id: row.id, name: row.name });
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/templates/:id", async (request, reply) => {
+    const row = await deps.findTemplate(request.params.id);
+    if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    return { id: row.id, name: row.name, document: row.document };
+  });
+
+  app.put<{ Params: { id: string }; Body: { name?: string; document?: unknown } }>(
+    "/api/v1/templates/:id",
+    async (request, reply) => {
+      const row = await deps.updateTemplate(request.params.id, request.body ?? {});
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      return { id: row.id, name: row.name };
+    },
+  );
+
+  // --- API keys --------------------------------------------------------------
+
+  app.get("/api/v1/keys", async () => deps.listApiKeys());
+
+  app.post<{ Body: { name?: string } }>("/api/v1/keys", async (request, reply) => {
+    const name = request.body?.name;
+    if (!name) return reply.code(400).send({ error: "missing required field: name" });
+    const created = await deps.createApiKey(name);
+    return reply.code(201).send(created);
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/v1/keys/:id", async (request, reply) => {
+    const revoked = await deps.revokeApiKey(request.params.id);
+    if (!revoked) return reply.code(404).send({ error: `key not found or already revoked: ${request.params.id}` });
+    return reply.code(204).send();
   });
 
   return app;
