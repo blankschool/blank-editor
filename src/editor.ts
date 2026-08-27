@@ -1473,18 +1473,28 @@ function renderAll() {
 // mountEditor() runs once, the first time the router activates this route.
 let editorMounted = false;
 let pendingDocument = false;
+// Setting location.hash below fires hashchange, which both the router and this module's own
+// listener react to — that's the point (it's what makes the route actually switch), but it means
+// a single click can end up calling openTemplateById for the same id two or three times over.
+// Harmless (they'd all converge on the same result) but wasteful, so skip re-entry.
+let loadingTemplateId: string | null = null;
 
 /** Opens a template by id, preferring the server's copy over the local cache — the server is the source of truth once a template exists there. */
 export async function openTemplateById(id: string) {
+  if (loadingTemplateId === id) return;
+  loadingTemplateId = id;
   // Encodes which template is open in the URL itself — without this, reloading (or opening a
   // shared link) has no way to know which document to restore and falls back to a blank one.
-  if (location.hash !== `#/editor/${encodeURIComponent(id)}`) {
-    history.replaceState(null, "", `#/editor/${encodeURIComponent(id)}`);
-  }
+  // A real hash assignment (not history.replaceState) so the top-level router's hashchange
+  // listener actually fires and switches the visible route — otherwise clicking a template from
+  // the console silently updated the URL but left the console on screen until a manual reload.
+  const target = `#/editor/${encodeURIComponent(id)}`;
+  if (location.hash !== target) location.hash = target;
   try {
     openTemplateDocument(await fetchTemplateFromServer(id));
     return;
   } catch { /* offline, or not created on the server yet — fall back to whatever's local */ }
+  finally { if (loadingTemplateId === id) loadingTemplateId = null; }
   const local = loadTemplateLocally(id) ?? (id === TWEET_TEMPLATE_ID ? createTweetTemplateDocument() : null);
   if (local) openTemplateDocument(local);
   else toast("Não foi possível abrir esse template.");

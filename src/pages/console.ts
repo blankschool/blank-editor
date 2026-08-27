@@ -74,7 +74,7 @@ interface State {
   templatesLoaded: boolean;
   jsonDraft: string;
   jsonError: string | null;
-  namePrompt: { kind: "new-template" | "create-key"; title: string; value: string; error: string | null } | null;
+  namePrompt: { kind: "new-template" | "create-key" | "rename-template"; title: string; value: string; error: string | null; id?: string } | null;
   layersLoadedForId: string | null;
   search: string;
   templateMenu: { id: string; name: string; x: number; y: number } | null;
@@ -361,8 +361,8 @@ async function createKey(name: string): Promise<string | null> {
 
 /** Opens the shared name-prompt modal — a real in-app dialog, not window.prompt(), which can be
  * silently blocked (popup/dialog blockers, embedded webviews) with no visible feedback at all. */
-function openNamePrompt(kind: "new-template" | "create-key", title: string) {
-  state.namePrompt = { kind, title, value: "", error: null };
+function openNamePrompt(kind: NonNullable<State["namePrompt"]>["kind"], title: string, opts: { id?: string; value?: string } = {}) {
+  state.namePrompt = { kind, title, value: opts.value ?? "", error: null, id: opts.id };
   render();
 }
 
@@ -370,10 +370,39 @@ async function confirmNamePrompt() {
   const p = state.namePrompt;
   if (!p || !p.value.trim()) return;
   const name = p.value.trim();
-  const error = p.kind === "new-template" ? await createNewTemplate(name) : await createKey(name);
+  let error: string | null;
+  if (p.kind === "new-template") error = await createNewTemplate(name);
+  else if (p.kind === "create-key") error = await createKey(name);
+  else error = await renameTemplate(p.id!, name);
   if (error) { if (state.namePrompt) state.namePrompt.error = error; render(); return; }
   state.namePrompt = null;
   render();
+}
+
+async function renameTemplate(id: string, name: string): Promise<string | null> {
+  const res = await fetch(`/api/v1/templates/${id}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) return "Não foi possível renomear.";
+  state.templatesLoaded = false;
+  await loadTemplates();
+  return null;
+}
+
+async function duplicateTemplate(id: string, name: string) {
+  const got = await fetch(`/api/v1/templates/${id}`);
+  if (!got.ok) return;
+  const { document } = await got.json();
+  const res = await fetch("/api/v1/templates", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: `${name} (cópia)`, document }),
+  });
+  if (!res.ok) return;
+  state.templatesLoaded = false;
+  await loadTemplates();
 }
 
 async function revokeKey(id: string) {
@@ -796,6 +825,8 @@ function renderTemplateMenu(): string {
     <div data-action="close-template-menu" style="position:fixed; inset:0; z-index:35;">
       <div data-stop="1" style="position:absolute; top:${m.y}px; left:${m.x}px; min-width:180px; border-radius:9px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:1px;">
         ${item("ctx-open-playground", "Abrir no playground")}
+        ${item("ctx-rename-template", "Renomear")}
+        ${item("ctx-duplicate-template", "Duplicar")}
         ${item("ctx-copy-id", state.copied === `tpl-${m.id}` ? "ID copiado" : "Copiar ID")}
         ${item("", "Mover", false, true)}
         <div style="height:1px; background:var(--border); margin:4px 0;"></div>
@@ -831,7 +862,7 @@ function renderNamePrompt(): string {
         ${p.error ? `<span style="font-size:12px; color:var(--danger);">${esc(p.error)}</span>` : ""}
         <div style="display:flex; gap:10px;">
           <div data-action="cancel-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text);">Cancelar</div>
-          <div id="confirmNamePromptBtn" data-action="confirm-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; opacity:${p.value.trim() ? "1" : "0.45"};">Criar</div>
+          <div id="confirmNamePromptBtn" data-action="confirm-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; opacity:${p.value.trim() ? "1" : "0.45"};">${p.kind === "rename-template" ? "Renomear" : "Criar"}</div>
         </div>
       </div>
     </div>`;
@@ -855,7 +886,7 @@ function render() {
     ${renderTemplateMenu()}
     ${renderConfirmDialog()}
     ${renderNamePrompt()}`;
-  if (state.namePrompt) document.getElementById("namePromptInput")?.focus();
+  if (state.namePrompt) (document.getElementById("namePromptInput") as HTMLInputElement | null)?.select();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -956,6 +987,18 @@ function bind() {
         state.templateId = m.id;
         loadLayersForTemplate(m.id);
         goToView("playground");
+        break;
+      }
+      case "ctx-rename-template": {
+        const m = state.templateMenu!;
+        state.templateMenu = null;
+        openNamePrompt("rename-template", "Renomear template", { id: m.id, value: m.name });
+        break;
+      }
+      case "ctx-duplicate-template": {
+        const m = state.templateMenu!;
+        state.templateMenu = null;
+        duplicateTemplate(m.id, m.name);
         break;
       }
       case "ctx-copy-id": {
