@@ -32,6 +32,7 @@ const PAGE_SIZES = [
 const TYPE_PT = { rect: "Retângulo", ellipse: "Elipse", triangle: "Triângulo", star: "Estrela", line: "Linha", text: "Texto", image: "Imagem", icon: "Ícone", draw: "Desenho" };
 const PT_ALIGN = { left: "à esquerda", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
 const PALETTE = ["#FCFCFA", "#E3E2DE", "#C4C2BC", "#9B9992", "#6E6C67", "#4A4944", "#2E2D29", "#111111"];
+const STAGE_BG_PRESETS = ["#0A0A09", "#1A1A18", "#2E2D29", "#4A4944", "#6E6C67", "#9B9992", "#C4C2BC", "#E3E2DE"];
 
 /* ============================ state ============================ */
 const blankPage = () => ({ id: uid(), w: 1080, h: 1080, bg: "#111111", els: [] });
@@ -40,6 +41,14 @@ let doc: Doc = SEED;
 let sel: string[] = [];
 let tool = "select";
 let zoom = 1, panX = 0, panY = 0;
+// The workspace behind the page — separate from the page's own "Fundo" fill (that's the
+// artboard's content; this is just the room around it). Remembered per-browser, not per-doc.
+const STAGE_BG_KEY = "blank-editor-stage-bg";
+let stageBg = (() => { try { return localStorage.getItem(STAGE_BG_KEY) || "#0A0A09"; } catch { return "#0A0A09"; } })();
+function applyStageBg() {
+  $("stage").style.background = stageBg;
+  try { localStorage.setItem(STAGE_BG_KEY, stageBg); } catch { /* blocked storage */ }
+}
 let past: string[] = [], future: string[] = [];
 let clipboard = null;
 let editingId = null;
@@ -878,6 +887,10 @@ function renderPanel() {
         <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-bg="${c}" aria-pressed="${P.bg.toLowerCase() === c}" style="background:${c}"></button>`).join("")}</div>
         <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${P.bg}"></div>
       </div>
+      <div class="sec"><h4>Fundo do canvas</h4><p class="phint" style="margin-bottom:8px">A área ao redor da página — não o conteúdo dela.</p>
+        <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${stageBg.toLowerCase() === c}" style="background:${c}"></button>`).join("")}</div>
+        <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg}"></div>
+      </div>
       <div class="sec"><h4>Tamanho</h4>
         <div class="grid2" style="margin-bottom:8px">${PAGE_SIZES.map((s) => `<button class="tile" style="height:46px;font-size:10px" data-size="${s.w}x${s.h}">${s.n}<span class="num" style="color:var(--faint)">${s.w}×${s.h}</span></button>`).join("")}</div>
         <div class="row"><div class="field"><label>L</label><input class="num" id="pgW" value="${P.w}"></div><div class="field"><label>A</label><input class="num" id="pgH" value="${P.h}"></div></div>
@@ -925,6 +938,8 @@ $("panel").addEventListener("click", (ev) => {
   }
   const bg = ev.target.closest("[data-bg]");
   if (bg) { page().bg = bg.dataset.bg; commit(); renderAll(); return; }
+  const sbg = ev.target.closest("[data-stagebg]");
+  if (sbg) { stageBg = sbg.dataset.stagebg; applyStageBg(); renderPanel(); return; }
   const sz = ev.target.closest("[data-size]:not([data-add])");
   if (sz) {
     const [w, h] = sz.dataset.size.split("x").map(Number);
@@ -945,6 +960,7 @@ $("panel").addEventListener("click", (ev) => {
 });
 $("panel").addEventListener("input", (ev) => {
   if (ev.target.id === "bgPick") { page().bg = ev.target.value; renderCanvas(); }
+  if (ev.target.id === "stageBgPick") { stageBg = ev.target.value; applyStageBg(); }
   if (ev.target.id === "pgW" || ev.target.id === "pgH") {
     const w = +$("pgW").value, h = +$("pgH").value;
     if (w > 20 && h > 20) { page().w = w; page().h = h; renderCanvas(); }
@@ -1519,6 +1535,7 @@ export function mountEditor() {
   if (templateIdFromHash()) pendingDocument = true; // syncTemplateFromHash (below) is about to load it
   if (!pendingDocument) loadPersisted();
   syncTemplateFromHash();
+  applyStageBg();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
   renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs();
