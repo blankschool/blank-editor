@@ -1,8 +1,8 @@
 # Blank Editor
 
-Editor de canvas que roda inteiramente no navegador. O build gera **um HTML
-único** e autocontido, publicável como Artifact — sem servidor, sem API, sem
-banco.
+Editor de canvas com uma API opcional de renderização. O frontend continua
+gerando um HTML único; no desenvolvimento local, o servidor transforma o
+template Twitter editado no canvas em PNG.
 
 ## Rodar
 
@@ -12,11 +12,26 @@ npm run dev     # localhost com recarga instantânea
 npm run build   # gera dist/index.html
 ```
 
+Para usar o playground e renderizar o template localmente, abra outro terminal:
+
+```bash
+cd server
+npm install     # uma vez
+npm run dev:local
+```
+
+Depois acesse `http://localhost:5173/#/console`. Em **Templates**, clique em
+**Twitter mínimo** para editar no canvas. Volte ao console, ajuste nome, @,
+texto e foto e clique em **Gerar imagem**. As alterações do canvas são salvas
+no navegador e enviadas junto com o pedido de renderização. A chave local é
+`blk_local_dev`; esse modo não precisa de banco de dados.
+
 | Comando | O que faz |
 | --- | --- |
 | `npm run dev` | servidor de desenvolvimento com hot reload |
 | `npm run build` | checa tipos e gera `dist/index.html` (arquivo único) |
 | `npm run check` | só a checagem de tipos |
+| `npm test` | testa o documento editável do Twitter |
 | `npm run test:fidelity` | compara o render com as referências do Figma |
 | `npm run import:figma` | reconstrói `src/seed.json` a partir de `assets/` |
 
@@ -68,6 +83,16 @@ Figma tem `shadows`, `highlights` e `temperature` sem equivalente em CSS; as
 fotos foram reamostradas para caber no teto de 16MB do Artifact; e o
 antialiasing de texto do navegador difere do Figma. Slides sem foto ficam em
 2,5%; com foto pesada, em ~16%.
+
+## API local
+
+O endpoint `POST http://localhost:8787/api/v1/render` exige
+`Authorization: Bearer blk_local_dev` e devolve o PNG diretamente. O Vite faz
+proxy de `/api` para esse servidor, por isso o playground funciona em
+`localhost:5173`.
+
+O servidor de produção continua aceitando `DATABASE_URL`; `dev:local` usa
+somente a chave e o template em memória.
 
 ## Publicar
 

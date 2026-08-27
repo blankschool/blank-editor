@@ -7,16 +7,19 @@ import type { ApiKeyOwner, TemplateRow } from "./db.ts";
 export interface AppDeps {
   findApiKeyOwner: (keyHash: string) => Promise<ApiKeyOwner | null>;
   findTemplate: (id: string, kind: string) => Promise<TemplateRow | null>;
-  renderTweetPng: (input: RenderTweetInput) => Promise<Buffer>;
+  renderTweetPng: (input: RenderTweetInput, document?: unknown) => Promise<Buffer>;
 }
 
 interface RenderBody {
   template?: string;
   layers?: Layers;
+  document?: unknown;
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify();
+
+  app.get("/health", async () => ({ ok: true }));
 
   app.post<{ Body: RenderBody }>("/api/v1/render", async (request, reply) => {
     const token = extractBearerToken(request.headers.authorization);
@@ -25,7 +28,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const owner = await deps.findApiKeyOwner(hashApiKey(token));
     if (!owner) return reply.code(401).send({ error: "invalid or revoked API key" });
 
-    const { template, layers } = request.body ?? {};
+    const { template, layers, document } = request.body ?? {};
     if (!template) return reply.code(400).send({ error: "missing required field: template" });
 
     const row = await deps.findTemplate(template, "tweet");
@@ -41,7 +44,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
     let png: Buffer;
     try {
-      png = await deps.renderTweetPng(input);
+      png = await deps.renderTweetPng(input, document);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Anything renderTweetPng throws today (SSRF guard, unreachable/oversized image) is a bad-input

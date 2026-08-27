@@ -1,4 +1,5 @@
 import { navigate } from "../router";
+import { currentTweetTemplateDocument, openTweetTemplate } from "../editor";
 
 /**
  * Ported from "Wireframe Sidebar.dc.html". Same focus-preservation rule as
@@ -42,21 +43,24 @@ interface State {
   rendering: boolean;
   rendered: boolean;
   response: string | null;
+  previewUrl: string | null;
   copiedCode: boolean;
   copied: number | null;
   keys: ApiKey[];
 }
 
 const state: State = {
-  view: "templates",
-  template: "Carrossel BR Arena",
+  view: "playground",
+  template: "Twitter mínimo",
   format: "png",
   page: "1",
-  apiKey: "",
+  apiKey: "blk_local_dev",
   scope: "global",
   layers: [
-    { id: 1, type: "text", name: "titulo", value: "" },
-    { id: 2, type: "image", name: "foto", value: "" },
+    { id: 1, type: "image", name: "avatar", value: "https://github.com/github.png" },
+    { id: 2, type: "text", name: "displayName", value: "Micael Crasto" },
+    { id: 3, type: "text", name: "handle", value: "@MicaelCrasto" },
+    { id: 4, type: "text", name: "tweetText", value: "Template local funcionando de verdade." },
   ],
   collapsed: false,
   sort: "Ordem",
@@ -74,6 +78,7 @@ const state: State = {
   rendering: false,
   rendered: false,
   response: null,
+  previewUrl: null,
   copiedCode: false,
   copied: null,
   keys: [
@@ -84,9 +89,7 @@ const state: State = {
 };
 
 const TEMPLATE_IDS: Record<string, string> = {
-  "Carrossel BR Arena": "32b492b2-42c3-44fe-b87a-a756d3c45f58",
-  "Story Promo 9:16": "a71c0dd4-19b8-4c02-9e55-2f0b7c831ee0",
-  "Banner Feed 1:1": "5d8e2f10-77aa-4b39-8c41-be90d6712c34",
+  "Twitter mínimo": "tweet-screenshot",
 };
 
 const IMP_META: Record<string, { placeholder: string; accept: string }> = {
@@ -121,7 +124,6 @@ const TEXT_PLACEHOLDER =
 
 let root: HTMLElement;
 let bound = false;
-let renderTimer: ReturnType<typeof setTimeout> | undefined;
 let copyKeyTimer: ReturnType<typeof setTimeout> | undefined;
 let copyCodeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -132,25 +134,32 @@ function filledLayers(): Layer[] {
   return state.layers.filter((l) => l.value.trim() !== "");
 }
 
+function requestLayers(): Record<string, { text?: string; image_url?: string }> {
+  return Object.fromEntries(
+    filledLayers().map((layer) => [
+      layer.name,
+      layer.type === "image" ? { image_url: layer.value.trim() } : { text: layer.value },
+    ]),
+  );
+}
+
 function snippetFor(lang: State["lang"]): string {
   const s = state;
-  const f = filledLayers();
-  const escq = (x: string) => x.replace(/"/g, '\\"');
-  const jsonLayers = f.length ? "{" + f.map((l) => `"${l.name}": "${escq(l.value)}"`).join(", ") + "}" : "{}";
+  const jsonLayers = JSON.stringify(requestLayers());
   const key = s.apiKey || "SUA_API_KEY";
-  const url = "https://blankcanvas.ickanz.easypanel.host/api/v1/render";
+  const url = "http://localhost:8787/api/v1/render";
   const tid = TEMPLATE_IDS[s.template];
 
   if (lang === "Python") {
-    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={\n        "template": "${tid}",\n        "format": "${s.format}",\n        "page": ${s.page},\n        "layers": ${jsonLayers},\n    },\n)\n\ndata = r.json()  # url, bytes, renderTime`;
+    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={\n        "template": "${tid}",\n        "layers": ${jsonLayers},\n        "document": template_document,  # JSON salvo pelo editor\n    },\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
   }
   if (lang === "cURL") {
-    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}","format":"${s.format}","page":${s.page},"layers":${jsonLayers}}'`;
+    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}","layers":${jsonLayers},"document":{...}}' \\\n  --output twitter.png`;
   }
   if (lang === "PHP") {
-    return `$response = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n        "format"   => "${s.format}",\n        "page"     => ${s.page},\n        "layers"   => $layers,\n    ])->json();\n\n// $response["url"], $response["bytes"], $response["renderTime"]`;
+    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n        "layers"   => $layers,\n        "document" => $templateDocument,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
   }
-  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template, format: "${s.format}", layers, page: ${s.page} }),\n});\n\nconst { url: fileUrl, bytes, renderTime } = await response.json();`;
+  return `const templateDocument = JSON.parse(\n  localStorage.getItem("blank-editor-template-tweet-screenshot-v1"),\n);\n\nconst response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({\n    template: "${tid}",\n    layers: ${jsonLayers},\n    document: templateDocument,\n  }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
 }
 
 function patchSnippetLive() {
@@ -158,18 +167,46 @@ function patchSnippetLive() {
   if (el) el.textContent = snippetFor(state.lang);
 }
 
-function startRender() {
+async function startRender() {
   if (state.rendering) return;
   state.rendering = true; state.rendered = false; state.response = null;
   render();
-  clearTimeout(renderTimer);
-  renderTimer = setTimeout(() => {
-    const ms = 380 + Math.round(Math.random() * 900);
-    const tid = TEMPLATE_IDS[state.template];
-    state.rendering = false; state.rendered = true; state.tab = "preview";
-    state.response = `{\n  "url": "https://cdn.blankcanvas.host/r/${tid.slice(0, 8)}-p${state.page}.${state.format}",\n  "bytes": ${120000 + Math.round(Math.random() * 400000)},\n  "renderTime": ${ms},\n  "layers": ${filledLayers().length}\n}`;
+  const started = performance.now();
+  try {
+    const response = await fetch("/api/v1/render", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${state.apiKey || "blk_local_dev"}`,
+      },
+      body: JSON.stringify({
+        template: TEMPLATE_IDS[state.template],
+        layers: requestLayers(),
+        document: currentTweetTemplateDocument(),
+      }),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+
+    const png = await response.blob();
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+    state.previewUrl = URL.createObjectURL(png);
+    state.rendered = true;
+    state.tab = "preview";
+    state.response = JSON.stringify({
+      ok: true,
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      bytes: png.size,
+      renderTimeMs: Math.round(performance.now() - started),
+    }, null, 2);
+  } catch (error) {
+    state.previewUrl = null;
+    state.tab = "response";
+    state.response = JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }, null, 2);
+  } finally {
+    state.rendering = false;
     render();
-  }, 800);
+  }
 }
 
 function addLayer(type: LayerType) {
@@ -258,7 +295,7 @@ function renderTemplates(): string {
   const sortChips = ["Ordem", "A-Z"].map((n) => chip(n, s.sort === n, "pick-sort", n)).join("");
   const periodChips = ["Todos", "Hoje", "7D", "14D", "30D"].map((n) => chip(n, s.period === n, "pick-period", n)).join("");
   const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, #1E1E1B 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
-  const cards = [1, 2, 3].map(() => `<div data-action="open-editor" style="${cardStyle}">card / preview</div>`).join("");
+  const cards = `<div data-action="open-twitter-template" style="${cardStyle}; flex-direction:column; gap:8px;"><strong style="font-family:var(--display); font-size:14px; color:var(--text);">Twitter mínimo</strong><span>clique para editar · nome · @ · texto · foto</span></div>`;
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; padding:20px;">
@@ -296,9 +333,6 @@ function renderPlayground(): string {
       ? `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" style="flex:none;"><path d="M3 3.6h10"></path><path d="M8 3.6v9"></path></svg>`
       : `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linejoin="round" style="flex:none;"><rect x="2" y="3" width="12" height="10" rx="1.6"></rect><circle cx="5.9" cy="6.5" r="1.05"></circle><path d="M2.6 11.4 6.4 8l3 2.6 2-1.7 2 2.1"></path></svg>`}
         <span style="flex:1; font-family:var(--mono); font-size:12px; color:var(--text);">${esc(l.name)}</span>
-        <div data-action="remove-layer" data-id="${l.id}" style="cursor:pointer; width:24px; height:24px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.4h10.4"></path><path d="M6.4 4.4V2.9h3.2v1.5"></path><path d="M4.2 4.4l.7 8.7h6.2l.7-8.7"></path></svg>
-        </div>
       </div>
       <input data-layer-value="${l.id}" value="${esc(l.value)}" placeholder="${l.type === "text" ? "Texto dinâmico" : "URL da imagem"}" class="console-field" style="height:38px;" />
     </div>`).join("");
@@ -309,7 +343,7 @@ function renderPlayground(): string {
   const previewText = s.rendering
     ? "Gerando render…"
     : s.rendered
-      ? `render pronto · ${s.format} · página ${s.page} · ${filledLayers().length} camada(s)`
+      ? `render pronto · PNG real · ${filledLayers().length} campos`
       : "Preencha as camadas e clique em “Gerar render” para ver o resultado aqui.";
 
   return `
@@ -320,38 +354,25 @@ function renderPlayground(): string {
           <span style="font-size:13px; font-weight:500;">Template</span>
           <select data-select="template" class="console-field">${selOptions(s.template, Object.keys(TEMPLATE_IDS))}</select>
           <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(TEMPLATE_IDS[s.template])}</span>
+          <div data-action="open-twitter-template" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
         </div>
 
-        <div style="display:grid; grid-template-columns:1fr 0.7fr 1.1fr; gap:12px;">
-          <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
-            <span style="font-size:12px; color:var(--muted);">Formato</span>
-            <select data-select="format" class="console-field" style="height:36px; font-size:12px;">${selOptions(s.format, ["png", "jpg", "pdf"])}</select>
-          </div>
-          <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
-            <span style="font-size:12px; color:var(--muted);">Página</span>
-            <select data-select="page" class="console-field" style="height:36px; font-size:12px;">${selOptions(s.page, ["1", "2", "3"])}</select>
-          </div>
-          <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
-            <span style="font-size:12px; color:var(--muted);">API key</span>
-            <input data-field="apiKey" value="${esc(s.apiKey)}" placeholder="vazio = sua sessão" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
-          </div>
+        <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
+          <span style="font-size:12px; color:var(--muted);">API key local</span>
+          <input data-field="apiKey" value="${esc(s.apiKey)}" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
+          <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">POST /api/v1/render → localhost:8787</span>
         </div>
 
         <div style="display:flex; align-items:center; gap:12px;">
-          <span style="font-size:13px; font-weight:500; flex:1;">Camadas</span>
-          <select data-select="scope" class="console-field" style="width:180px; height:36px; font-size:12px;">${selOptions(s.scope, ["global", "página 1", "página 2"])}</select>
+          <span style="font-size:13px; font-weight:500; flex:1;">Campos do template</span>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${layerCards}
           ${noLayers ? `<div style="border-radius:9px; border:1px dashed var(--border); padding:22px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--faint);">nenhuma camada</div>` : ""}
-          <div style="display:flex; gap:8px;">
-            <div data-action="add-text" style="cursor:pointer; flex:1; height:32px; border-radius:8px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; color:var(--muted);">+ texto</div>
-            <div data-action="add-image" style="cursor:pointer; flex:1; height:32px; border-radius:8px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; color:var(--muted);">+ imagem</div>
-          </div>
         </div>
 
-        <span style="font-size:12px; color:var(--faint);">Camadas em branco ficam de fora da chamada.</span>
+        <span style="font-size:12px; color:var(--faint);">Os quatro campos são obrigatórios. A foto deve ser uma URL pública.</span>
 
         <div data-action="render" style="cursor:pointer; height:46px; border-radius:9px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8 12.8 8l-8.3 5.2z"></path></svg>
@@ -367,7 +388,9 @@ function renderPlayground(): string {
 
         ${s.tab === "preview" ? `
         <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:#161614; display:flex; align-items:center; justify-content:center; padding:32px; text-align:center;">
-          <span style="max-width:380px; font-size:14px; line-height:1.6; color:var(--faint);">${esc(previewText)}</span>
+          ${s.previewUrl
+            ? `<img id="renderPreview" src="${esc(s.previewUrl)}" alt="Preview do tweet renderizado" style="display:block; max-width:100%; height:auto; border-radius:8px;" />`
+            : `<span style="max-width:380px; font-size:14px; line-height:1.6; color:var(--faint);">${esc(previewText)}</span>`}
         </div>` : `
         <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:#161614; padding:18px; font-family:var(--mono); font-size:12px; line-height:1.7; color:var(--muted); white-space:pre-wrap; overflow:auto;">${esc(s.response || "// sem resposta ainda — gere um render")}</div>`}
 
@@ -603,6 +626,7 @@ function bind() {
       case "go-keys": state.view = "keys"; render(); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
       case "open-editor": navigate("editor"); break;
+      case "open-twitter-template": openTweetTemplate(); navigate("editor"); break;
 
       case "pick-sort": state.sort = value!; render(); break;
       case "pick-period": state.period = value!; render(); break;

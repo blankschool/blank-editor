@@ -26,6 +26,13 @@ const validBody = {
   },
 };
 
+test("reports that the local API process is healthy", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/health" });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { ok: true });
+});
+
 test("rejects a request with no Authorization header", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "POST", url: "/api/v1/render", payload: validBody });
@@ -103,4 +110,24 @@ test("passes the mapped layer values through to renderTweetPng", async () => {
     handle: "@MicaelCrasto",
     tweetText: "hello",
   });
+});
+
+test("passes the saved editable document through to the renderer", async () => {
+  const document = { active: 0, pages: [{ w: 566, h: 120, bg: "#000", els: [] }] };
+  let receivedDocument: unknown;
+  const app = buildApp(
+    makeDeps({
+      renderTweetPng: async (_input, editableDocument) => {
+        receivedDocument = editableDocument;
+        return PNG_BYTES;
+      },
+    }),
+  );
+  await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${VALID_KEY}` },
+    payload: { ...validBody, document },
+  });
+  assert.deepEqual(receivedDocument, document);
 });

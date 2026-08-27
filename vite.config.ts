@@ -5,6 +5,12 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 // an Artifact: no external requests beyond Google Fonts, everything inlined.
 export default defineConfig({
   plugins: [viteSingleFile()],
+  server: {
+    proxy: {
+      "/api": "http://127.0.0.1:8787",
+      "/health": "http://127.0.0.1:8787",
+    },
+  },
   build: {
     outDir: "dist",
     assetsInlineLimit: 100 * 1024 * 1024,

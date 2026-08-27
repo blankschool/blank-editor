@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { buildEditableTweetSvg } from "./editableTweetTemplate.ts";
 import { buildTweetSvg, type TweetInput } from "./tweetTemplate.ts";
 import { fetchImage } from "./imageSource.ts";
 
@@ -46,8 +47,16 @@ export async function composeTweetPng(input: ComposeTweetInput): Promise<Buffer>
     .toBuffer();
 }
 
+export async function composeEditableTweetPng(input: ComposeTweetInput, document: unknown): Promise<Buffer> {
+  const avatarPng = await sharp(input.avatarBuffer).png().toBuffer();
+  const avatarDataUrl = `data:image/png;base64,${avatarPng.toString("base64")}`;
+  const svg = buildEditableTweetSvg(document, input, avatarDataUrl);
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 /** Fetches the avatar over HTTP(S) — SSRF-guarded — then composes the PNG. */
-export async function renderTweetPng(input: RenderTweetInput): Promise<Buffer> {
+export async function renderTweetPng(input: RenderTweetInput, document?: unknown): Promise<Buffer> {
   const avatarBuffer = await fetchImage(input.avatarUrl);
+  if (document) return composeEditableTweetPng({ ...input, avatarBuffer }, document);
   return composeTweetPng({ ...input, avatarBuffer });
 }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { composeTweetPng, renderTweetPng } from "./renderTweet.ts";
+import { composeEditableTweetPng, composeTweetPng, renderTweetPng } from "./renderTweet.ts";
 
 async function solidPng(r: number, g: number, b: number, size = 8): Promise<Buffer> {
   return sharp({ create: { width: size, height: size, channels: 4, background: { r, g, b, alpha: 1 } } })
@@ -35,6 +35,28 @@ test("the composited PNG is fully opaque where the avatar circle sits (no transp
   // Center of the avatar circle: box is (16,16,40,40) -> center (36, 36).
   const idx = (36 * info.width + 36) * info.channels;
   assert.equal(data[idx + 3], 255); // alpha channel fully opaque
+});
+
+test("composes the dimensions saved in an editable template document", async () => {
+  const avatar = await solidPng(30, 120, 220);
+  const document = {
+    active: 0,
+    pages: [{
+      w: 310,
+      h: 96,
+      bg: "#000000",
+      els: [{ id: "avatar", type: "image", name: "avatar", x: 8, y: 8, w: 32, h: 32, radius: 16 }],
+    }],
+  };
+  const png = await composeEditableTweetPng({
+    avatarBuffer: avatar,
+    displayName: "Nome",
+    handle: "@nome",
+    tweetText: "Texto",
+  }, document);
+  const metadata = await sharp(png).metadata();
+  assert.equal(metadata.width, 310);
+  assert.equal(metadata.height, 96);
 });
 
 test("renderTweetPng rejects a private-network avatar URL instead of silently fetching it", async () => {

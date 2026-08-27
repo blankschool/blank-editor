@@ -2,6 +2,11 @@ import "./styles.css";
 import SEED_JSON from "./seed.json";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
+import {
+  loadTweetTemplateDocument,
+  saveTweetTemplateDocument,
+  TWEET_TEMPLATE_ID,
+} from "./tweetTemplateDoc";
 
 declare global {
   interface Window {
@@ -102,6 +107,7 @@ function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
+    saveTweetTemplateDocument(doc);
   }, 400);
 }
 function loadPersisted() {
@@ -1429,10 +1435,32 @@ function renderAll() {
 // while display:none, that box is 0x0 and the initial zoom comes out wrong.
 // mountEditor() runs once, the first time the router activates this route.
 let editorMounted = false;
+let pendingDocument = false;
+
+export function openTweetTemplate() {
+  if (doc.seedId !== TWEET_TEMPLATE_ID) doc = loadTweetTemplateDocument();
+  doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
+  pendingDocument = true;
+  sel = [];
+  past = [];
+  future = [];
+  baseline = snap();
+  if (editorMounted) {
+    $("docname").value = doc.name;
+    renderAll();
+    buildThumbs();
+    requestAnimationFrame(zoomFit);
+  }
+}
+
+export function currentTweetTemplateDocument(): Doc {
+  return doc.seedId === TWEET_TEMPLATE_ID ? structuredClone(doc) : loadTweetTemplateDocument();
+}
+
 export function mountEditor() {
   if (editorMounted) return;
   editorMounted = true;
-  loadPersisted();
+  if (!pendingDocument) loadPersisted();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
   renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs();
@@ -1449,4 +1477,5 @@ export function mountEditor() {
   renderPage: renderPageCanvas,
   pages: () => doc.pages,
   doc: () => doc,
+  openTweetTemplate,
 };
