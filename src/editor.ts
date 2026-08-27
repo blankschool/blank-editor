@@ -338,7 +338,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   if (el.locked) { sel = [id]; renderAll(); return; }
 
   if (ev.shiftKey) sel = sel.includes(id) ? sel.filter((s) => s !== id) : [...sel, id];
-  else if (!sel.includes(id)) sel = [id];
+  else if (!sel.includes(id)) sel = el.group ? page().els.filter((x) => x.group === el.group).map((x) => x.id) : [id];
   renderOverlay(); renderLayers(); renderProps();
   if (editingId === id) return;
   startMove(ev);
@@ -568,11 +568,10 @@ function capture(ev) {
 }
 
 /* text editing */
-$("stage").addEventListener("dblclick", (ev) => {
-  const node = ev.target.closest(".el");
-  if (!node) return;
-  const el = byId(node.dataset.id);
-  if (!el || el.type !== "text" || el.locked) return;
+function startEditingText(id) {
+  const el = byId(id);
+  const node = $("pagebox").querySelector(`.el[data-id="${id}"]`);
+  if (!el || !node || el.type !== "text" || el.locked) return;
   editingId = el.id;
   renderOverlay();
   const t = node.querySelector(".txt");
@@ -580,6 +579,11 @@ $("stage").addEventListener("dblclick", (ev) => {
   t.focus();
   document.getSelection().selectAllChildren(t);
   t.addEventListener("blur", stopEditing, { once: true });
+}
+$("stage").addEventListener("dblclick", (ev) => {
+  const node = ev.target.closest(".el");
+  if (!node) return;
+  startEditingText(node.dataset.id);
 });
 function stopEditing() {
   if (!editingId) return;
@@ -633,10 +637,34 @@ function deleteSel() {
   if (!locked) sel = [];
   commit(); renderAll();
 }
+function groupSel() {
+  const els = selEls().filter((e) => !e.locked);
+  if (els.length < 2) return;
+  const gid = uid();
+  for (const e of els) e.group = gid;
+  commit(); renderAll();
+}
+function ungroupSel() {
+  const els = selEls().filter((e) => e.group);
+  if (!els.length) return;
+  for (const e of els) delete e.group;
+  commit(); renderAll();
+}
+// Copies keep grouping *among themselves* but never rejoin the original group they came from —
+// otherwise a duplicated group would silently merge back into the source group.
+function remapGroupIds(copies) {
+  const map = new Map();
+  for (const c of copies) {
+    if (!c.group) continue;
+    if (!map.has(c.group)) map.set(c.group, uid());
+    c.group = map.get(c.group);
+  }
+  return copies;
+}
 function duplicateSel() {
   const els = selEls();
   if (!els.length) return;
-  const copies = els.map((e) => ({ ...structuredClone(e), id: uid(), x: e.x + 24, y: e.y + 24 }));
+  const copies = remapGroupIds(els.map((e) => ({ ...structuredClone(e), id: uid(), x: e.x + 24, y: e.y + 24 })));
   page().els.push(...copies);
   sel = copies.map((c) => c.id);
   commit(); renderAll();
@@ -647,7 +675,7 @@ function copySel() {
 }
 function paste() {
   if (!clipboard?.length) return;
-  const copies = clipboard.map((e) => ({ ...structuredClone(e), id: uid(), x: e.x + 30, y: e.y + 30 }));
+  const copies = remapGroupIds(clipboard.map((e) => ({ ...structuredClone(e), id: uid(), x: e.x + 30, y: e.y + 30 })));
   page().els.push(...copies);
   sel = copies.map((c) => c.id);
   commit(); renderAll();
@@ -1373,6 +1401,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "c") { e.preventDefault(); copySel(); return; }
   if (mod && k === "v") { e.preventDefault(); paste(); return; }
   if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
+  if (mod && k === "g") { e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
   if (mod && k === "a") { e.preventDefault(); sel = page().els.filter((x) => !x.hidden).map((x) => x.id); renderAll(); return; }
   if (mod && (k === "=" || k === "+")) { e.preventDefault(); $("zoomin").click(); return; }
   if (mod && k === "-") { e.preventDefault(); $("zoomout").click(); return; }
@@ -1381,6 +1410,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.key === "[") { e.preventDefault(); order("down"); return; }
   if (e.key === "Delete" || e.key === "Backspace") { if (sel.length) { e.preventDefault(); deleteSel(); } return; }
   if (e.key === "Escape") { sel = []; editingId = null; setTool("select"); renderAll(); return; }
+  if (e.key === "Enter" && sel.length === 1) { e.preventDefault(); startEditingText(sel[0]); return; }
   if (e.key.startsWith("Arrow") && sel.length) {
     e.preventDefault();
     const d = e.shiftKey ? 10 : 1;

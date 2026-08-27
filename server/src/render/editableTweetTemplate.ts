@@ -23,6 +23,8 @@ interface EditableElement {
   italic?: boolean;
   underline?: boolean;
   align?: string;
+  /** Elements sharing the same centerGroup move together as one block, vertically centered in the page (equal top/bottom margin) — relative spacing between them (as authored) is preserved. */
+  centerGroup?: string;
   lh?: number;
   ls?: number;
   src?: string;
@@ -88,6 +90,57 @@ function renderText(element: EditableElement, value: string): string {
   return `<text x="${x}" y="${y}" text-anchor="${align}" dominant-baseline="text-before-edge" font-family="${escapeXml(element.font || "Inter")}" font-size="${size}" font-weight="${finite(element.weight, 400)}" font-style="${style}" letter-spacing="${finite(element.ls)}"${decoration}${paint(element)}${transform(element)}>${tspans}</text>`;
 }
 
+/** How tall an element actually renders — real wrapped-line height for text, the authored box otherwise. */
+function naturalElementHeight(element: EditableElement, textValue?: string): number {
+  if (element.type === "text") {
+    const width = Math.max(1, finite(element.w, 1));
+    const size = Math.max(1, finite(element.size, 15));
+    const lineHeight = size * Math.max(0.5, finite(element.lh, 1.2));
+    const lines = wrapText(textValue ?? "", width, size);
+    return lines.length * lineHeight;
+  }
+  return Math.max(0, finite(element.h));
+}
+
+/**
+ * For every `centerGroup` present on the page, computes one vertical shift shared by all its
+ * members: the group's natural bounding box (from each element's authored `y` to `y + natural
+ * height`) is centered in the page, giving it an equal top and bottom margin. Members keep their
+ * spacing relative to each other exactly as authored — only the whole block moves. A group taller
+ * than the page is pinned to the top (margin 0) rather than pushed above y=0.
+ */
+function computeGroupShifts(
+  els: EditableElement[],
+  overrides: TemplateOverrides,
+  pageHeight: number,
+): Map<string, number> {
+  const groups = new Map<string, EditableElement[]>();
+  for (const element of els) {
+    if (!element || element.hidden || !element.centerGroup) continue;
+    if (overrides.hidden.has(element.name || "")) continue;
+    const list = groups.get(element.centerGroup) ?? [];
+    list.push(element);
+    groups.set(element.centerGroup, list);
+  }
+
+  const shifts = new Map<string, number>();
+  for (const [groupId, members] of groups) {
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (const element of members) {
+      const textValue = element.type === "text" ? overrides.texts[element.name || ""] ?? String(element.text || "") : undefined;
+      const y0 = finite(element.y);
+      const y1 = y0 + naturalElementHeight(element, textValue);
+      top = Math.min(top, y0);
+      bottom = Math.max(bottom, y1);
+    }
+    if (!Number.isFinite(top)) continue;
+    const desiredTop = Math.max(0, (pageHeight - (bottom - top)) / 2);
+    shifts.set(groupId, desiredTop - top);
+  }
+  return shifts;
+}
+
 function activePage(document: unknown): EditablePage | null {
   const candidate = document as EditableTemplateDocument;
   if (!Array.isArray(candidate?.pages) || candidate.pages.length === 0) return null;
@@ -122,12 +175,17 @@ export function buildTemplateSvg(
   const height = boundedDimension(page.h, "height");
   if (!Array.isArray(page.els) || page.els.length > 200) throw new Error("invalid template elements");
 
+  const groupShifts = computeGroupShifts(page.els, overrides, height);
+
   const definitions: string[] = [];
   const content: string[] = [];
-  page.els.forEach((element, index) => {
-    if (!element || element.hidden) return;
-    const name = element.name || "";
+  page.els.forEach((rawElement, index) => {
+    if (!rawElement || rawElement.hidden) return;
+    const name = rawElement.name || "";
     if (overrides.hidden.has(name)) return;
+
+    const dy = rawElement.centerGroup ? groupShifts.get(rawElement.centerGroup) ?? 0 : 0;
+    const element = dy ? { ...rawElement, y: finite(rawElement.y) + dy } : rawElement;
 
     const x = finite(element.x);
     const y = finite(element.y);

@@ -46,6 +46,8 @@ export interface El {
   opacity: number;
   locked: boolean;
   hidden: boolean;
+  /** Elements sharing the same group id move/select together; absent means ungrouped. */
+  group?: string;
 
   /** CSS colour, or a CSS gradient string when `grad` is set. */
   fill: string;
@@ -71,6 +73,8 @@ export interface El {
   italic?: boolean;
   underline?: boolean;
   align?: string;
+  /** Elements sharing the same centerGroup move together as one block, vertically centered in the page. */
+  centerGroup?: string;
   /** Line height as a multiple of font size. */
   lh?: number;
   ls?: number;

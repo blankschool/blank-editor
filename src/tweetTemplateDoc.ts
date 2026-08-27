@@ -37,6 +37,7 @@ export function createTweetTemplateDocument(): Doc {
       bg: "#000000",
       els: [
         element("image", "avatar", {
+          centerGroup: "card",
           x: 72,
           y: 140,
           w: 112,
@@ -45,6 +46,7 @@ export function createTweetTemplateDocument(): Doc {
           src: "https://github.com/github.png",
         }),
         element("text", "displayName", {
+          centerGroup: "card",
           x: 204,
           y: 142,
           w: 804,
@@ -58,6 +60,7 @@ export function createTweetTemplateDocument(): Doc {
           ls: 0,
         }),
         element("text", "handle", {
+          centerGroup: "card",
           x: 204,
           y: 196,
           w: 804,
@@ -72,13 +75,13 @@ export function createTweetTemplateDocument(): Doc {
           fill: "#71757A",
         }),
         element("text", "tweetText", {
+          centerGroup: "card",
           x: 72,
-          y: 420,
+          y: 320,
           w: 936,
-          h: 790,
           text: "Template local funcionando de verdade.",
           font: "Inter",
-          size: 56,
+          size: 46,
           weight: 400,
           align: "left",
           lh: 1.4,

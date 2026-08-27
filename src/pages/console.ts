@@ -31,7 +31,7 @@ function enterView(view: View) {
   if (view === "keys" && !state.keysLoaded) loadKeys();
   // Playground picks from the same list, so it needs templates loaded too, not just the Templates tab.
   if ((view === "templates" || view === "playground") && !state.templatesLoaded) loadTemplates();
-  if (view === "playground" && state.layersLoadedForId !== state.templateId) loadLayersForTemplate(state.templateId);
+  if (view === "playground" && state.templateId && state.layersLoadedForId !== state.templateId) loadLayersForTemplate(state.templateId);
   render();
 }
 type LayerType = "text" | "image";
@@ -83,17 +83,12 @@ interface State {
 
 const state: State = {
   view: "templates",
-  templateId: "tweet-screenshot",
+  templateId: "",
   format: "png",
   page: "1",
-  apiKey: "blk_local_dev",
+  apiKey: "",
   scope: "global",
-  layers: [
-    { id: 1, type: "image", name: "avatar", value: "https://github.com/github.png" },
-    { id: 2, type: "text", name: "displayName", value: "Micael Crasto" },
-    { id: 3, type: "text", name: "handle", value: "@MicaelCrasto" },
-    { id: 4, type: "text", name: "tweetText", value: "Template local funcionando de verdade." },
-  ],
+  layers: [],
   collapsed: false,
   sort: "Ordem",
   period: "Todos",
@@ -120,7 +115,7 @@ const state: State = {
   jsonDraft: "",
   jsonError: null,
   namePrompt: null,
-  layersLoadedForId: "tweet-screenshot", // the initial `layers` above already match the seed template
+  layersLoadedForId: null,
   search: "",
   templateMenu: null,
   confirmDialog: null,
@@ -181,7 +176,7 @@ function snippetFor(lang: State["lang"]): string {
   const s = state;
   const jsonLayers = JSON.stringify(requestLayers());
   const key = s.apiKey || "SUA_API_KEY";
-  const url = "http://localhost:8787/api/v1/render";
+  const url = `${location.origin}/api/v1/render`;
   const tid = s.templateId;
 
   if (lang === "Python") {
@@ -203,6 +198,18 @@ function patchSnippetLive() {
 
 async function startRender() {
   if (state.rendering) return;
+  if (!state.apiKey.trim()) {
+    state.tab = "response";
+    state.response = JSON.stringify({ ok: false, error: "Cole uma API key primeiro (crie uma em API keys)." }, null, 2);
+    render();
+    return;
+  }
+  if (!state.templateId) {
+    state.tab = "response";
+    state.response = JSON.stringify({ ok: false, error: "Escolha um template primeiro (crie um em Templates)." }, null, 2);
+    render();
+    return;
+  }
   state.rendering = true; state.rendered = false; state.response = null;
   render();
   const started = performance.now();
@@ -211,7 +218,7 @@ async function startRender() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${state.apiKey || "blk_local_dev"}`,
+        authorization: `Bearer ${state.apiKey}`,
       },
       body: JSON.stringify({
         template: state.templateId,
@@ -254,6 +261,13 @@ async function loadTemplates() {
     const res = await fetch("/api/v1/templates");
     if (res.ok) state.templates = await res.json();
   } catch { /* offline — keep whatever was loaded before */ }
+  // The playground's selected template has to be one that actually exists — there's no fixed
+  // default anymore (a fresh/production database starts with zero templates).
+  if (!state.templates.some((t) => t.id === state.templateId)) {
+    state.templateId = state.templates[0]?.id ?? "";
+    state.layersLoadedForId = null;
+  }
+  if (state.templateId && state.view === "playground") await loadLayersForTemplate(state.templateId);
   render();
 }
 
@@ -528,15 +542,17 @@ function renderPlayground(): string {
       <div style="border-radius:12px; border:1px solid var(--border); background:var(--surface); padding:18px; display:flex; flex-direction:column; gap:16px;">
         <div style="display:flex; flex-direction:column; gap:8px;">
           <span style="font-size:13px; font-weight:500;">Template</span>
-          <select data-select="template" class="console-field">${templateOptions(s.templates, s.templateId)}</select>
+          ${s.templates.length
+            ? `<select data-select="template" class="console-field">${templateOptions(s.templates, s.templateId)}</select>
           <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(s.templateId)}</span>
-          <div data-action="open-template" data-id="${esc(s.templateId)}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
+          <div data-action="open-template" data-id="${esc(s.templateId)}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>`
+            : `<div data-action="go-templates" style="cursor:pointer; border-radius:8px; border:1px dashed var(--border); padding:12px; text-align:center; font-size:12px; color:var(--faint);">nenhum template ainda — crie um em Templates</div>`}
         </div>
 
         <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
-          <span style="font-size:12px; color:var(--muted);">API key local</span>
-          <input data-field="apiKey" value="${esc(s.apiKey)}" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
-          <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">POST /api/v1/render → localhost:8787</span>
+          <span style="font-size:12px; color:var(--muted);">API key</span>
+          <input data-field="apiKey" value="${esc(s.apiKey)}" placeholder="crie uma em API keys" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
+          <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">POST /api/v1/render → ${location.host}</span>
         </div>
 
         <div style="display:flex; align-items:center; gap:12px;">
