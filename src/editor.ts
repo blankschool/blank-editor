@@ -52,6 +52,8 @@ function applyStageBg() {
 let past: string[] = [], future: string[] = [];
 let clipboard = null;
 let editingId = null;
+let lastClickId: string | null = null;
+let lastClickTime = 0;
 let activeTab = "elements";
 const imgCache = new Map<string, HTMLImageElement>();
 
@@ -344,6 +346,21 @@ $("stage").addEventListener("pointerdown", (ev) => {
   const el = byId(id);
   if (!el || el.hidden) return;
   if (editingId && editingId !== id) stopEditing();
+
+  // Selecting an element re-renders the canvas (see capture()'s unconditional
+  // renderAll() on pointerup), which swaps in a fresh .el DOM node before a real
+  // second click can land — so the browser's own "dblclick" event never fires
+  // here. Detect the double-click ourselves instead, by id and timing.
+  const now = Date.now();
+  const isDoubleClick = lastClickId === id && now - lastClickTime < 400;
+  lastClickId = isDoubleClick ? null : id;
+  lastClickTime = isDoubleClick ? 0 : now;
+  if (isDoubleClick && el.type === "text" && editingId !== id) {
+    sel = [id];
+    startEditingText(id);
+    return;
+  }
+
   if (el.locked) { sel = [id]; renderAll(); return; }
 
   if (ev.shiftKey) sel = sel.includes(id) ? sel.filter((s) => s !== id) : [...sel, id];
@@ -591,11 +608,6 @@ function startEditingText(id) {
   document.getSelection().selectAllChildren(t);
   t.addEventListener("blur", stopEditing, { once: true });
 }
-$("stage").addEventListener("dblclick", (ev) => {
-  const node = ev.target.closest(".el");
-  if (!node) return;
-  startEditingText(node.dataset.id);
-});
 function stopEditing() {
   if (!editingId) return;
   const t = $("pagebox").querySelector(`[data-txt="${editingId}"]`);
