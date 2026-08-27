@@ -19,7 +19,30 @@ const SEED_TEMPLATE: TemplateRow = {
         { id: "avatar-field", type: "image", name: "avatar", x: 72, y: 140, w: 112, h: 112, radius: 56, src: "https://github.com/github.png" },
         { id: "displayName-field", type: "text", name: "displayName", x: 204, y: 142, w: 804, h: 48, text: "Micael Crasto", font: "Inter", size: 40, weight: 700, align: "left", lh: 1.25, fill: "#E6E9EA" },
         { id: "handle-field", type: "text", name: "handle", x: 204, y: 196, w: 804, h: 40, text: "@MicaelCrasto", font: "Inter", size: 34, weight: 400, align: "left", lh: 1.25, fill: "#71757A" },
-        { id: "tweetText-field", type: "text", name: "tweetText", x: 72, y: 308, w: 936, h: 902, text: "Template local funcionando de verdade.", font: "Inter", size: 46, weight: 400, align: "left", lh: 1.45, fill: "#E6E9EA" },
+        { id: "tweetText-field", type: "text", name: "tweetText", x: 72, y: 420, w: 936, h: 790, text: "Template local funcionando de verdade.", font: "Inter", size: 56, weight: 400, align: "left", lh: 1.4, fill: "#E6E9EA" },
+      ],
+    }],
+  },
+};
+
+const SEED_TEMPLATE_WITH_PHOTO: TemplateRow = {
+  id: "tweet-with-photo",
+  kind: "tweet",
+  name: "Twitter com foto",
+  document: {
+    name: "Twitter com foto",
+    active: 0,
+    pages: [{
+      id: "tweet-page",
+      w: 1080,
+      h: 1350,
+      bg: "#000000",
+      els: [
+        { id: "avatar-field", type: "image", name: "avatar", x: 72, y: 140, w: 112, h: 112, radius: 56, src: "https://github.com/github.png" },
+        { id: "displayName-field", type: "text", name: "displayName", x: 204, y: 142, w: 804, h: 48, text: "Micael Crasto", font: "Inter", size: 40, weight: 700, align: "left", lh: 1.25, fill: "#E6E9EA" },
+        { id: "handle-field", type: "text", name: "handle", x: 204, y: 196, w: 804, h: 40, text: "@MicaelCrasto", font: "Inter", size: 34, weight: 400, align: "left", lh: 1.25, fill: "#71757A" },
+        { id: "tweetText-field", type: "text", name: "tweetText", x: 72, y: 280, w: 936, h: 220, text: "Template com foto funcionando de verdade.", font: "Inter", size: 42, weight: 400, align: "left", lh: 1.35, fill: "#E6E9EA" },
+        { id: "media-field", type: "image", name: "media", x: 72, y: 540, w: 936, h: 740, radius: 24, src: "https://pbs.twimg.com/media/HQA6oNTXcAADMtI?format=jpg&name=900x900" },
       ],
     }],
   },
@@ -37,7 +60,10 @@ interface StoredApiKey extends ApiKeySummary {
  */
 export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["renderTemplatePng"]): AppDeps {
   const configuredHash = hashApiKey(apiKey);
-  const templates = new Map<string, TemplateRow>([[SEED_TEMPLATE.id, SEED_TEMPLATE]]);
+  const templates = new Map<string, TemplateRow>([
+    [SEED_TEMPLATE.id, SEED_TEMPLATE],
+    [SEED_TEMPLATE_WITH_PHOTO.id, SEED_TEMPLATE_WITH_PHOTO],
+  ]);
   const apiKeys = new Map<string, StoredApiKey>();
 
   return {

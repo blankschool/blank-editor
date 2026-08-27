@@ -222,7 +222,7 @@ button { cursor: pointer; background: none; border: none; }
   border: none; background: none; width: 100%; min-width: 0; font-size: 12px; outline: none;
   font-family: var(--body); font-variant-numeric: tabular-nums;
 }
-.field input[type="color"] { padding: 0; height: 20px; cursor: pointer; }
+.field input[type="color"] { padding: 0; width: 32px; height: 20px; flex: none; cursor: pointer; }
 select.field { padding: 0 6px; appearance: none; cursor: pointer; font-size: 12px; }
 .row { display: flex; gap: 6px; align-items: center; }
 .seg { display: flex; gap: 4px; }
