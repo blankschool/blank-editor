@@ -14,7 +14,7 @@ import { openTemplateById } from "../editor";
 
 type View = "templates" | "playground" | "import" | "keys";
 const VIEWS: View[] = ["templates", "playground", "import", "keys"];
-const DEFAULT_VIEW: View = "playground";
+const DEFAULT_VIEW: View = "templates";
 
 /** Reads the console's own sub-route out of `#/console/<view>`, so refresh/back-forward/deep links work. */
 function viewFromHash(): View {
@@ -30,7 +30,9 @@ function goToView(view: View) {
 function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
-  if (view === "templates" && !state.templatesLoaded) loadTemplates();
+  // Playground picks from the same list, so it needs templates loaded too, not just the Templates tab.
+  if ((view === "templates" || view === "playground") && !state.templatesLoaded) loadTemplates();
+  if (view === "playground" && state.layersLoadedForId !== state.templateId) loadLayersForTemplate(state.templateId);
   render();
 }
 type LayerType = "text" | "image";
@@ -42,7 +44,7 @@ interface AppDoc { name: string; meta: string; }
 
 interface State {
   view: View;
-  template: string;
+  templateId: string;
   format: string;
   page: string;
   apiKey: string;
@@ -73,11 +75,13 @@ interface State {
   templatesLoaded: boolean;
   jsonDraft: string;
   jsonError: string | null;
+  namePrompt: { kind: "new-template" | "create-key"; title: string; value: string; error: string | null } | null;
+  layersLoadedForId: string | null;
 }
 
 const state: State = {
-  view: "playground",
-  template: "Twitter mínimo",
+  view: "templates",
+  templateId: "tweet-screenshot",
   format: "png",
   page: "1",
   apiKey: "blk_local_dev",
@@ -113,11 +117,10 @@ const state: State = {
   templatesLoaded: false,
   jsonDraft: "",
   jsonError: null,
+  namePrompt: null,
+  layersLoadedForId: "tweet-screenshot", // the initial `layers` above already match the seed template
 };
 
-const TEMPLATE_IDS: Record<string, string> = {
-  "Twitter mínimo": "tweet-screenshot",
-};
 
 const IMP_META: Record<string, { placeholder: string; accept: string }> = {
   Imagens: { placeholder: "https://cdn.exemplo.com/foto.png", accept: "png · jpg · webp · svg" },
@@ -174,7 +177,7 @@ function snippetFor(lang: State["lang"]): string {
   const jsonLayers = JSON.stringify(requestLayers());
   const key = s.apiKey || "SUA_API_KEY";
   const url = "http://localhost:8787/api/v1/render";
-  const tid = TEMPLATE_IDS[s.template];
+  const tid = s.templateId;
 
   if (lang === "Python") {
     return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", "layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
@@ -206,7 +209,7 @@ async function startRender() {
         authorization: `Bearer ${state.apiKey || "blk_local_dev"}`,
       },
       body: JSON.stringify({
-        template: TEMPLATE_IDS[state.template],
+        template: state.templateId,
         layers: requestLayers(),
       }),
     });
@@ -249,20 +252,40 @@ async function loadTemplates() {
   render();
 }
 
-async function createNewTemplate() {
-  const name = prompt("Nome do novo template:");
-  if (!name) return;
+/** Rebuilds the playground's layer fields from whatever named text/image elements the selected template actually has — a different template has different fields, so this can't be a fixed list. */
+async function loadLayersForTemplate(id: string) {
+  state.layersLoadedForId = id; // set before the await so re-entering the view while loading doesn't refetch
+  try {
+    const res = await fetch(`/api/v1/templates/${id}`);
+    if (!res.ok) return;
+    const { document } = await res.json();
+    const page = document?.pages?.[document?.active || 0];
+    const els: Array<{ name?: string; type?: string; text?: string; src?: string }> = Array.isArray(page?.els) ? page.els : [];
+    state.layers = els
+      .filter((el): el is { name: string; type: string; text?: string; src?: string } => Boolean(el?.name) && (el?.type === "text" || el?.type === "image"))
+      .map((el, i) => ({
+        id: i + 1,
+        type: el.type as LayerType,
+        name: el.name,
+        value: el.type === "image" ? (el.src?.startsWith("http") ? el.src : "") : el.text || "",
+      }));
+  } catch { /* offline — keep whatever fields were showing before */ }
+  render();
+}
+
+async function createNewTemplate(name: string): Promise<string | null> {
   const blank = { name, active: 0, pages: [{ id: "page-1", w: 1080, h: 1350, bg: "#000000", els: [] }] };
   const res = await fetch("/api/v1/templates", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, document: blank }),
   });
-  if (!res.ok) { alert("Não foi possível criar o template."); return; }
+  if (!res.ok) return "Não foi possível criar o template.";
   const { id } = await res.json();
   state.templatesLoaded = false; // force a refetch next time Templates is opened
   await openTemplateById(id);
   navigate("editor");
+  return null;
 }
 
 /** Validates a pasted/uploaded JSON document well enough to try opening it — the editor is the real judge of whether it's fully usable. */
@@ -306,18 +329,33 @@ async function loadKeys() {
   render();
 }
 
-async function createKey() {
-  const name = prompt("Nome da chave (ex: n8n, produção):");
-  if (!name) return;
+async function createKey(name: string): Promise<string | null> {
   const res = await fetch("/api/v1/keys", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
   });
-  if (!res.ok) return;
+  if (!res.ok) return "Não foi possível criar a chave.";
   const created = await res.json();
   state.keys.unshift({ id: created.id, name: created.name, createdAt: created.createdAt, revoked: false });
   state.newKeySecret = { id: created.id, secret: created.secret };
+  return null;
+}
+
+/** Opens the shared name-prompt modal — a real in-app dialog, not window.prompt(), which can be
+ * silently blocked (popup/dialog blockers, embedded webviews) with no visible feedback at all. */
+function openNamePrompt(kind: "new-template" | "create-key", title: string) {
+  state.namePrompt = { kind, title, value: "", error: null };
+  render();
+}
+
+async function confirmNamePrompt() {
+  const p = state.namePrompt;
+  if (!p || !p.value.trim()) return;
+  const name = p.value.trim();
+  const error = p.kind === "new-template" ? await createNewTemplate(name) : await createKey(name);
+  if (error) { if (state.namePrompt) state.namePrompt.error = error; render(); return; }
+  state.namePrompt = null;
   render();
 }
 
@@ -331,6 +369,9 @@ async function revokeKey(id: string) {
 
 const selOptions = (current: string, options: string[]) =>
   options.map((o) => `<option value="${esc(o)}" ${o === current ? "selected" : ""}>${esc(o)}</option>`).join("");
+
+const templateOptions = (templates: TemplateSummary[], currentId: string) =>
+  templates.map((t) => `<option value="${esc(t.id)}" ${t.id === currentId ? "selected" : ""}>${esc(t.name)}</option>`).join("");
 
 function chip(name: string, active: boolean, action: string, value: string) {
   return `<div data-action="${action}" data-value="${esc(value)}" style="cursor:pointer; height:26px; padding:0 12px; border-radius:6px; display:flex; align-items:center; font-size:12px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "#111111" : "var(--muted)"};">${esc(name)}</div>`;
@@ -466,9 +507,9 @@ function renderPlayground(): string {
       <div style="border-radius:12px; border:1px solid var(--border); background:var(--surface); padding:18px; display:flex; flex-direction:column; gap:16px;">
         <div style="display:flex; flex-direction:column; gap:8px;">
           <span style="font-size:13px; font-weight:500;">Template</span>
-          <select data-select="template" class="console-field">${selOptions(s.template, Object.keys(TEMPLATE_IDS))}</select>
-          <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(TEMPLATE_IDS[s.template])}</span>
-          <div data-action="open-template" data-id="${esc(TEMPLATE_IDS[s.template])}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
+          <select data-select="template" class="console-field">${templateOptions(s.templates, s.templateId)}</select>
+          <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(s.templateId)}</span>
+          <div data-action="open-template" data-id="${esc(s.templateId)}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
@@ -486,7 +527,7 @@ function renderPlayground(): string {
           ${noLayers ? `<div style="border-radius:9px; border:1px dashed var(--border); padding:22px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--faint);">nenhuma camada</div>` : ""}
         </div>
 
-        <span style="font-size:12px; color:var(--faint);">Os quatro campos são obrigatórios. A foto deve ser uma URL pública.</span>
+        <span style="font-size:12px; color:var(--faint);">Campos vêm do template selecionado. Imagens precisam de uma URL pública.</span>
 
         <div data-action="render" style="cursor:pointer; height:46px; border-radius:9px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8 12.8 8l-8.3 5.2z"></path></svg>
@@ -703,6 +744,23 @@ function renderKeys(): string {
     </div>`;
 }
 
+function renderNamePrompt(): string {
+  const p = state.namePrompt;
+  if (!p) return "";
+  return `
+    <div data-action="cancel-name-prompt" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
+      <div data-stop="1" style="width:100%; max-width:380px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:20px; display:flex; flex-direction:column; gap:14px;">
+        <span style="font-family:var(--display); font-size:15px; font-weight:600;">${esc(p.title)}</span>
+        <input id="namePromptInput" data-field="namePromptValue" value="${esc(p.value)}" class="console-field" autofocus />
+        ${p.error ? `<span style="font-size:12px; color:var(--danger);">${esc(p.error)}</span>` : ""}
+        <div style="display:flex; gap:10px;">
+          <div data-action="cancel-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text);">Cancelar</div>
+          <div id="confirmNamePromptBtn" data-action="confirm-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; opacity:${p.value.trim() ? "1" : "0.45"};">Criar</div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function render() {
   const s = state;
   const main =
@@ -717,7 +775,9 @@ function render() {
         ${renderSidebar()}
         <main style="flex:1; min-width:0; display:flex; flex-direction:column;">${main}</main>
       </div>
-    </div>`;
+    </div>
+    ${renderNamePrompt()}`;
+  if (state.namePrompt) document.getElementById("namePromptInput")?.focus();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -752,7 +812,7 @@ function bind() {
       case "go-import": goToView("import"); break;
       case "go-keys": goToView("keys"); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
-      case "new-template": createNewTemplate(); break;
+      case "new-template": openNamePrompt("new-template", "Nome do novo template"); break;
       case "open-template": openTemplateById(el.dataset.id!); navigate("editor"); break;
 
       case "pick-sort": state.sort = value!; render(); break;
@@ -797,7 +857,9 @@ function bind() {
         break;
       case "pick-app-doc": state.appDoc = value!; render(); break;
 
-      case "create-key": createKey(); break;
+      case "create-key": openNamePrompt("create-key", "Nome da chave (ex: n8n, produção)"); break;
+      case "confirm-name-prompt": confirmNamePrompt(); break;
+      case "cancel-name-prompt": state.namePrompt = null; render(); break;
       case "copy-key": {
         const rawId = el.dataset.id!;
         const secret = state.newKeySecret?.id === rawId ? state.newKeySecret.secret : rawId;
@@ -815,6 +877,10 @@ function bind() {
     }
   });
 
+  root.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && (ev.target as HTMLElement).id === "namePromptInput") confirmNamePrompt();
+  });
+
   root.addEventListener("input", (ev) => {
     const t = ev.target as HTMLInputElement | HTMLTextAreaElement;
 
@@ -825,10 +891,16 @@ function bind() {
       return;
     }
 
-    const field = (t as HTMLElement).dataset.field as keyof State | undefined;
+    const field = (t as HTMLElement).dataset.field;
     if (field === "apiKey") { state.apiKey = t.value; patchSnippetLive(); return; }
     if (field === "importUrl") { state.importUrl = t.value; return; }
     if (field === "appUrl") { state.appUrl = t.value; return; }
+    if (field === "namePromptValue" && state.namePrompt) {
+      state.namePrompt.value = t.value;
+      const btn = document.getElementById("confirmNamePromptBtn");
+      if (btn) btn.style.opacity = t.value.trim() ? "1" : "0.45";
+      return;
+    }
     if (field === "jsonDraft") {
       state.jsonDraft = t.value;
       state.jsonError = null;
@@ -847,7 +919,12 @@ function bind() {
     const t = ev.target as HTMLSelectElement;
     const sel = t.dataset.select;
     if (!sel) return;
-    if (sel === "template") { state.template = t.value; state.rendered = false; state.response = null; }
+    if (sel === "template") {
+      state.templateId = t.value;
+      state.rendered = false;
+      state.response = null;
+      loadLayersForTemplate(t.value);
+    }
     else if (sel === "format") state.format = t.value;
     else if (sel === "page") state.page = t.value;
     else if (sel === "scope") state.scope = t.value;

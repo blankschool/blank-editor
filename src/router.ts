@@ -9,6 +9,9 @@
 export type Route = "login" | "console" | "editor";
 
 const ROUTES: Route[] = ["login", "console", "editor"];
+// Login has no real auth behind it yet — disabled for now, so the app boots straight into the
+// console instead of a screen that doesn't actually gate anything.
+const DEFAULT_ROUTE: Route = "console";
 
 export function navigate(route: Route) {
   location.hash = "/" + route;
@@ -19,7 +22,8 @@ export function initRouter(views: Record<Route, HTMLElement>, onShow: Partial<Re
     // Only the first path segment identifies the top-level route — a page can have its own
     // sub-routes after that (e.g. "#/console/keys"), which this router doesn't need to know about.
     const first = location.hash.replace(/^#\/?/, "").split("/")[0] as Route;
-    return ROUTES.includes(first) ? first : "login";
+    if (first === "login") return DEFAULT_ROUTE;
+    return ROUTES.includes(first) ? first : DEFAULT_ROUTE;
   }
 
   function apply() {
