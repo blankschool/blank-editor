@@ -1430,6 +1430,11 @@ let pendingDocument = false;
 
 /** Opens a template by id, preferring the server's copy over the local cache — the server is the source of truth once a template exists there. */
 export async function openTemplateById(id: string) {
+  // Encodes which template is open in the URL itself — without this, reloading (or opening a
+  // shared link) has no way to know which document to restore and falls back to a blank one.
+  if (location.hash !== `#/editor/${encodeURIComponent(id)}`) {
+    history.replaceState(null, "", `#/editor/${encodeURIComponent(id)}`);
+  }
   try {
     openTemplateDocument(await fetchTemplateFromServer(id));
     return;
@@ -1465,10 +1470,25 @@ export function currentTemplateDocument(): Doc | null {
   return doc.seedId ? structuredClone(doc) : null;
 }
 
+function templateIdFromHash(): string | null {
+  const match = /^#\/editor\/([^/?]+)/.exec(location.hash);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/** Restores whichever template the URL names — the fix for "refresh loses the open template". */
+function syncTemplateFromHash() {
+  const id = templateIdFromHash();
+  if (id && id !== doc.seedId) openTemplateById(id);
+}
+
+window.addEventListener("hashchange", syncTemplateFromHash);
+
 export function mountEditor() {
   if (editorMounted) return;
   editorMounted = true;
+  if (templateIdFromHash()) pendingDocument = true; // syncTemplateFromHash (below) is about to load it
   if (!pendingDocument) loadPersisted();
+  syncTemplateFromHash();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
   renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs();

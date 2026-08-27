@@ -1,4 +1,3 @@
-import { navigate } from "../router";
 import { openTemplateById } from "../editor";
 
 /**
@@ -289,8 +288,7 @@ async function createNewTemplate(name: string): Promise<string | null> {
   if (!res.ok) return "Não foi possível criar o template.";
   const { id } = await res.json();
   state.templatesLoaded = false; // force a refetch next time Templates is opened
-  await openTemplateById(id);
-  navigate("editor");
+  await openTemplateById(id); // also updates the URL to #/editor/<id>, which the router matches
   return null;
 }
 
@@ -322,8 +320,7 @@ async function importTemplateJson() {
   state.jsonDraft = "";
   state.jsonModalOpen = false;
   state.lastAdded = `JSON importado como template "${parsed.name}".`;
-  await openTemplateById(id);
-  navigate("editor");
+  await openTemplateById(id); // also updates the URL to #/editor/<id>
 }
 
 async function loadKeys() {
@@ -886,7 +883,7 @@ function bind() {
       case "go-keys": goToView("keys"); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
       case "new-template": openNamePrompt("new-template", "Nome do novo template"); break;
-      case "open-template": openTemplateById(el.dataset.id!); navigate("editor"); break;
+      case "open-template": openTemplateById(el.dataset.id!); break;
 
       case "pick-sort": state.sort = value!; render(); break;
       case "pick-period": state.period = value!; render(); break;
