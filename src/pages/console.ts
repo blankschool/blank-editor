@@ -26,10 +26,16 @@ function viewFromHash(): View {
 function goToView(view: View) {
   location.hash = `/console/${view}`;
 }
+
+function enterView(view: View) {
+  state.view = view;
+  if (view === "keys" && !state.keysLoaded) loadKeys();
+  render();
+}
 type LayerType = "text" | "image";
 
 interface Layer { id: number; type: LayerType; name: string; value: string; }
-interface ApiKey { id: number; name: string; secret: string; created: string; lastUsed: string; revealed: boolean; }
+interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
 interface AppDoc { name: string; meta: string; }
 
 interface State {
@@ -58,8 +64,10 @@ interface State {
   response: string | null;
   previewUrl: string | null;
   copiedCode: boolean;
-  copied: number | null;
+  copied: string | null;
   keys: ApiKey[];
+  keysLoaded: boolean;
+  newKeySecret: { id: string; secret: string } | null;
 }
 
 const state: State = {
@@ -94,11 +102,9 @@ const state: State = {
   previewUrl: null,
   copiedCode: false,
   copied: null,
-  keys: [
-    { id: 1, name: "production", secret: "sk_live_9f2b41ac77de", created: "Mar 12, 2026", lastUsed: "2h ago", revealed: false },
-    { id: 2, name: "staging", secret: "sk_test_4ac0e18bb3f1", created: "Apr 02, 2026", lastUsed: "5d ago", revealed: false },
-    { id: 3, name: "local-dev", secret: "sk_test_71de99c40aa2", created: "Jun 21, 2026", lastUsed: "never", revealed: false },
-  ],
+  keys: [],
+  keysLoaded: false,
+  newKeySecret: null,
 };
 
 const TEMPLATE_IDS: Record<string, string> = {
@@ -228,9 +234,35 @@ function addLayer(type: LayerType) {
   render();
 }
 
-function createKey() {
-  const rnd = () => Math.random().toString(16).slice(2, 8);
-  state.keys.unshift({ id: Date.now(), name: "key-" + (state.keys.length + 1), secret: "sk_test_" + rnd() + rnd(), created: "Aug 27, 2026", lastUsed: "never", revealed: true });
+async function loadKeys() {
+  state.keysLoaded = true; // set before the await so a second render() while loading doesn't refetch
+  try {
+    const res = await fetch("/api/v1/keys");
+    if (res.ok) state.keys = await res.json();
+  } catch { /* offline — the console still shows whatever was loaded before */ }
+  render();
+}
+
+async function createKey() {
+  const name = prompt("Nome da chave (ex: n8n, produção):");
+  if (!name) return;
+  const res = await fetch("/api/v1/keys", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) return;
+  const created = await res.json();
+  state.keys.unshift({ id: created.id, name: created.name, createdAt: created.createdAt, revoked: false });
+  state.newKeySecret = { id: created.id, secret: created.secret };
+  render();
+}
+
+async function revokeKey(id: string) {
+  const res = await fetch(`/api/v1/keys/${id}`, { method: "DELETE" });
+  if (!res.ok) return;
+  state.keys = state.keys.map((k) => (k.id === id ? { ...k, revoked: true } : k));
+  if (state.newKeySecret?.id === id) state.newKeySecret = null;
   render();
 }
 
@@ -552,17 +584,26 @@ function renderImport(): string {
 
 function renderKeys(): string {
   const s = state;
-  const rows = s.keys.map((k) => `
-    <div style="display:grid; grid-template-columns:0.9fr 2.4fr 0.7fr 0.7fr 92px; gap:16px; padding:13px 16px; border-bottom:1px solid var(--surface-2); align-items:center; font-size:12px;">
-      <span style="color:var(--text);">${esc(k.name)}</span>
-      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-        <span style="flex:1; min-width:0; font-family:var(--mono); font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(k.revealed ? k.secret : k.secret.slice(0, 8) + "••••••••••••")}</span>
-        <div data-action="toggle-key" data-id="${k.id}" style="cursor:pointer; flex:none; height:22px; padding:0 7px; border-radius:5px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:10px; color:var(--muted);">${k.revealed ? "Hide" : "Reveal"}</div>
-        <div data-action="copy-key" data-id="${k.id}" style="cursor:pointer; flex:none; height:22px; padding:0 7px; border-radius:5px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:10px; color:var(--muted);">${s.copied === k.id ? "Copied" : "Copy"}</div>
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+
+  const banner = s.newKeySecret ? `
+    <div style="border-radius:9px; border:1px solid var(--accent); background:#1a1f14; padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
+      <span style="font-size:12px; font-weight:500;">Chave criada — copie agora, ela não será mostrada de novo.</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="flex:1; font-family:var(--mono); font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(s.newKeySecret.secret)}</span>
+        <div data-action="copy-key" data-id="${s.newKeySecret.id}" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px;">${s.copied === s.newKeySecret.id ? "Copiado" : "Copiar"}</div>
+        <div data-action="dismiss-new-key" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); display:flex; align-items:center; font-size:11px; color:var(--muted);">Ok</div>
       </div>
-      <span style="color:var(--faint);">${esc(k.created)}</span>
-      <span style="color:var(--faint);">${esc(k.lastUsed)}</span>
-      <div data-action="revoke-key" data-id="${k.id}" style="cursor:pointer; justify-self:end; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px; color:var(--danger);">Revoke</div>
+    </div>` : "";
+
+  const rows = s.keys.map((k) => `
+    <div style="display:grid; grid-template-columns:1.2fr 2fr 1fr 92px; gap:16px; padding:13px 16px; border-bottom:1px solid var(--surface-2); align-items:center; font-size:12px; opacity:${k.revoked ? 0.5 : 1};">
+      <span style="color:var(--text);">${esc(k.name)}</span>
+      <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">${k.id === s.newKeySecret?.id ? "mostrada acima" : "••••••••••••"}</span>
+      <span style="color:var(--faint);">${fmtDate(k.createdAt)}${k.revoked ? " · revogada" : ""}</span>
+      ${k.revoked
+        ? ""
+        : `<div data-action="revoke-key" data-id="${k.id}" style="cursor:pointer; justify-self:end; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px; color:var(--danger);">Revoke</div>`}
     </div>`).join("");
 
   return `
@@ -570,7 +611,7 @@ function renderKeys(): string {
       <div style="display:flex; align-items:center; gap:16px;">
         <div style="display:flex; flex-direction:column; gap:5px;">
           <span style="font-family:var(--display); font-size:15px; font-weight:600;">API keys</span>
-          <span style="font-size:12px; color:var(--faint);">${s.keys.length}${s.keys.length === 1 ? " key" : " keys"} · rotate every 90 days</span>
+          <span style="font-size:12px; color:var(--faint);">${s.keys.length}${s.keys.length === 1 ? " key" : " keys"}</span>
         </div>
         <div style="flex:1;"></div>
         <div data-action="create-key" style="cursor:pointer; height:32px; padding:0 14px; border-radius:7px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
@@ -579,17 +620,19 @@ function renderKeys(): string {
         </div>
       </div>
 
+      ${banner}
+
       <div style="border-radius:7px; border:1px solid var(--border); background:var(--surface); overflow:hidden;">
-        <div style="display:grid; grid-template-columns:0.9fr 2.4fr 0.7fr 0.7fr 92px; gap:16px; padding:11px 16px; border-bottom:1px solid var(--border); background:var(--surface-2); font-size:11px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);">
-          <span>Name</span><span>Key</span><span>Created</span><span>Last used</span><span></span>
+        <div style="display:grid; grid-template-columns:1.2fr 2fr 1fr 92px; gap:16px; padding:11px 16px; border-bottom:1px solid var(--border); background:var(--surface-2); font-size:11px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);">
+          <span>Name</span><span>Key</span><span>Created</span><span></span>
         </div>
         ${rows}
-        ${s.keys.length === 0 ? `<div style="padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">no keys — create one to start</div>` : ""}
+        ${s.keys.length === 0 ? `<div style="padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">nenhuma chave — crie uma pra começar</div>` : ""}
       </div>
 
       <div style="border-radius:7px; border:1px dashed var(--border); padding:14px 16px; display:flex; gap:12px; align-items:flex-start;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.3" stroke-linecap="round" style="flex:none; margin-top:1px;"><circle cx="8" cy="8" r="6.2"></circle><path d="M8 7.2v4"></path><path d="M8 4.9v.1"></path></svg>
-        <span style="font-size:12px; line-height:1.6; color:var(--faint); max-width:620px;">Keys are shown once at creation. Revoking takes effect immediately across all environments.</span>
+        <span style="font-size:12px; line-height:1.6; color:var(--faint); max-width:620px;">A chave só é mostrada uma vez, no momento em que é criada. Revogar tem efeito imediato.</span>
       </div>
     </div>`;
 }
@@ -619,7 +662,7 @@ function bind() {
 
   window.addEventListener("hashchange", () => {
     const view = viewFromHash();
-    if (view !== state.view) { state.view = view; render(); }
+    if (view !== state.view) enterView(view);
   });
 
   root.addEventListener("click", (ev) => {
@@ -697,19 +740,17 @@ function bind() {
       case "pick-app-doc": state.appDoc = value!; render(); break;
 
       case "create-key": createKey(); break;
-      case "toggle-key":
-        state.keys = state.keys.map((k) => (k.id === id ? { ...k, revealed: !k.revealed } : k));
-        render();
-        break;
       case "copy-key": {
-        const k = state.keys.find((x) => x.id === id);
-        if (k) navigator.clipboard?.writeText(k.secret).catch(() => {});
-        state.copied = id; render();
+        const rawId = el.dataset.id!;
+        const secret = state.newKeySecret?.id === rawId ? state.newKeySecret.secret : rawId;
+        navigator.clipboard?.writeText(secret).catch(() => {});
+        state.copied = rawId; render();
         clearTimeout(copyKeyTimer);
         copyKeyTimer = setTimeout(() => { state.copied = null; render(); }, 1200);
         break;
       }
-      case "revoke-key": state.keys = state.keys.filter((k) => k.id !== id); render(); break;
+      case "dismiss-new-key": state.newKeySecret = null; render(); break;
+      case "revoke-key": revokeKey(el.dataset.id!); break;
 
       default:
         if (action.startsWith("pick-lang-")) { state.lang = action.slice("pick-lang-".length) as State["lang"]; render(); }
@@ -760,11 +801,11 @@ function bind() {
 export function mountConsole(container: HTMLElement) {
   root = container;
   bind();
-  state.view = viewFromHash();
+  const view = viewFromHash();
   // Canonicalize a bare "#/console" (or a stale/unknown sub-route) to the view actually shown,
   // so the address bar, refresh, and back/forward all agree with what's on screen.
-  if (location.hash.startsWith("#/console") && location.hash !== `#/console/${state.view}`) {
-    history.replaceState(null, "", `#/console/${state.view}`);
+  if (location.hash.startsWith("#/console") && location.hash !== `#/console/${view}`) {
+    history.replaceState(null, "", `#/console/${view}`);
   }
-  render();
+  enterView(view);
 }
