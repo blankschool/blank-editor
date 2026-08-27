@@ -246,14 +246,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .pagethumb .plabel { font-size: 9.5px; color: var(--faint); }
 .pagethumb[aria-selected="true"] .plabel { color: var(--accent); font-weight: 600; }
 .pagethumb .pdup {
-  position: absolute; top: -5px; right: 16px; width: 17px; height: 17px; border-radius: 50%;
+  position: absolute; top: 4px; right: 24px; width: 17px; height: 17px; border-radius: 50%;
   background: var(--surface); border: 1px solid var(--border); color: var(--muted);
   display: none; place-items: center; box-shadow: var(--shadow);
 }
 .pagethumb:hover .pdup { display: grid; }
 .pagethumb .pdup:hover { color: var(--text); border-color: var(--text); }
 .pagethumb .pdel {
-  position: absolute; top: -5px; right: -5px; width: 17px; height: 17px; border-radius: 50%;
+  position: absolute; top: 4px; right: 4px; width: 17px; height: 17px; border-radius: 50%;
   background: var(--surface); border: 1px solid var(--border); color: var(--muted);
   display: none; place-items: center; box-shadow: var(--shadow);
 }
