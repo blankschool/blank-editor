@@ -1,13 +1,15 @@
 /**
  * Approximate glyph width per point size, for a proportional sans-serif font.
  * There is no real font metrics engine here (no browser, no canvas) — this
- * ratio is tuned against Inter/system-ui at normal weight and is good enough
- * to keep wraps visually close, not pixel-perfect.
+ * ratio is tuned against Inter/system-ui and is good enough to keep wraps and
+ * single-line positioning visually close, not pixel-perfect. Exported so every
+ * caller (wrapping, single-line layout) shares one number instead of drifting.
  */
-const AVG_CHAR_WIDTH_RATIO = 0.52;
+export const AVG_CHAR_WIDTH_RATIO = 0.52;
+export const BOLD_CHAR_WIDTH_RATIO = 0.58;
 
-function estimateWidth(text: string, fontSize: number): number {
-  return text.length * fontSize * AVG_CHAR_WIDTH_RATIO;
+export function estimateTextWidth(text: string, fontSize: number, ratio: number = AVG_CHAR_WIDTH_RATIO): number {
+  return text.length * fontSize * ratio;
 }
 
 function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): string[] {
@@ -19,7 +21,7 @@ function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): s
 
   for (const word of words) {
     const candidate = current === "" ? word : `${current} ${word}`;
-    if (estimateWidth(candidate, fontSize) <= maxWidth || current === "") {
+    if (estimateTextWidth(candidate, fontSize) <= maxWidth || current === "") {
       current = candidate;
       continue;
     }
@@ -32,7 +34,7 @@ function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): s
 }
 
 function breakLongWord(line: string, maxWidth: number, fontSize: number): string[] {
-  if (estimateWidth(line, fontSize) <= maxWidth) return [line];
+  if (estimateTextWidth(line, fontSize) <= maxWidth) return [line];
 
   const maxChars = Math.max(1, Math.floor(maxWidth / (fontSize * AVG_CHAR_WIDTH_RATIO)));
   const chunks: string[] = [];

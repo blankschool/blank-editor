@@ -12,17 +12,17 @@ export interface ComposeTweetInput extends Omit<TweetInput, "hasMedia"> {
   mediaBuffer?: Buffer;
 }
 
+function maskSvg(width: number, height: number, shape: string): Buffer {
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${shape}</svg>`);
+}
+
 function circleMask(size: number): Buffer {
   const r = size / 2;
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><circle cx="${r}" cy="${r}" r="${r}" fill="#fff"/></svg>`,
-  );
+  return maskSvg(size, size, `<circle cx="${r}" cy="${r}" r="${r}" fill="#fff"/>`);
 }
 
 function roundedRectMask(width: number, height: number, radius: number): Buffer {
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" rx="${radius}" fill="#fff"/></svg>`,
-  );
+  return maskSvg(width, height, `<rect width="${width}" height="${height}" rx="${radius}" fill="#fff"/>`);
 }
 
 function maskToFit(raw: Buffer, box: { width: number; height: number }, mask: Buffer): Promise<Buffer> {

@@ -1,5 +1,7 @@
-import { isIPv4, isIPv6 } from "node:net";
-import dns from "node:dns/promises";
+import { type LookupFunction } from "node:net";
+import dns from "node:dns";
+import ipaddr from "ipaddr.js";
+import { Agent, fetch as undiciFetch } from "undici";
 
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 8000;
@@ -7,28 +9,20 @@ const MAX_REDIRECTS = 5;
 
 /** True if `address` (a literal IPv4 or IPv6) is loopback, private, link-local, or otherwise non-routable. */
 export function isPrivateAddress(address: string): boolean {
-  if (isIPv4(address)) {
-    const [a, b] = address.split(".").map(Number);
-    if (a === 127) return true; // loopback
-    if (a === 10) return true; // RFC1918
-    if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-    if (a === 192 && b === 168) return true; // RFC1918
-    if (a === 169 && b === 254) return true; // link-local + cloud metadata
-    if (a === 0) return true; // "this network"
-    return false;
-  }
-  if (isIPv6(address)) {
-    const normalized = address.toLowerCase();
-    if (normalized === "::1") return true; // loopback
-    if (normalized.startsWith("fe80:")) return true; // link-local
-    if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // unique local
-    return false;
-  }
-  // Not a literal IP — caller should have resolved it first. Fail closed.
-  return true;
+  if (!ipaddr.isValid(address)) return true;
+  // process() normalizes IPv4-mapped IPv6 addresses before classification, so
+  // forms such as ::ffff:127.0.0.1 cannot bypass the IPv4 loopback rules.
+  return ipaddr.process(address).range() !== "unicast";
 }
 
-/** Throws if `url` is not a well-formed, non-empty http(s) URL pointing at a literal private/loopback host. */
+/**
+ * Throws if `url` is not a well-formed http(s) URL, or names a private host as a literal
+ * (an IP in the URL itself, or "localhost"). This is a fast, synchronous pre-check for the
+ * common case — it cannot see through DNS, so it is NOT the SSRF guard by itself. The
+ * authoritative check is `pickPublicAddress`, applied to the address actually used to
+ * connect (see `guardedDispatcher` below), which is what closes the DNS-rebinding gap a
+ * "resolve once, fetch separately" check would leave open.
+ */
 export function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
@@ -39,41 +33,67 @@ export function assertPublicHttpUrl(url: string): URL {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`image URL must be http(s): ${url}`);
   }
-  const host = parsed.hostname;
-  if (host === "localhost" || (isIPv4(host) || isIPv6(host) ? isPrivateAddress(host) : false)) {
+  // Node's URL.hostname retains square brackets around IPv6 literals; address
+  // parsers (and the socket) use the unbracketed value.
+  const host = parsed.hostname.startsWith("[") ? parsed.hostname.slice(1, -1) : parsed.hostname;
+  if (host === "localhost" || (ipaddr.isValid(host) && isPrivateAddress(host))) {
     throw new Error(`image URL points at a private host: ${url}`);
   }
   return parsed;
 }
 
-async function resolveAndCheck(hostname: string): Promise<void> {
-  if (isIPv4(hostname) || isIPv6(hostname)) {
-    if (isPrivateAddress(hostname)) throw new Error(`image host resolves to a private address: ${hostname}`);
-    return;
-  }
-  const records = await dns.lookup(hostname, { all: true });
-  for (const { address } of records) {
-    if (isPrivateAddress(address)) {
-      throw new Error(`image host resolves to a private address: ${hostname} -> ${address}`);
-    }
-  }
+/** Picks the address a guarded lookup should hand back to the socket, refusing the whole answer if any resolved address is private. */
+export function pickPublicAddress(
+  hostname: string,
+  addresses: Array<{ address: string; family: number }>,
+): { address: string; family: number } {
+  if (addresses.length === 0) throw new Error(`image host did not resolve to any address: ${hostname}`);
+  const bad = addresses.find((a) => isPrivateAddress(a.address));
+  if (bad) throw new Error(`image host resolves to a private address: ${hostname} -> ${bad.address}`);
+  return addresses[0];
 }
 
 /**
- * Fetches an image over HTTP(S), rejecting requests that resolve to private/loopback
- * addresses (SSRF guard) at every hop of a redirect chain, and capping response size.
+ * A dns.lookup-compatible function that validates every address before handing it to the
+ * socket that will actually connect — the DNS answer used for validation is the same one
+ * used for the connection, so a hostname can't answer differently between check and connect.
+ */
+const guardedLookup: LookupFunction = (hostname, options, callback) => {
+  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err, options.all ? [] : "");
+    try {
+      const picked = pickPublicAddress(hostname, addresses);
+      if (options.all) {
+        callback(null, addresses);
+      } else {
+        callback(null, picked.address, picked.family);
+      }
+    } catch (guardErr) {
+      callback(guardErr as NodeJS.ErrnoException, options.all ? [] : "");
+    }
+  });
+};
+
+const guardedDispatcher = new Agent({ connect: { lookup: guardedLookup } });
+
+/**
+ * Fetches an image over HTTP(S), rejecting requests that resolve to private/loopback/
+ * metadata addresses (SSRF guard) at every hop of a redirect chain — including at the
+ * moment of the actual TCP connect, not just an earlier DNS check — and caps response size.
  */
 export async function fetchImage(url: string): Promise<Buffer> {
   let current = assertPublicHttpUrl(url);
 
   for (let hop = 0; ; hop++) {
-    await resolveAndCheck(current.hostname);
-
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let res: Response;
+    let res: Awaited<ReturnType<typeof undiciFetch>>;
     try {
-      res = await fetch(current, { redirect: "manual", signal: controller.signal });
+      res = await undiciFetch(current, {
+        dispatcher: guardedDispatcher,
+        redirect: "manual",
+        signal: controller.signal,
+      });
     } finally {
       clearTimeout(timeout);
     }

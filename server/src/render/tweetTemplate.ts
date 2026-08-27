@@ -1,5 +1,5 @@
 import { escapeXml } from "./svg.ts";
-import { wrapText } from "./wrapText.ts";
+import { wrapText, estimateTextWidth, BOLD_CHAR_WIDTH_RATIO } from "./wrapText.ts";
 
 export const TWEET_WIDTH = 566;
 
@@ -86,7 +86,7 @@ export function buildTweetSvg(input: TweetInput): BuiltTweet {
     `<text x="${HEADER_TEXT_X}" y="${nameY + 15}" font-size="${NAME_FONT_SIZE}" font-weight="700" fill="${COLOR_PRIMARY}">${escapeXml(input.displayName)}</text>`,
   );
   if (input.verified) {
-    const nameWidth = estimateTextWidth(input.displayName, NAME_FONT_SIZE, 700);
+    const nameWidth = estimateTextWidth(input.displayName, NAME_FONT_SIZE, BOLD_CHAR_WIDTH_RATIO);
     const badgeX = HEADER_TEXT_X + nameWidth + 6;
     parts.push(
       `<g id="verifiedBadge" transform="translate(${badgeX}, ${nameY + 2})"><path fill="${COLOR_VERIFIED}" d="${VERIFIED_BADGE_PATH}"/></g>`,
@@ -117,12 +117,6 @@ export function buildTweetSvg(input: TweetInput): BuiltTweet {
     svg: parts.join(""),
     layout: { width: TWEET_WIDTH, height, avatarBox, mediaBox },
   };
-}
-
-/** Same rough heuristic as wrapText, just exposed for single-line positioning (e.g. the verified badge). */
-function estimateTextWidth(text: string, fontSize: number, weight: number): number {
-  const ratio = weight >= 700 ? 0.58 : 0.52;
-  return text.length * fontSize * ratio;
 }
 
 export { MEDIA_RADIUS };
