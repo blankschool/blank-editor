@@ -1,15 +1,16 @@
 # Blank Editor
 
-Editor de canvas com uma API opcional de renderização. O frontend continua
-gerando um HTML único; no desenvolvimento local, o servidor transforma o
-template Twitter editado no canvas em PNG.
+Editor de canvas com uma API de renderização de verdade por trás (`server/`).
+Templates desenhados no canvas viram recursos reais no servidor — não mais um
+arquivo HTML único: é um app hospedado, com backend em Postgres/memória e uma
+API que o n8n (ou qualquer cliente HTTP) pode chamar.
 
 ## Rodar
 
 ```bash
 npm install     # uma vez
 npm run dev     # localhost com recarga instantânea
-npm run build   # gera dist/index.html
+npm run build   # gera dist/ (build normal, servido por qualquer host estático)
 ```
 
 Para usar o playground e renderizar o template localmente, abra outro terminal:
@@ -29,7 +30,7 @@ no navegador e enviadas junto com o pedido de renderização. A chave local é
 | Comando | O que faz |
 | --- | --- |
 | `npm run dev` | servidor de desenvolvimento com hot reload |
-| `npm run build` | checa tipos e gera `dist/index.html` (arquivo único) |
+| `npm run build` | checa tipos e gera `dist/` |
 | `npm run check` | só a checagem de tipos |
 | `npm test` | testa o documento editável do Twitter |
 | `npm run test:fidelity` | compara o render com as referências do Figma |
@@ -96,12 +97,6 @@ somente a chave e o template em memória.
 
 ## Publicar
 
-`dist/index.html` é o entregável. Não há passo extra: é o mesmo arquivo que vai
-para o Artifact.
-
-## Limites do formato Artifact
-
-- teto de **16MB** por arquivo — hoje em 6,2MB com um carrossel;
-- sem CDN (o CSP bloqueia), então nada de bibliotecas em runtime; a única
-  exceção é o Google Fonts;
-- download só pela API do próprio Artifact, que é o que `Exportar` usa.
+`dist/` (frontend) e `server/` (API) são deploys separados — o frontend é
+estático, o servidor precisa de Node + Postgres. Veja `server/Dockerfile` e
+`server/.env.example`.
