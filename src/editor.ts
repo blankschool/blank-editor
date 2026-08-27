@@ -2,11 +2,8 @@ import "./styles.css";
 import SEED_JSON from "./seed.json";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
-import {
-  loadTweetTemplateDocument,
-  saveTweetTemplateDocument,
-  TWEET_TEMPLATE_ID,
-} from "./tweetTemplateDoc";
+import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
+import { fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer } from "./templateStore";
 
 declare global {
   interface Window {
@@ -107,7 +104,8 @@ function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
-    saveTweetTemplateDocument(doc);
+    saveTemplateLocally(doc);
+    syncTemplateToServer(doc);
   }, 400);
 }
 function loadPersisted() {
@@ -1437,8 +1435,24 @@ function renderAll() {
 let editorMounted = false;
 let pendingDocument = false;
 
+/** Opens a template by id, preferring the server's copy over the local cache — the server is the source of truth once a template exists there. */
+export async function openTemplateById(id: string) {
+  try {
+    openTemplateDocument(await fetchTemplateFromServer(id));
+    return;
+  } catch { /* offline, or not created on the server yet — fall back to whatever's local */ }
+  const local = loadTemplateLocally(id) ?? (id === TWEET_TEMPLATE_ID ? createTweetTemplateDocument() : null);
+  if (local) openTemplateDocument(local);
+  else toast("Não foi possível abrir esse template.");
+}
+
 export function openTweetTemplate() {
-  if (doc.seedId !== TWEET_TEMPLATE_ID) doc = loadTweetTemplateDocument();
+  return openTemplateById(TWEET_TEMPLATE_ID);
+}
+
+/** Opens any template document (by value) on the canvas — used for the seed template, an imported JSON file, or one fetched from the server by id. */
+export function openTemplateDocument(templateDoc: Doc) {
+  doc = templateDoc;
   doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
   pendingDocument = true;
   sel = [];
@@ -1453,8 +1467,9 @@ export function openTweetTemplate() {
   }
 }
 
-export function currentTweetTemplateDocument(): Doc {
-  return doc.seedId === TWEET_TEMPLATE_ID ? structuredClone(doc) : loadTweetTemplateDocument();
+/** The document on the canvas right now, if it's a template (has a seedId) — null for the untitled/default design. */
+export function currentTemplateDocument(): Doc | null {
+  return doc.seedId ? structuredClone(doc) : null;
 }
 
 export function mountEditor() {

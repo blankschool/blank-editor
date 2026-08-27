@@ -10,7 +10,8 @@
     "noUnusedLocals": false,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["src", "scripts", "tests"],
   "exclude": ["src/**/*.test.ts"]

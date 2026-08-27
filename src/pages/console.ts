@@ -1,5 +1,5 @@
 import { navigate } from "../router";
-import { currentTweetTemplateDocument, openTweetTemplate } from "../editor";
+import { openTemplateById } from "../editor";
 
 /**
  * Ported from "Wireframe Sidebar.dc.html". Same focus-preservation rule as
@@ -30,12 +30,14 @@ function goToView(view: View) {
 function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
+  if (view === "templates" && !state.templatesLoaded) loadTemplates();
   render();
 }
 type LayerType = "text" | "image";
 
 interface Layer { id: number; type: LayerType; name: string; value: string; }
 interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
+interface TemplateSummary { id: string; name: string; updatedAt: string; }
 interface AppDoc { name: string; meta: string; }
 
 interface State {
@@ -49,10 +51,9 @@ interface State {
   collapsed: boolean;
   sort: string;
   period: string;
-  impTab: "Texto" | "Imagens" | "Fontes" | "Apps";
+  impTab: "JSON" | "Imagens" | "Fontes" | "Apps";
   importUrl: string;
-  textDraft: string;
-  textModalOpen: boolean;
+  jsonModalOpen: boolean;
   lastAdded: string;
   app: "Canva" | "Figma" | null;
   appUrl: string;
@@ -68,6 +69,10 @@ interface State {
   keys: ApiKey[];
   keysLoaded: boolean;
   newKeySecret: { id: string; secret: string } | null;
+  templates: TemplateSummary[];
+  templatesLoaded: boolean;
+  jsonDraft: string;
+  jsonError: string | null;
 }
 
 const state: State = {
@@ -86,10 +91,9 @@ const state: State = {
   collapsed: false,
   sort: "Ordem",
   period: "Todos",
-  impTab: "Texto",
+  impTab: "JSON",
   importUrl: "",
-  textDraft: "",
-  textModalOpen: false,
+  jsonModalOpen: false,
   lastAdded: "",
   app: null,
   appUrl: "",
@@ -105,6 +109,10 @@ const state: State = {
   keys: [],
   keysLoaded: false,
   newKeySecret: null,
+  templates: [],
+  templatesLoaded: false,
+  jsonDraft: "",
+  jsonError: null,
 };
 
 const TEMPLATE_IDS: Record<string, string> = {
@@ -112,7 +120,6 @@ const TEMPLATE_IDS: Record<string, string> = {
 };
 
 const IMP_META: Record<string, { placeholder: string; accept: string }> = {
-  Texto: { placeholder: "", accept: "" },
   Imagens: { placeholder: "https://cdn.exemplo.com/foto.png", accept: "png · jpg · webp · svg" },
   Fontes: { placeholder: "https://fonts.exemplo.com/familia.woff2", accept: "woff2 · woff · ttf · otf" },
 };
@@ -138,8 +145,8 @@ const APP_META: Record<string, { hint: string; placeholder: string; docs: AppDoc
   },
 };
 
-const TEXT_PLACEHOLDER =
-  "Bloco #1\n\nSeu primeiro bloco aqui…\n\n================================================================\n\nBloco #2\n\nSegundo bloco…";
+const JSON_PLACEHOLDER =
+  '{\n  "name": "Meu template",\n  "pages": [\n    { "w": 1080, "h": 1350, "bg": "#000000", "els": [] }\n  ]\n}';
 
 let root: HTMLElement;
 let bound = false;
@@ -170,15 +177,15 @@ function snippetFor(lang: State["lang"]): string {
   const tid = TEMPLATE_IDS[s.template];
 
   if (lang === "Python") {
-    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={\n        "template": "${tid}",\n        "layers": ${jsonLayers},\n        "document": template_document,  # JSON salvo pelo editor\n    },\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
+    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", "layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
   }
   if (lang === "cURL") {
-    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}","layers":${jsonLayers},"document":{...}}' \\\n  --output twitter.png`;
+    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}","layers":${jsonLayers}}' \\\n  --output twitter.png`;
   }
   if (lang === "PHP") {
-    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n        "layers"   => $layers,\n        "document" => $templateDocument,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
+    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n        "layers"   => $layers,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
   }
-  return `const templateDocument = JSON.parse(\n  localStorage.getItem("blank-editor-template-tweet-screenshot-v1"),\n);\n\nconst response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({\n    template: "${tid}",\n    layers: ${jsonLayers},\n    document: templateDocument,\n  }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
+  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template: "${tid}", layers: ${jsonLayers} }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
 }
 
 function patchSnippetLive() {
@@ -201,7 +208,6 @@ async function startRender() {
       body: JSON.stringify({
         template: TEMPLATE_IDS[state.template],
         layers: requestLayers(),
-        document: currentTweetTemplateDocument(),
       }),
     });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
@@ -232,6 +238,63 @@ function addLayer(type: LayerType) {
   const n = state.layers.filter((l) => l.type === type).length + 1;
   state.layers.push({ id: Date.now(), type, name: (type === "text" ? "texto_" : "imagem_") + n, value: "" });
   render();
+}
+
+async function loadTemplates() {
+  state.templatesLoaded = true;
+  try {
+    const res = await fetch("/api/v1/templates");
+    if (res.ok) state.templates = await res.json();
+  } catch { /* offline — keep whatever was loaded before */ }
+  render();
+}
+
+async function createNewTemplate() {
+  const name = prompt("Nome do novo template:");
+  if (!name) return;
+  const blank = { name, active: 0, pages: [{ id: "page-1", w: 1080, h: 1350, bg: "#000000", els: [] }] };
+  const res = await fetch("/api/v1/templates", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, document: blank }),
+  });
+  if (!res.ok) { alert("Não foi possível criar o template."); return; }
+  const { id } = await res.json();
+  state.templatesLoaded = false; // force a refetch next time Templates is opened
+  await openTemplateById(id);
+  navigate("editor");
+}
+
+/** Validates a pasted/uploaded JSON document well enough to try opening it — the editor is the real judge of whether it's fully usable. */
+function parseTemplateJson(raw: string): { name: string; document: unknown } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const candidate = parsed as { name?: string; pages?: unknown[] } | null;
+  if (!candidate || !Array.isArray(candidate.pages) || candidate.pages.length === 0) return null;
+  return { name: candidate.name || "Template importado", document: candidate };
+}
+
+async function importTemplateJson() {
+  const parsed = parseTemplateJson(state.jsonDraft);
+  if (!parsed) { state.jsonError = "JSON inválido — precisa ter um array \"pages\" com pelo menos uma página."; render(); return; }
+  state.jsonError = null;
+  const res = await fetch("/api/v1/templates", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(parsed),
+  });
+  if (!res.ok) { state.jsonError = "O servidor recusou esse template."; render(); return; }
+  const { id } = await res.json();
+  state.templatesLoaded = false;
+  state.jsonDraft = "";
+  state.jsonModalOpen = false;
+  state.lastAdded = `JSON importado como template "${parsed.name}".`;
+  await openTemplateById(id);
+  navigate("editor");
 }
 
 async function loadKeys() {
@@ -340,7 +403,13 @@ function renderTemplates(): string {
   const sortChips = ["Ordem", "A-Z"].map((n) => chip(n, s.sort === n, "pick-sort", n)).join("");
   const periodChips = ["Todos", "Hoje", "7D", "14D", "30D"].map((n) => chip(n, s.period === n, "pick-period", n)).join("");
   const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, #1E1E1B 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
-  const cards = `<div data-action="open-twitter-template" style="${cardStyle}; flex-direction:column; gap:8px;"><strong style="font-family:var(--display); font-size:14px; color:var(--text);">Twitter mínimo</strong><span>clique para editar · nome · @ · texto · foto</span></div>`;
+  const cards = s.templates.length
+    ? s.templates.map((t) => `
+      <div data-action="open-template" data-id="${t.id}" style="${cardStyle}; flex-direction:column; gap:8px;">
+        <strong style="font-family:var(--display); font-size:14px; color:var(--text);">${esc(t.name)}</strong>
+        <span>clique para editar no canvas</span>
+      </div>`).join("")
+    : `<div style="grid-column:1/-1; padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${s.templatesLoaded ? "nenhum template ainda — crie um ou importe um JSON" : "carregando…"}</div>`;
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; padding:20px;">
@@ -358,7 +427,7 @@ function renderTemplates(): string {
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.4V2.6"></path><path d="M5.2 5.4 8 2.6l2.8 2.8"></path><path d="M2.6 10.9v1.9c0 .4.3.6.7.6h9.4c.4 0 .7-.2.7-.6v-1.9"></path></svg>
           <span>Importar</span>
         </div>
-        <div data-action="open-editor" style="cursor:pointer; height:34px; padding:0 14px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
+        <div data-action="new-template" style="cursor:pointer; height:34px; padding:0 14px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.2v9.6"></path><path d="M3.2 8h9.6"></path></svg>
           <span>Novo template</span>
         </div>
@@ -399,7 +468,7 @@ function renderPlayground(): string {
           <span style="font-size:13px; font-weight:500;">Template</span>
           <select data-select="template" class="console-field">${selOptions(s.template, Object.keys(TEMPLATE_IDS))}</select>
           <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(TEMPLATE_IDS[s.template])}</span>
-          <div data-action="open-twitter-template" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
+          <div data-action="open-template" data-id="${esc(TEMPLATE_IDS[s.template])}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
@@ -456,32 +525,24 @@ function renderPlayground(): string {
 
 function renderImport(): string {
   const s = state;
-  const meta = IMP_META[s.impTab] || IMP_META.Texto;
+  const meta = IMP_META[s.impTab] || IMP_META.Imagens;
   const app = s.app ? APP_META[s.app] : null;
 
-  const words = s.textDraft.trim() ? s.textDraft.trim().split(/\s+/).length : 0;
-  const raw = s.textDraft.trim();
-  const blocks = raw
-    ? raw.split(/\n\s*={3,}\s*\n|\n(?=\s*(?:bloco|tweet|post)\s*#\d+)/i).map((x) => x.trim()).filter(Boolean).length
-    : 0;
-  const textStats = `${blocks}${blocks === 1 ? " bloco" : " blocos"} · ${words} palavras`;
-
-  const impTabs = (["Texto", "Imagens", "Fontes", "Apps"] as const)
+  const impTabs = (["JSON", "Imagens", "Fontes", "Apps"] as const)
     .map((n) => tab(n, s.impTab === n, "pick-imp-" + n)).join("");
 
   let body = "";
-  if (s.impTab === "Texto") {
+  if (s.impTab === "JSON") {
     body = `
       <div style="border-radius:12px; border:1px solid var(--border); background:var(--surface); padding:18px; display:flex; flex-direction:column; gap:14px; max-width:620px;">
         <div style="display:flex; align-items:center; gap:10px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
-          <span style="flex:1; font-size:14px; font-weight:500;">Importar texto</span>
-          <span id="textStatsA" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(textStats)}</span>
+          <span style="flex:1; font-size:14px; font-weight:500;">Importar JSON</span>
         </div>
-        <span style="font-size:12px; line-height:1.6; color:var(--faint);">Cole o texto e os blocos serão detectados automaticamente por delimitadores (===) ou cabeçalhos (Bloco #1, Bloco #2…).</span>
-        <div data-action="open-text-modal" style="cursor:pointer; align-self:flex-start; height:38px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500;">
+        <span style="font-size:12px; line-height:1.6; color:var(--faint);">Cole ou envie um arquivo .json com o mesmo formato que o editor salva (um documento com "pages"). Ele vira um template novo, editável no canvas.</span>
+        <div data-action="open-json-modal" style="cursor:pointer; align-self:flex-start; height:38px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
-          <span>Colar texto</span>
+          <span>Importar JSON</span>
         </div>
       </div>`;
   } else if (s.impTab === "Apps") {
@@ -517,24 +578,29 @@ function renderImport(): string {
       </div>`;
   }
 
-  const textModal = s.textModalOpen ? `
-    <div data-action="close-text-modal" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:30; padding:24px;">
+  const jsonModal = s.jsonModalOpen ? `
+    <div data-action="close-json-modal" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:30; padding:24px;">
       <div data-stop="1" style="position:relative; width:100%; max-width:640px; max-height:80vh; overflow:auto; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:24px; display:flex; flex-direction:column; gap:16px;">
         <div style="display:flex; align-items:center; gap:9px; padding-right:32px;">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
-          <span style="font-family:var(--display); font-size:17px; font-weight:600; letter-spacing:-0.01em;">Importar texto</span>
+          <span style="font-family:var(--display); font-size:17px; font-weight:600; letter-spacing:-0.01em;">Importar JSON</span>
         </div>
-        <span style="font-size:12px; line-height:1.6; color:var(--faint);">Cole seu texto abaixo. Os blocos serão detectados automaticamente por delimitadores (===) ou cabeçalhos (Bloco #1, Bloco #2…).</span>
-        <textarea id="textDraftArea" data-field="textDraft" spellcheck="false" placeholder="${esc(TEXT_PLACEHOLDER)}" style="min-height:300px; resize:vertical; border-radius:8px; border:1px solid var(--border); background:#161614; color:var(--text); padding:12px; font-family:var(--mono); font-size:12px; line-height:1.7; outline:none;">${esc(s.textDraft)}</textarea>
+        <label for="jsonFileInput" style="cursor:pointer; border-radius:10px; border:1px dashed var(--border); background:#161614; padding:20px; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;">
+          <span style="font-size:13px; color:var(--muted);">Clique para escolher um arquivo .json</span>
+          <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">ou cole o conteúdo abaixo</span>
+        </label>
+        <input type="file" id="jsonFileInput" accept="application/json,.json" hidden />
+        <textarea id="jsonDraftArea" data-field="jsonDraft" spellcheck="false" placeholder="${esc(JSON_PLACEHOLDER)}" style="min-height:260px; resize:vertical; border-radius:8px; border:1px solid var(--border); background:#161614; color:var(--text); padding:12px; font-family:var(--mono); font-size:12px; line-height:1.7; outline:none;">${esc(s.jsonDraft)}</textarea>
+        ${s.jsonError ? `<span style="font-size:12px; color:var(--danger);">${esc(s.jsonError)}</span>` : ""}
         <div style="display:flex; align-items:center; gap:10px;">
-          <span id="textStatsB" style="flex:1; font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(textStats)}</span>
-          <div data-action="close-text-modal" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:13px; color:var(--text);">Cancelar</div>
-          <div id="importTextBtn" data-action="import-text" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; opacity:${blocks ? "1" : "0.45"};">
+          <span style="flex:1; font-family:var(--mono); font-size:11px; color:var(--faint);">${s.jsonDraft.trim() ? "pronto para importar" : "nada colado ainda"}</span>
+          <div data-action="close-json-modal" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:13px; color:var(--text);">Cancelar</div>
+          <div id="importJsonBtn" data-action="import-json" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; opacity:${s.jsonDraft.trim() ? "1" : "0.45"};">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
-            <span id="importTextLabel">Importar ${blocks}${blocks === 1 ? " bloco" : " blocos"}</span>
+            <span>Importar</span>
           </div>
         </div>
-        <div data-action="close-text-modal" style="cursor:pointer; position:absolute; right:14px; top:14px; width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
+        <div data-action="close-json-modal" style="cursor:pointer; position:absolute; right:14px; top:14px; width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
         </div>
       </div>
@@ -578,7 +644,7 @@ function renderImport(): string {
       <div style="display:flex; align-items:center; gap:4px; padding:5px; border-radius:10px; border:1px solid var(--border); background:var(--surface); align-self:flex-start;">${impTabs}</div>
       ${body}
     </div>
-    ${textModal}
+    ${jsonModal}
     ${appModal}`;
 }
 
@@ -686,8 +752,8 @@ function bind() {
       case "go-import": goToView("import"); break;
       case "go-keys": goToView("keys"); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
-      case "open-editor": navigate("editor"); break;
-      case "open-twitter-template": openTweetTemplate(); navigate("editor"); break;
+      case "new-template": createNewTemplate(); break;
+      case "open-template": openTemplateById(el.dataset.id!); navigate("editor"); break;
 
       case "pick-sort": state.sort = value!; render(); break;
       case "pick-period": state.period = value!; render(); break;
@@ -705,21 +771,13 @@ function bind() {
         copyCodeTimer = setTimeout(() => { state.copiedCode = false; render(); }, 1200);
         break;
 
-      case "pick-imp-Texto": state.impTab = "Texto"; render(); break;
+      case "pick-imp-JSON": state.impTab = "JSON"; render(); break;
       case "pick-imp-Imagens": state.impTab = "Imagens"; render(); break;
       case "pick-imp-Fontes": state.impTab = "Fontes"; render(); break;
       case "pick-imp-Apps": state.impTab = "Apps"; render(); break;
-      case "open-text-modal": state.textModalOpen = true; render(); break;
-      case "close-text-modal": state.textModalOpen = false; render(); break;
-      case "import-text": {
-        const raw = state.textDraft.trim();
-        const blocks = raw ? raw.split(/\n\s*={3,}\s*\n|\n(?=\s*(?:bloco|tweet|post)\s*#\d+)/i).map((x) => x.trim()).filter(Boolean).length : 0;
-        if (!blocks) break;
-        state.textModalOpen = false;
-        state.lastAdded = `texto · ${blocks}${blocks === 1 ? " bloco" : " blocos"}`;
-        render();
-        break;
-      }
+      case "open-json-modal": state.jsonModalOpen = true; state.jsonError = null; render(); break;
+      case "close-json-modal": state.jsonModalOpen = false; render(); break;
+      case "import-json": importTemplateJson(); break;
       case "add-from-url": {
         const u = state.importUrl.trim();
         if (!u) break;
@@ -771,22 +829,21 @@ function bind() {
     if (field === "apiKey") { state.apiKey = t.value; patchSnippetLive(); return; }
     if (field === "importUrl") { state.importUrl = t.value; return; }
     if (field === "appUrl") { state.appUrl = t.value; return; }
-    if (field === "textDraft") {
-      state.textDraft = t.value;
-      const raw = t.value.trim();
-      const words = raw ? raw.split(/\s+/).length : 0;
-      const blocks = raw ? raw.split(/\n\s*={3,}\s*\n|\n(?=\s*(?:bloco|tweet|post)\s*#\d+)/i).map((x) => x.trim()).filter(Boolean).length : 0;
-      const stats = `${blocks}${blocks === 1 ? " bloco" : " blocos"} · ${words} palavras`;
-      document.getElementById("textStatsA")?.replaceChildren(document.createTextNode(stats));
-      document.getElementById("textStatsB")?.replaceChildren(document.createTextNode(stats));
-      const label = document.getElementById("importTextLabel");
-      if (label) label.textContent = `Importar ${blocks}${blocks === 1 ? " bloco" : " blocos"}`;
-      const btn = document.getElementById("importTextBtn");
-      if (btn) btn.style.opacity = blocks ? "1" : "0.45";
+    if (field === "jsonDraft") {
+      state.jsonDraft = t.value;
+      state.jsonError = null;
+      const btn = document.getElementById("importJsonBtn");
+      if (btn) btn.style.opacity = t.value.trim() ? "1" : "0.45";
     }
   });
 
-  root.addEventListener("change", (ev) => {
+  root.addEventListener("change", async (ev) => {
+    const target = ev.target as HTMLElement;
+    if (target.id === "jsonFileInput") {
+      const file = (target as HTMLInputElement).files?.[0];
+      if (file) { state.jsonDraft = await file.text(); state.jsonError = null; render(); }
+      return;
+    }
     const t = ev.target as HTMLSelectElement;
     const sel = t.dataset.select;
     if (!sel) return;

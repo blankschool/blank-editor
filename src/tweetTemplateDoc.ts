@@ -1,7 +1,7 @@
-import type { Doc, El } from "./types.ts";
+import type { Doc, El } from "./types";
+import { loadTemplateLocally } from "./templateStore.ts";
 
 export const TWEET_TEMPLATE_ID = "tweet-screenshot";
-export const TWEET_TEMPLATE_STORAGE_KEY = "blank-editor-template-tweet-screenshot-v1";
 
 function element(type: El["type"], name: string, over: Partial<El>): El {
   return {
@@ -24,6 +24,7 @@ function element(type: El["type"], name: string, over: Partial<El>): El {
   };
 }
 
+/** The starting point for the "Twitter mínimo" template — used until the server's own copy loads, or if it's unreachable. */
 export function createTweetTemplateDocument(): Doc {
   return {
     name: "Twitter mínimo",
@@ -88,29 +89,7 @@ export function createTweetTemplateDocument(): Doc {
   };
 }
 
-function isTweetTemplateDocument(value: unknown): value is Doc {
-  const candidate = value as Partial<Doc> | null;
-  return candidate?.seedId === TWEET_TEMPLATE_ID && Array.isArray(candidate.pages) && candidate.pages.length > 0;
-}
-
+/** Local-only fallback (no network) — the editor's normal open path fetches from the server first. */
 export function loadTweetTemplateDocument(): Doc {
-  try {
-    if (typeof localStorage !== "undefined") {
-      const raw = localStorage.getItem(TWEET_TEMPLATE_STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        if (isTweetTemplateDocument(saved)) return saved;
-      }
-    }
-  } catch { /* unavailable storage or malformed saved document */ }
-  return createTweetTemplateDocument();
-}
-
-export function saveTweetTemplateDocument(doc: Doc): void {
-  if (!isTweetTemplateDocument(doc)) return;
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(TWEET_TEMPLATE_STORAGE_KEY, JSON.stringify(doc));
-    }
-  } catch { /* quota or blocked storage */ }
+  return loadTemplateLocally(TWEET_TEMPLATE_ID) ?? createTweetTemplateDocument();
 }
