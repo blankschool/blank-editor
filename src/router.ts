@@ -16,8 +16,10 @@ export function navigate(route: Route) {
 
 export function initRouter(views: Record<Route, HTMLElement>, onShow: Partial<Record<Route, () => void>>) {
   function current(): Route {
-    const h = location.hash.replace(/^#\/?/, "") as Route;
-    return ROUTES.includes(h) ? h : "login";
+    // Only the first path segment identifies the top-level route — a page can have its own
+    // sub-routes after that (e.g. "#/console/keys"), which this router doesn't need to know about.
+    const first = location.hash.replace(/^#\/?/, "").split("/")[0] as Route;
+    return ROUTES.includes(first) ? first : "login";
   }
 
   function apply() {

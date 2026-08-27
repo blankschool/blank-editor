@@ -13,6 +13,19 @@ import { currentTweetTemplateDocument, openTweetTemplate } from "../editor";
  */
 
 type View = "templates" | "playground" | "import" | "keys";
+const VIEWS: View[] = ["templates", "playground", "import", "keys"];
+const DEFAULT_VIEW: View = "playground";
+
+/** Reads the console's own sub-route out of `#/console/<view>`, so refresh/back-forward/deep links work. */
+function viewFromHash(): View {
+  const match = /^#\/console\/([a-z]+)/.exec(location.hash);
+  const candidate = match?.[1];
+  return VIEWS.includes(candidate as View) ? (candidate as View) : DEFAULT_VIEW;
+}
+
+function goToView(view: View) {
+  location.hash = `/console/${view}`;
+}
 type LayerType = "text" | "image";
 
 interface Layer { id: number; type: LayerType; name: string; value: string; }
@@ -604,6 +617,11 @@ function bind() {
   if (bound) return;
   bound = true;
 
+  window.addEventListener("hashchange", () => {
+    const view = viewFromHash();
+    if (view !== state.view) { state.view = view; render(); }
+  });
+
   root.addEventListener("click", (ev) => {
     const target = ev.target as HTMLElement;
     const el = target.closest<HTMLElement>("[data-action]");
@@ -620,10 +638,10 @@ function bind() {
     const value = el.dataset.value;
 
     switch (action) {
-      case "go-templates": state.view = "templates"; render(); break;
-      case "go-playground": state.view = "playground"; render(); break;
-      case "go-import": state.view = "import"; render(); break;
-      case "go-keys": state.view = "keys"; render(); break;
+      case "go-templates": goToView("templates"); break;
+      case "go-playground": goToView("playground"); break;
+      case "go-import": goToView("import"); break;
+      case "go-keys": goToView("keys"); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
       case "open-editor": navigate("editor"); break;
       case "open-twitter-template": openTweetTemplate(); navigate("editor"); break;
@@ -742,5 +760,11 @@ function bind() {
 export function mountConsole(container: HTMLElement) {
   root = container;
   bind();
+  state.view = viewFromHash();
+  // Canonicalize a bare "#/console" (or a stale/unknown sub-route) to the view actually shown,
+  // so the address bar, refresh, and back/forward all agree with what's on screen.
+  if (location.hash.startsWith("#/console") && location.hash !== `#/console/${state.view}`) {
+    history.replaceState(null, "", `#/console/${state.view}`);
+  }
   render();
 }
