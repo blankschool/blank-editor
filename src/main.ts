@@ -2,6 +2,9 @@ import { initRouter, navigate } from "./router";
 import { mountLogin } from "./pages/login";
 import { mountConsole } from "./pages/console";
 import { mountEditor } from "./editor";
+import { initTheme } from "./theme";
+
+initTheme();
 
 const views = {
   login: document.getElementById("view-login")!,

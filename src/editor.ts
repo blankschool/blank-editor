@@ -580,7 +580,9 @@ function capture(ev) {
 function startEditingText(id) {
   const el = byId(id);
   const node = $("pagebox").querySelector(`.el[data-id="${id}"]`);
-  if (!el || !node || el.type !== "text" || el.locked) return;
+  // Locked only guards position/size/deletion — text content stays editable, since template
+  // authors lock fields specifically to keep them from being moved while still filling them in.
+  if (!el || !node || el.type !== "text") return;
   editingId = el.id;
   renderOverlay();
   const t = node.querySelector(".txt");

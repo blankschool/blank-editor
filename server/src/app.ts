@@ -23,8 +23,10 @@ interface RenderBody {
   layers?: Layers;
 }
 
+const BODY_LIMIT_BYTES = 10 * 1024 * 1024; // templates can embed base64 images well past Fastify's 1 MiB default
+
 export function buildApp(deps: AppDeps): FastifyInstance {
-  const app = Fastify();
+  const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
 
   app.get("/health", async () => ({ ok: true }));
 

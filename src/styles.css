@@ -1,12 +1,72 @@
-/* Operação Criativa mono, held in dark. The reference is a warm light system
-   (--ink #111111 on --paper #FCFCFA); inverted here by reusing its own tokens,
-   with --muted and --faint swapping roles so the warm neutral survives. It is
-   a mono system, so the accent is the ink itself, not a hue. Deliberately
-   single-theme: every colour is painted, nothing inherits the host ground. */
+/* Operação Criativa mono. The reference is a warm light system (--ink #111111
+   on --paper #FCFCFA); a dark palette reuses the same tokens inverted, with
+   --muted and --faint swapping roles so the warm neutral survives. It is a
+   mono system, so the accent is the ink itself, not a hue. Every colour is
+   painted, nothing inherits the host ground — theme switches by swapping the
+   token values below, not by deferring to the OS in CSS alone.
+
+   Light is the base palette on bare :root. Dark redefines the same tokens
+   under a `prefers-color-scheme` media query (system default) and again
+   under `[data-theme="dark"]` (explicit choice, wins either direction). */
 :root {
+  --bg: #FCFCFA;
+  --surface: #F4F4EF;
+  --surface-2: #EAEAE3;
+  --inset: #EFEFE8;
+  --border: #DEDDD3;
+  --border-strong: #C9C7BB;
+  --text: #111111;
+  --muted: #6E6C67;
+  --faint: #9B9992;
+  --accent: #111111;
+  --accent-soft: #E7E7DE;
+  --on-accent: #FCFCFA;
+  --danger: #B5453A;
+  --ground: #F0F0EA;
+  --overlay: rgba(17,17,17,.45);
+  --shadow: 0 1px 2px rgba(17,17,17,.08), 0 4px 14px rgba(17,17,17,.06);
+  --radius: 7px;
+  --display: "Space Grotesk", system-ui, sans-serif;
+  --body: Inter, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --danger-bg: #FBECEA;
+  --danger-border: #E9C6C1;
+  --success-bg: #EAF1E0;
+  --avatar: #E7E7DE;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111111;
+    --surface: #1A1A18;
+    --surface-2: #232320;
+    --inset: #161614;
+    --border: #2E2D29;
+    --border-strong: #3D3C36;
+    --text: #FCFCFA;
+    --muted: #9B9992;
+    --faint: #6E6C67;
+    --accent: #FCFCFA;
+    --accent-soft: #262622;
+    --on-accent: #111111;
+    --danger: #C0645A;
+    --ground: #0A0A09;
+    --overlay: rgba(10,10,9,.72);
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.35);
+    --danger-bg: #211714;
+    --danger-border: #4A2B27;
+    --success-bg: #1a1f14;
+    --avatar: #262622;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
   --bg: #111111;
   --surface: #1A1A18;
   --surface-2: #232320;
+  --inset: #161614;
   --border: #2E2D29;
   --border-strong: #3D3C36;
   --text: #FCFCFA;
@@ -14,15 +74,14 @@
   --faint: #6E6C67;
   --accent: #FCFCFA;
   --accent-soft: #262622;
+  --on-accent: #111111;
   --danger: #C0645A;
   --ground: #0A0A09;
+  --overlay: rgba(10,10,9,.72);
   --shadow: 0 1px 2px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.35);
-  --radius: 7px;
-  --display: "Space Grotesk", system-ui, sans-serif;
-  --body: Inter, system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, monospace;
   --danger-bg: #211714;
   --danger-border: #4A2B27;
+  --success-bg: #1a1f14;
   --avatar: #262622;
   color-scheme: dark;
 }

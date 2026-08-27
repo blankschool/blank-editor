@@ -1,4 +1,5 @@
 import { openTemplateById } from "../editor";
+import { getTheme, setTheme, type ThemeChoice } from "../theme";
 
 /**
  * Ported from "Wireframe Sidebar.dc.html". Same focus-preservation rule as
@@ -444,11 +445,11 @@ const templateOptions = (templates: TemplateSummary[], currentId: string) =>
   templates.map((t) => `<option value="${esc(t.id)}" ${t.id === currentId ? "selected" : ""}>${esc(t.name)}</option>`).join("");
 
 function chip(name: string, active: boolean, action: string, value: string) {
-  return `<div data-action="${action}" data-value="${esc(value)}" style="cursor:pointer; height:26px; padding:0 12px; border-radius:6px; display:flex; align-items:center; font-size:12px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "#111111" : "var(--muted)"};">${esc(name)}</div>`;
+  return `<div data-action="${action}" data-value="${esc(value)}" style="cursor:pointer; height:26px; padding:0 12px; border-radius:6px; display:flex; align-items:center; font-size:12px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "var(--on-accent)" : "var(--muted)"};">${esc(name)}</div>`;
 }
 
 function tab(name: string, active: boolean, action: string) {
-  return `<div data-action="${action}" style="cursor:pointer; height:32px; padding:0 16px; border-radius:7px; display:flex; align-items:center; font-size:13px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "#111111" : "var(--muted)"};">${esc(name)}</div>`;
+  return `<div data-action="${action}" style="cursor:pointer; height:32px; padding:0 16px; border-radius:7px; display:flex; align-items:center; font-size:13px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "var(--on-accent)" : "var(--muted)"};">${esc(name)}</div>`;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -497,14 +498,40 @@ function renderSidebar(): string {
       </nav>
 
       <div style="flex:1;"></div>
+
+      ${renderThemeToggle(expanded)}
     </aside>`;
+}
+
+function renderThemeToggle(expanded: boolean): string {
+  const current = getTheme();
+  const opt = (choice: ThemeChoice, title: string, icon: string) => `
+    <div data-action="set-theme" data-value="${choice}" title="${title}" style="cursor:pointer; flex:1; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center; background:${current === choice ? "var(--surface)" : "transparent"}; color:${current === choice ? "var(--text)" : "var(--faint)"};">${icon}</div>`;
+
+  const iconSystem = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.2"></rect><path d="M5.5 13.5h5"></path><path d="M8 11v2.5"></path></svg>`;
+  const iconLight = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"></circle><path d="M8 1.6v1.6M8 12.8v1.6M2.6 8h1.6M11.8 8h1.6M4.3 4.3l1.1 1.1M10.6 10.6l1.1 1.1M4.3 11.7l1.1-1.1M10.6 5.4l1.1-1.1"></path></svg>`;
+  const iconDark = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 9.7A5.6 5.6 0 1 1 6.3 2.5a4.3 4.3 0 0 0 7.2 7.2z"></path></svg>`;
+
+  if (!expanded) {
+    return `
+      <div data-action="cycle-theme" title="Tema: ${current}" style="cursor:pointer; margin:0 8px; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; color:var(--faint);">
+        ${current === "light" ? iconLight : current === "dark" ? iconDark : iconSystem}
+      </div>`;
+  }
+
+  return `
+    <div style="margin:0 8px; padding:3px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; gap:2px;">
+      ${opt("system", "Sistema", iconSystem)}
+      ${opt("light", "Claro", iconLight)}
+      ${opt("dark", "Escuro", iconDark)}
+    </div>`;
 }
 
 function renderTemplates(): string {
   const s = state;
   const sortChips = ["Ordem", "A-Z"].map((n) => chip(n, s.sort === n, "pick-sort", n)).join("");
   const periodChips = ["Todos", "Hoje", "7D", "14D", "30D"].map((n) => chip(n, s.period === n, "pick-period", n)).join("");
-  const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, #1E1E1B 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
+  const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, var(--inset) 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
   const visibleTemplates = s.search.trim()
     ? s.templates.filter((t) => t.name.toLowerCase().includes(s.search.trim().toLowerCase()))
     : s.templates;
@@ -532,7 +559,7 @@ function renderTemplates(): string {
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.4V2.6"></path><path d="M5.2 5.4 8 2.6l2.8 2.8"></path><path d="M2.6 10.9v1.9c0 .4.3.6.7.6h9.4c.4 0 .7-.2.7-.6v-1.9"></path></svg>
           <span>Importar</span>
         </div>
-        <div data-action="new-template" style="cursor:pointer; height:34px; padding:0 14px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
+        <div data-action="new-template" style="cursor:pointer; height:34px; padding:0 14px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.2v9.6"></path><path d="M3.2 8h9.6"></path></svg>
           <span>Novo template</span>
         </div>
@@ -546,7 +573,7 @@ function renderPlayground(): string {
   const noLayers = s.layers.length === 0;
 
   const layerCards = s.layers.map((l) => `
-    <div style="border-radius:9px; border:1px solid var(--border); background:#161614; padding:12px; display:flex; flex-direction:column; gap:10px;">
+    <div style="border-radius:9px; border:1px solid var(--border); background:var(--inset); padding:12px; display:flex; flex-direction:column; gap:10px;">
       <div style="display:flex; align-items:center; gap:9px;">
         ${l.type === "text"
       ? `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" style="flex:none;"><path d="M3 3.6h10"></path><path d="M8 3.6v9"></path></svg>`
@@ -595,7 +622,7 @@ function renderPlayground(): string {
 
         <span style="font-size:12px; color:var(--faint);">Campos vêm do template selecionado. Imagens precisam de uma URL pública.</span>
 
-        <div data-action="render" style="cursor:pointer; height:46px; border-radius:9px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
+        <div data-action="render" style="cursor:pointer; height:46px; border-radius:9px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8 12.8 8l-8.3 5.2z"></path></svg>
           <span>${s.rendering ? "Gerando…" : "Gerar render"}</span>
         </div>
@@ -608,12 +635,12 @@ function renderPlayground(): string {
         </div>
 
         ${s.tab === "preview" ? `
-        <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:#161614; display:flex; align-items:center; justify-content:center; padding:32px; text-align:center;">
+        <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:var(--inset); display:flex; align-items:center; justify-content:center; padding:32px; text-align:center;">
           ${s.previewUrl
             ? `<img id="renderPreview" src="${esc(s.previewUrl)}" alt="Preview do tweet renderizado" style="display:block; max-width:100%; height:auto; border-radius:8px;" />`
             : `<span style="max-width:380px; font-size:14px; line-height:1.6; color:var(--faint);">${esc(previewText)}</span>`}
         </div>` : `
-        <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:#161614; padding:18px; font-family:var(--mono); font-size:12px; line-height:1.7; color:var(--muted); white-space:pre-wrap; overflow:auto;">${esc(s.response || "// sem resposta ainda — gere um render")}</div>`}
+        <div style="min-height:380px; border-radius:12px; border:1px solid var(--border); background:var(--inset); padding:18px; font-family:var(--mono); font-size:12px; line-height:1.7; color:var(--muted); white-space:pre-wrap; overflow:auto;">${esc(s.response || "// sem resposta ainda — gere um render")}</div>`}
 
         <div style="display:flex; flex-direction:column; gap:10px;">
           <div style="display:flex; align-items:center; gap:4px;">
@@ -624,7 +651,7 @@ function renderPlayground(): string {
               <span>${s.copiedCode ? "Copiado" : "Copiar"}</span>
             </div>
           </div>
-          <div id="codeSnippet" style="border-radius:12px; border:1px solid var(--border); background:#161614; padding:18px; font-family:var(--mono); font-size:12px; line-height:1.75; color:var(--text); white-space:pre; overflow:auto;">${esc(snippetFor(s.lang))}</div>
+          <div id="codeSnippet" style="border-radius:12px; border:1px solid var(--border); background:var(--inset); padding:18px; font-family:var(--mono); font-size:12px; line-height:1.75; color:var(--text); white-space:pre; overflow:auto;">${esc(snippetFor(s.lang))}</div>
         </div>
       </div>
     </div>`;
@@ -647,7 +674,7 @@ function renderImport(): string {
           <span style="flex:1; font-size:14px; font-weight:500;">Importar JSON</span>
         </div>
         <span style="font-size:12px; line-height:1.6; color:var(--faint);">Cole ou envie um arquivo .json com o mesmo formato que o editor salva (um documento com "pages"). Ele vira um template novo, editável no canvas.</span>
-        <div data-action="open-json-modal" style="cursor:pointer; align-self:flex-start; height:38px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500;">
+        <div data-action="open-json-modal" style="cursor:pointer; align-self:flex-start; height:38px; padding:0 16px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
           <span>Importar JSON</span>
         </div>
@@ -673,10 +700,10 @@ function renderImport(): string {
           <span style="font-size:12px; color:var(--muted);">Importar por link</span>
           <div style="display:flex; gap:10px;">
             <input data-field="importUrl" value="${esc(s.importUrl)}" placeholder="${esc(meta.placeholder)}" class="console-field" style="flex:1; min-width:0; font-family:var(--mono); font-size:12px;" />
-            <div data-action="add-from-url" style="cursor:pointer; flex:none; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; font-size:13px; font-weight:500;">Importar</div>
+            <div data-action="add-from-url" style="cursor:pointer; flex:none; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; font-size:13px; font-weight:500;">Importar</div>
           </div>
         </div>
-        <div data-action="add-from-file" style="cursor:pointer; border-radius:10px; border:1px dashed var(--border); background:#161614; padding:44px; display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center;">
+        <div data-action="add-from-file" style="cursor:pointer; border-radius:10px; border:1px dashed var(--border); background:var(--inset); padding:44px; display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center;">
           <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V2.8"></path><path d="M5.4 5.4 8 2.8l2.6 2.6"></path><path d="M2.8 11.4v1.4c0 .4.3.7.7.7h9c.4 0 .7-.3.7-.7v-1.4"></path></svg>
           <span style="font-size:13px; color:var(--muted);">Arraste arquivos ou clique para selecionar</span>
           <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(meta.accept)}</span>
@@ -686,23 +713,23 @@ function renderImport(): string {
   }
 
   const jsonModal = s.jsonModalOpen ? `
-    <div data-action="close-json-modal" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:30; padding:24px;">
+    <div data-action="close-json-modal" style="position:fixed; inset:0; background:var(--overlay); display:flex; align-items:center; justify-content:center; z-index:30; padding:24px;">
       <div data-stop="1" style="position:relative; width:100%; max-width:640px; max-height:80vh; overflow:auto; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:24px; display:flex; flex-direction:column; gap:16px;">
         <div style="display:flex; align-items:center; gap:9px; padding-right:32px;">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
           <span style="font-family:var(--display); font-size:17px; font-weight:600; letter-spacing:-0.01em;">Importar JSON</span>
         </div>
-        <label for="jsonFileInput" style="cursor:pointer; border-radius:10px; border:1px dashed var(--border); background:#161614; padding:20px; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;">
+        <label for="jsonFileInput" style="cursor:pointer; border-radius:10px; border:1px dashed var(--border); background:var(--inset); padding:20px; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;">
           <span style="font-size:13px; color:var(--muted);">Clique para escolher um arquivo .json</span>
           <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">ou cole o conteúdo abaixo</span>
         </label>
         <input type="file" id="jsonFileInput" accept="application/json,.json" hidden />
-        <textarea id="jsonDraftArea" data-field="jsonDraft" spellcheck="false" placeholder="${esc(JSON_PLACEHOLDER)}" style="min-height:260px; resize:vertical; border-radius:8px; border:1px solid var(--border); background:#161614; color:var(--text); padding:12px; font-family:var(--mono); font-size:12px; line-height:1.7; outline:none;">${esc(s.jsonDraft)}</textarea>
+        <textarea id="jsonDraftArea" data-field="jsonDraft" spellcheck="false" placeholder="${esc(JSON_PLACEHOLDER)}" style="min-height:260px; resize:vertical; border-radius:8px; border:1px solid var(--border); background:var(--inset); color:var(--text); padding:12px; font-family:var(--mono); font-size:12px; line-height:1.7; outline:none;">${esc(s.jsonDraft)}</textarea>
         ${s.jsonError ? `<span style="font-size:12px; color:var(--danger);">${esc(s.jsonError)}</span>` : ""}
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="flex:1; font-family:var(--mono); font-size:11px; color:var(--faint);">${s.jsonDraft.trim() ? "pronto para importar" : "nada colado ainda"}</span>
           <div data-action="close-json-modal" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:13px; color:var(--text);">Cancelar</div>
-          <div id="importJsonBtn" data-action="import-json" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; opacity:${s.jsonDraft.trim() ? "1" : "0.45"};">
+          <div id="importJsonBtn" data-action="import-json" style="cursor:pointer; height:40px; padding:0 16px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; opacity:${s.jsonDraft.trim() ? "1" : "0.45"};">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"></path></svg>
             <span>Importar</span>
           </div>
@@ -714,7 +741,7 @@ function renderImport(): string {
     </div>` : "";
 
   const appModal = s.app ? `
-    <div data-action="close-app" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:30;">
+    <div data-action="close-app" style="position:fixed; inset:0; background:var(--overlay); display:flex; align-items:center; justify-content:center; z-index:30;">
       <div data-stop="1" style="width:460px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:20px; display:flex; flex-direction:column; gap:16px;">
         <div style="display:flex; align-items:flex-start; gap:12px;">
           <div style="display:flex; flex-direction:column; gap:5px; flex:1;">
@@ -737,7 +764,7 @@ function renderImport(): string {
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="flex:1; font-family:var(--mono); font-size:10px; color:var(--faint);">oauth · somente leitura</span>
           <div data-action="close-app" style="cursor:pointer; height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:13px; color:var(--muted);">Cancelar</div>
-          <div data-action="confirm-app" style="cursor:pointer; height:36px; padding:0 16px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; font-size:13px; font-weight:500;">Importar</div>
+          <div data-action="confirm-app" style="cursor:pointer; height:36px; padding:0 16px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; font-size:13px; font-weight:500;">Importar</div>
         </div>
       </div>
     </div>` : "";
@@ -760,7 +787,7 @@ function renderKeys(): string {
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 
   const banner = s.newKeySecret ? `
-    <div style="border-radius:9px; border:1px solid var(--accent); background:#1a1f14; padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
+    <div style="border-radius:9px; border:1px solid var(--accent); background:var(--success-bg); padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
       <span style="font-size:12px; font-weight:500;">Chave criada — copie agora, ela não será mostrada de novo.</span>
       <div style="display:flex; align-items:center; gap:8px;">
         <span style="flex:1; font-family:var(--mono); font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(s.newKeySecret.secret)}</span>
@@ -793,7 +820,7 @@ function renderKeys(): string {
           <span style="font-size:12px; color:var(--faint);">${s.keys.length}${s.keys.length === 1 ? " key" : " keys"}</span>
         </div>
         <div style="flex:1;"></div>
-        <div data-action="create-key" style="cursor:pointer; height:32px; padding:0 14px; border-radius:7px; background:var(--accent); color:#111111; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
+        <div data-action="create-key" style="cursor:pointer; height:32px; padding:0 14px; border-radius:7px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.2v9.6"></path><path d="M3.2 8h9.6"></path></svg>
           <span>Create key</span>
         </div>
@@ -840,7 +867,7 @@ function renderConfirmDialog(): string {
   if (!d) return "";
   const message = d.kind === "delete-template" ? `Excluir o template "${d.name}"? Isso não pode ser desfeito.` : "";
   return `
-    <div data-action="cancel-confirm-dialog" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
+    <div data-action="cancel-confirm-dialog" style="position:fixed; inset:0; background:var(--overlay); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
       <div data-stop="1" style="width:100%; max-width:380px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:20px; display:flex; flex-direction:column; gap:14px;">
         <span style="font-size:13px; line-height:1.6;">${esc(message)}</span>
         <div style="display:flex; gap:10px;">
@@ -855,14 +882,14 @@ function renderNamePrompt(): string {
   const p = state.namePrompt;
   if (!p) return "";
   return `
-    <div data-action="cancel-name-prompt" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
+    <div data-action="cancel-name-prompt" style="position:fixed; inset:0; background:var(--overlay); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
       <div data-stop="1" style="width:100%; max-width:380px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:20px; display:flex; flex-direction:column; gap:14px;">
         <span style="font-family:var(--display); font-size:15px; font-weight:600;">${esc(p.title)}</span>
         <input id="namePromptInput" data-field="namePromptValue" value="${esc(p.value)}" class="console-field" autofocus />
         ${p.error ? `<span style="font-size:12px; color:var(--danger);">${esc(p.error)}</span>` : ""}
         <div style="display:flex; gap:10px;">
           <div data-action="cancel-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text);">Cancelar</div>
-          <div id="confirmNamePromptBtn" data-action="confirm-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; opacity:${p.value.trim() ? "1" : "0.45"};">${p.kind === "rename-template" ? "Renomear" : "Criar"}</div>
+          <div id="confirmNamePromptBtn" data-action="confirm-name-prompt" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; opacity:${p.value.trim() ? "1" : "0.45"};">${p.kind === "rename-template" ? "Renomear" : "Criar"}</div>
         </div>
       </div>
     </div>`;
@@ -929,6 +956,13 @@ function bind() {
       case "go-import": goToView("import"); break;
       case "go-keys": goToView("keys"); break;
       case "toggle-aside": state.collapsed = !state.collapsed; render(); break;
+      case "set-theme": setTheme(value as ThemeChoice); render(); break;
+      case "cycle-theme": {
+        const order: ThemeChoice[] = ["system", "light", "dark"];
+        setTheme(order[(order.indexOf(getTheme()) + 1) % order.length]);
+        render();
+        break;
+      }
       case "new-template": openNamePrompt("new-template", "Nome do novo template"); break;
       case "open-template": openTemplateById(el.dataset.id!); break;
 
