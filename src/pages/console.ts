@@ -77,6 +77,9 @@ interface State {
   jsonError: string | null;
   namePrompt: { kind: "new-template" | "create-key"; title: string; value: string; error: string | null } | null;
   layersLoadedForId: string | null;
+  search: string;
+  templateMenu: { id: string; name: string; x: number; y: number } | null;
+  confirmDialog: { kind: "delete-template"; id: string; name: string } | null;
 }
 
 const state: State = {
@@ -119,6 +122,9 @@ const state: State = {
   jsonError: null,
   namePrompt: null,
   layersLoadedForId: "tweet-screenshot", // the initial `layers` above already match the seed template
+  search: "",
+  templateMenu: null,
+  confirmDialog: null,
 };
 
 
@@ -367,6 +373,30 @@ async function revokeKey(id: string) {
   render();
 }
 
+/** Permanently removes an already-revoked key from the list — the server refuses to purge a live key. */
+async function purgeKey(id: string) {
+  const res = await fetch(`/api/v1/keys/${id}/purge`, { method: "DELETE" });
+  if (!res.ok) return;
+  state.keys = state.keys.filter((k) => k.id !== id);
+  render();
+}
+
+function deleteTemplate(id: string, name: string) {
+  state.confirmDialog = { kind: "delete-template", id, name };
+  render();
+}
+
+async function runConfirmDialog() {
+  const d = state.confirmDialog;
+  if (!d) return;
+  state.confirmDialog = null;
+  if (d.kind === "delete-template") {
+    const res = await fetch(`/api/v1/templates/${d.id}`, { method: "DELETE" });
+    if (res.ok) state.templates = state.templates.filter((t) => t.id !== d.id);
+  }
+  render();
+}
+
 const selOptions = (current: string, options: string[]) =>
   options.map((o) => `<option value="${esc(o)}" ${o === current ? "selected" : ""}>${esc(o)}</option>`).join("");
 
@@ -403,19 +433,19 @@ function renderSidebar(): string {
     <aside style="width:${asideW}; flex:none; border-right:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; padding:14px 0;">
       <div style="display:flex; align-items:center; gap:10px; padding:0 12px 14px; justify-content:${brandJustify};">
         ${expanded ? `
-        <div style="width:26px; height:26px; flex:none; border-radius:7px; border:1px solid var(--border-strong); background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-family:var(--display); font-size:11px; font-weight:600; color:var(--muted);">L</div>
-        <span style="flex:1; font-family:var(--display); font-size:13px; font-weight:600; letter-spacing:-0.01em; white-space:nowrap;">Acme Console</span>` : ""}
+        <span style="flex:1; font-family:var(--display); font-size:13px; font-weight:600; letter-spacing:-0.01em; white-space:nowrap;">Blank Editor</span>` : ""}
         <div data-action="toggle-aside" title="${s.collapsed ? "Expandir menu" : "Recolher menu"}" style="cursor:pointer; width:26px; height:26px; flex:none; border-radius:7px; display:flex; align-items:center; justify-content:center;">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.75" width="12" height="10.5" rx="1.8"></rect><path d="M6.2 2.75v10.5"></path></svg>
         </div>
       </div>
 
+      ${expanded ? `
       <div style="padding:0 8px 14px;">
-        <div style="height:32px; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; padding:0 10px; gap:8px;">
+        <div style="height:32px; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; padding:0 10px; gap:8px;">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.4" stroke-linecap="round" style="flex:none;"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>
-          ${expanded ? `<span style="flex:1; font-size:12px; color:var(--faint);">Search…</span>` : ""}
+          <input id="searchInput" data-field="search" value="${esc(s.search)}" placeholder="Buscar…" style="flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--text); font-size:12px; font-family:inherit;" />
         </div>
-      </div>
+      </div>` : ""}
 
       ${expanded ? `<div style="padding:0 16px 8px; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint);">Platform</div>` : ""}
 
@@ -427,15 +457,6 @@ function renderSidebar(): string {
       </nav>
 
       <div style="flex:1;"></div>
-
-      <div style="margin:0 8px; padding:8px; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; gap:10px;">
-        <div style="width:28px; height:28px; flex:none; border-radius:50%; border:1px solid var(--border-strong); background:var(--avatar);"></div>
-        ${expanded ? `
-        <div style="display:flex; flex-direction:column; gap:6px; flex:1; min-width:0;">
-          <div style="height:8px; width:70%; border-radius:3px; background:var(--border-strong);"></div>
-          <div style="height:7px; width:90%; border-radius:3px; background:var(--border);"></div>
-        </div>` : ""}
-      </div>
     </aside>`;
 }
 
@@ -444,13 +465,16 @@ function renderTemplates(): string {
   const sortChips = ["Ordem", "A-Z"].map((n) => chip(n, s.sort === n, "pick-sort", n)).join("");
   const periodChips = ["Todos", "Hoje", "7D", "14D", "30D"].map((n) => chip(n, s.period === n, "pick-period", n)).join("");
   const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, #1E1E1B 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
-  const cards = s.templates.length
-    ? s.templates.map((t) => `
-      <div data-action="open-template" data-id="${t.id}" style="${cardStyle}; flex-direction:column; gap:8px;">
+  const visibleTemplates = s.search.trim()
+    ? s.templates.filter((t) => t.name.toLowerCase().includes(s.search.trim().toLowerCase()))
+    : s.templates;
+  const cards = visibleTemplates.length
+    ? visibleTemplates.map((t) => `
+      <div data-action="open-template" data-context-template data-id="${t.id}" data-name="${esc(t.name)}" style="${cardStyle}; flex-direction:column; gap:8px;">
         <strong style="font-family:var(--display); font-size:14px; color:var(--text);">${esc(t.name)}</strong>
-        <span>clique para editar no canvas</span>
+        <span>clique para editar · botão direito p/ mais opções</span>
       </div>`).join("")
-    : `<div style="grid-column:1/-1; padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${s.templatesLoaded ? "nenhum template ainda — crie um ou importe um JSON" : "carregando…"}</div>`;
+    : `<div style="grid-column:1/-1; padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${!s.templatesLoaded ? "carregando…" : s.templates.length === 0 ? "nenhum template ainda — crie um ou importe um JSON" : "nenhum template bate com a busca"}</div>`;
 
   return `
     <div style="display:flex; flex-direction:column; gap:16px; padding:20px;">
@@ -703,13 +727,19 @@ function renderKeys(): string {
       </div>
     </div>` : "";
 
-  const rows = s.keys.map((k) => `
+  const visibleKeys = s.search.trim()
+    ? s.keys.filter((k) => k.name.toLowerCase().includes(s.search.trim().toLowerCase()))
+    : s.keys;
+
+  const rows = visibleKeys.map((k) => `
     <div style="display:grid; grid-template-columns:1.2fr 2fr 1fr 92px; gap:16px; padding:13px 16px; border-bottom:1px solid var(--surface-2); align-items:center; font-size:12px; opacity:${k.revoked ? 0.5 : 1};">
       <span style="color:var(--text);">${esc(k.name)}</span>
       <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">${k.id === s.newKeySecret?.id ? "mostrada acima" : "••••••••••••"}</span>
       <span style="color:var(--faint);">${fmtDate(k.createdAt)}${k.revoked ? " · revogada" : ""}</span>
       ${k.revoked
-        ? ""
+        ? `<div data-action="purge-key" data-id="${k.id}" title="Excluir permanentemente" style="cursor:pointer; justify-self:end; width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--danger);">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.4h10.4"></path><path d="M6.4 4.4V2.9h3.2v1.5"></path><path d="M4.2 4.4l.7 8.7h6.2l.7-8.7"></path></svg>
+          </div>`
         : `<div data-action="revoke-key" data-id="${k.id}" style="cursor:pointer; justify-self:end; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px; color:var(--danger);">Revoke</div>`}
     </div>`).join("");
 
@@ -734,12 +764,45 @@ function renderKeys(): string {
           <span>Name</span><span>Key</span><span>Created</span><span></span>
         </div>
         ${rows}
-        ${s.keys.length === 0 ? `<div style="padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">nenhuma chave — crie uma pra começar</div>` : ""}
+        ${visibleKeys.length === 0 ? `<div style="padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${s.keys.length === 0 ? "nenhuma chave — crie uma pra começar" : "nenhuma chave bate com a busca"}</div>` : ""}
       </div>
 
       <div style="border-radius:7px; border:1px dashed var(--border); padding:14px 16px; display:flex; gap:12px; align-items:flex-start;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.3" stroke-linecap="round" style="flex:none; margin-top:1px;"><circle cx="8" cy="8" r="6.2"></circle><path d="M8 7.2v4"></path><path d="M8 4.9v.1"></path></svg>
         <span style="font-size:12px; line-height:1.6; color:var(--faint); max-width:620px;">A chave só é mostrada uma vez, no momento em que é criada. Revogar tem efeito imediato.</span>
+      </div>
+    </div>`;
+}
+
+function renderTemplateMenu(): string {
+  const m = state.templateMenu;
+  if (!m) return "";
+  const item = (action: string, label: string, danger = false, disabled = false) => `
+    <div data-action="${disabled ? "" : action}" style="cursor:${disabled ? "default" : "pointer"}; padding:8px 12px; border-radius:6px; font-size:12px; color:${disabled ? "var(--faint)" : danger ? "var(--danger)" : "var(--text)"};" ${disabled ? 'title="em breve"' : ""}>${label}</div>`;
+  return `
+    <div data-action="close-template-menu" style="position:fixed; inset:0; z-index:35;">
+      <div data-stop="1" style="position:absolute; top:${m.y}px; left:${m.x}px; min-width:180px; border-radius:9px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:1px;">
+        ${item("ctx-open-playground", "Abrir no playground")}
+        ${item("ctx-copy-id", state.copied === `tpl-${m.id}` ? "ID copiado" : "Copiar ID")}
+        ${item("", "Mover", false, true)}
+        <div style="height:1px; background:var(--border); margin:4px 0;"></div>
+        ${item("ctx-delete-template", "Excluir", true)}
+      </div>
+    </div>`;
+}
+
+function renderConfirmDialog(): string {
+  const d = state.confirmDialog;
+  if (!d) return "";
+  const message = d.kind === "delete-template" ? `Excluir o template "${d.name}"? Isso não pode ser desfeito.` : "";
+  return `
+    <div data-action="cancel-confirm-dialog" style="position:fixed; inset:0; background:rgba(10,10,9,0.72); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px;">
+      <div data-stop="1" style="width:100%; max-width:380px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:20px; display:flex; flex-direction:column; gap:14px;">
+        <span style="font-size:13px; line-height:1.6;">${esc(message)}</span>
+        <div style="display:flex; gap:10px;">
+          <div data-action="cancel-confirm-dialog" style="cursor:pointer; flex:1; height:38px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text);">Cancelar</div>
+          <div data-action="run-confirm-dialog" style="cursor:pointer; flex:1; height:38px; border-radius:8px; background:var(--danger); color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500;">Excluir</div>
+        </div>
       </div>
     </div>`;
 }
@@ -776,6 +839,8 @@ function render() {
         <main style="flex:1; min-width:0; display:flex; flex-direction:column;">${main}</main>
       </div>
     </div>
+    ${renderTemplateMenu()}
+    ${renderConfirmDialog()}
     ${renderNamePrompt()}`;
   if (state.namePrompt) document.getElementById("namePromptInput")?.focus();
 }
@@ -789,6 +854,14 @@ function bind() {
   window.addEventListener("hashchange", () => {
     const view = viewFromHash();
     if (view !== state.view) enterView(view);
+  });
+
+  root.addEventListener("contextmenu", (ev) => {
+    const card = (ev.target as HTMLElement).closest<HTMLElement>("[data-context-template]");
+    if (!card) return;
+    ev.preventDefault();
+    state.templateMenu = { id: card.dataset.id!, name: card.dataset.name!, x: ev.clientX, y: ev.clientY };
+    render();
   });
 
   root.addEventListener("click", (ev) => {
@@ -860,6 +933,33 @@ function bind() {
       case "create-key": openNamePrompt("create-key", "Nome da chave (ex: n8n, produção)"); break;
       case "confirm-name-prompt": confirmNamePrompt(); break;
       case "cancel-name-prompt": state.namePrompt = null; render(); break;
+
+      case "close-template-menu": state.templateMenu = null; render(); break;
+      case "cancel-confirm-dialog": state.confirmDialog = null; render(); break;
+      case "run-confirm-dialog": runConfirmDialog(); break;
+      case "ctx-open-playground": {
+        const m = state.templateMenu!;
+        state.templateMenu = null;
+        state.templateId = m.id;
+        loadLayersForTemplate(m.id);
+        goToView("playground");
+        break;
+      }
+      case "ctx-copy-id": {
+        const m = state.templateMenu!;
+        navigator.clipboard?.writeText(m.id).catch(() => {});
+        state.copied = `tpl-${m.id}`;
+        render();
+        clearTimeout(copyKeyTimer);
+        copyKeyTimer = setTimeout(() => { state.copied = null; render(); }, 1200);
+        break;
+      }
+      case "ctx-delete-template": {
+        const m = state.templateMenu!;
+        state.templateMenu = null;
+        deleteTemplate(m.id, m.name);
+        break;
+      }
       case "copy-key": {
         const rawId = el.dataset.id!;
         const secret = state.newKeySecret?.id === rawId ? state.newKeySecret.secret : rawId;
@@ -871,6 +971,7 @@ function bind() {
       }
       case "dismiss-new-key": state.newKeySecret = null; render(); break;
       case "revoke-key": revokeKey(el.dataset.id!); break;
+      case "purge-key": purgeKey(el.dataset.id!); break;
 
       default:
         if (action.startsWith("pick-lang-")) { state.lang = action.slice("pick-lang-".length) as State["lang"]; render(); }
@@ -906,6 +1007,14 @@ function bind() {
       state.jsonError = null;
       const btn = document.getElementById("importJsonBtn");
       if (btn) btn.style.opacity = t.value.trim() ? "1" : "0.45";
+      return;
+    }
+    if (field === "search") {
+      state.search = t.value;
+      const cursor = t.selectionStart;
+      render();
+      const el = document.getElementById("searchInput") as HTMLInputElement | null;
+      if (el) { el.focus(); el.setSelectionRange(cursor, cursor); }
     }
   });
 

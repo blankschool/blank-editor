@@ -5,6 +5,8 @@ import {
   createDb,
   createApiKey,
   createTemplate,
+  deleteApiKey,
+  deleteTemplate,
   findApiKeyOwner,
   findTemplate,
   listApiKeys,
@@ -33,6 +35,7 @@ if (DATABASE_URL) {
     listTemplates: () => listTemplates(sql),
     createTemplate: ({ name, document }) => createTemplate(sql, { id: randomUUID(), kind: "custom", name, document }),
     updateTemplate: (id, input) => updateTemplate(sql, id, input),
+    deleteTemplate: (id) => deleteTemplate(sql, id),
     listApiKeys: () => listApiKeys(sql),
     createApiKey: async (name) => {
       const secret = `blk_live_${randomUUID().replace(/-/g, "")}`;
@@ -40,6 +43,7 @@ if (DATABASE_URL) {
       return { ...created, secret };
     },
     revokeApiKey: (id) => revokeApiKey(sql, id),
+    deleteApiKey: (id) => deleteApiKey(sql, id),
     renderTemplatePng,
   };
 } else {

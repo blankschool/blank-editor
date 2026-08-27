@@ -1,5 +1,4 @@
 import "./styles.css";
-import SEED_JSON from "./seed.json";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
@@ -36,13 +35,7 @@ const PALETTE = ["#FCFCFA", "#E3E2DE", "#C4C2BC", "#9B9992", "#6E6C67", "#4A4944
 
 /* ============================ state ============================ */
 const blankPage = () => ({ id: uid(), w: 1080, h: 1080, bg: "#111111", els: [] });
-function seedDoc() {
-  try {
-    return structuredClone(SEED_JSON) as unknown as Doc;
-  } catch (e) { /* fall through to a blank document */ }
-  return { name: "Design sem título", pages: [blankPage()], active: 0 } as Doc;
-}
-const SEED: Doc = seedDoc();
+const SEED: Doc = { name: "Design sem título", pages: [blankPage()], active: 0 } as Doc;
 let doc: Doc = SEED;
 let sel: string[] = [];
 let tool = "select";
@@ -986,7 +979,7 @@ function renderProps() {
 
     ${shows.fill ? `<div class="sec"><h4>${t === "text" ? "Cor do texto" : "Preenchimento"}</h4>
       <div class="grid4" style="margin-bottom:7px">${PALETTE.map((c) => `<button class="swatch" style="height:26px;background:${c}" data-fill="${c}" aria-pressed="${(e.fill || "").toLowerCase() === c}"></button>`).join("")}</div>
-      <div class="field"><input type="color" id="pFill" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}"><input class="num" id="pFillHex" value="${e.fill}"></div></div>` : ""}
+      <div class="field"><input type="color" id="pFill" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}"></div></div>` : ""}
 
     ${t === "text" ? `<div class="sec"><h4>Tipografia</h4>
       <select class="field" id="pFont" style="width:100%;margin-bottom:6px">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>
@@ -1037,7 +1030,7 @@ $("props").addEventListener("input", (ev) => {
     pX: () => patch({ x: n || 0 }), pY: () => patch({ y: n || 0 }),
     pW: () => n > 0 && patch({ w: n }), pH: () => n > 0 && patch({ h: n }),
     pR: () => patch({ rot: n || 0 }), pName: () => patch({ name: v }),
-    pFill: () => patch({ fill: v }), pFillHex: () => /^#[0-9a-f]{3,8}$/i.test(v) && patch({ fill: v }),
+    pFill: () => patch({ fill: v }),
     pFont: () => patch({ font: v }), pSize: () => n > 0 && patch({ size: n }),
     pLh: () => n > 0 && patch({ lh: n }), pLs: () => patch({ ls: n || 0 }),
     pStroke: () => patch({ stroke: v }), pSW: () => patch({ strokeWidth: Math.max(0, n || 0) }),

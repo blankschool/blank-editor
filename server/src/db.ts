@@ -78,6 +78,11 @@ export async function updateTemplate(
   return rows[0] ?? null;
 }
 
+export async function deleteTemplate(sql: Sql, id: string): Promise<boolean> {
+  const rows = await sql`delete from templates where id = ${id} returning id`;
+  return rows.length > 0;
+}
+
 /** Looks up the (non-revoked) owner of an API key by its SHA-256 hash. */
 export async function findApiKeyOwner(sql: Sql, keyHash: string): Promise<ApiKeyOwner | null> {
   const rows = await sql<ApiKeyOwner[]>`
@@ -110,5 +115,11 @@ export async function revokeApiKey(sql: Sql, id: string): Promise<boolean> {
   const rows = await sql`
     update api_keys set revoked_at = now() where id = ${id} and revoked_at is null returning id
   `;
+  return rows.length > 0;
+}
+
+/** Permanently removes a key's row — only once it's already revoked, so a live key can't be hard-deleted by mistake. */
+export async function deleteApiKey(sql: Sql, id: string): Promise<boolean> {
+  const rows = await sql`delete from api_keys where id = ${id} and revoked_at is not null returning id`;
   return rows.length > 0;
 }

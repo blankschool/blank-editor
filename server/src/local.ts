@@ -72,6 +72,8 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       return updated;
     },
 
+    deleteTemplate: async (id) => templates.delete(id),
+
     listApiKeys: async () => [...apiKeys.values()].map(({ keyHash: _keyHash, ...summary }) => summary),
 
     createApiKey: async (name) => {
@@ -86,6 +88,12 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       if (!existing || existing.revoked) return false;
       apiKeys.set(id, { ...existing, revoked: true });
       return true;
+    },
+
+    deleteApiKey: async (id) => {
+      const existing = apiKeys.get(id);
+      if (!existing || !existing.revoked) return false;
+      return apiKeys.delete(id);
     },
 
     renderTemplatePng,

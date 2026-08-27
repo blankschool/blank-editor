@@ -88,3 +88,32 @@ test("a template created through the app can be listed, fetched and rendered by 
   });
   assert.equal(rendered.statusCode, 200);
 });
+
+test("DELETE /api/v1/templates/:id removes it from the list", async () => {
+  const app = buildApp(createLocalDeps("blk_local_test", async () => Buffer.from("png")));
+  const document = { active: 0, pages: [{ w: 100, h: 100, bg: "#000", els: [] }] };
+  const created = await app.inject({ method: "POST", url: "/api/v1/templates", payload: { name: "Descartável", document } });
+  const { id } = JSON.parse(created.body);
+
+  const deleted = await app.inject({ method: "DELETE", url: `/api/v1/templates/${id}` });
+  assert.equal(deleted.statusCode, 204);
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/templates" });
+  assert.ok(!JSON.parse(list.body).some((t: { id: string }) => t.id === id));
+});
+
+test("a key can only be purged (permanently removed) after being revoked", async () => {
+  const app = buildApp(createLocalDeps("blk_local_test", async () => Buffer.from("png")));
+  const created = await app.inject({ method: "POST", url: "/api/v1/keys", payload: { name: "descartável" } });
+  const { id } = JSON.parse(created.body);
+
+  const tooEarly = await app.inject({ method: "DELETE", url: `/api/v1/keys/${id}/purge` });
+  assert.equal(tooEarly.statusCode, 404);
+
+  await app.inject({ method: "DELETE", url: `/api/v1/keys/${id}` });
+  const purged = await app.inject({ method: "DELETE", url: `/api/v1/keys/${id}/purge` });
+  assert.equal(purged.statusCode, 204);
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/keys" });
+  assert.ok(!JSON.parse(list.body).some((k: { id: string }) => k.id === id));
+});

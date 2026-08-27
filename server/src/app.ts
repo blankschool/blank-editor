@@ -10,9 +10,11 @@ export interface AppDeps {
   listTemplates: () => Promise<TemplateSummary[]>;
   createTemplate: (input: { name: string; document: unknown }) => Promise<TemplateRow>;
   updateTemplate: (id: string, input: { name?: string; document?: unknown }) => Promise<TemplateRow | null>;
+  deleteTemplate: (id: string) => Promise<boolean>;
   listApiKeys: () => Promise<ApiKeySummary[]>;
   createApiKey: (name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
   revokeApiKey: (id: string) => Promise<boolean>;
+  deleteApiKey: (id: string) => Promise<boolean>;
   renderTemplatePng: typeof renderTemplatePng;
 }
 
@@ -83,6 +85,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     },
   );
 
+  app.delete<{ Params: { id: string } }>("/api/v1/templates/:id", async (request, reply) => {
+    const deleted = await deps.deleteTemplate(request.params.id);
+    if (!deleted) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    return reply.code(204).send();
+  });
+
   // --- API keys --------------------------------------------------------------
 
   app.get("/api/v1/keys", async () => deps.listApiKeys());
@@ -97,6 +105,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.delete<{ Params: { id: string } }>("/api/v1/keys/:id", async (request, reply) => {
     const revoked = await deps.revokeApiKey(request.params.id);
     if (!revoked) return reply.code(404).send({ error: `key not found or already revoked: ${request.params.id}` });
+    return reply.code(204).send();
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/v1/keys/:id/purge", async (request, reply) => {
+    const deleted = await deps.deleteApiKey(request.params.id);
+    if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
     return reply.code(204).send();
   });
 

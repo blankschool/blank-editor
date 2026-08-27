@@ -22,9 +22,11 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     listTemplates: async () => [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z" }],
     createTemplate: async ({ name, document }) => ({ id: "new-tpl", kind: "custom", name, document }),
     updateTemplate: async (id, input) => (id === TPL.id ? { ...TPL, ...input } : null),
+    deleteTemplate: async (id) => id === TPL.id,
     listApiKeys: async () => [{ id: "key-1", name: "prod", createdAt: "2024-01-01T00:00:00.000Z", revoked: false }],
     createApiKey: async (name) => ({ id: "new-key", name, secret: "blk_live_generated", createdAt: "2024-01-01T00:00:00.000Z" }),
     revokeApiKey: async (id) => id === "key-1",
+    deleteApiKey: async (id) => id === "revoked-key",
     renderTemplatePng: async () => PNG_BYTES,
     ...overrides,
   };
@@ -174,5 +176,23 @@ test("DELETE /api/v1/keys/:id revokes, 404s when already revoked or missing", as
   assert.equal(ok.statusCode, 204);
 
   const missing = await app.inject({ method: "DELETE", url: "/api/v1/keys/nope" });
+  assert.equal(missing.statusCode, 404);
+});
+
+test("DELETE /api/v1/keys/:id/purge permanently removes a revoked key, 404s otherwise", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "DELETE", url: "/api/v1/keys/revoked-key/purge" });
+  assert.equal(ok.statusCode, 204);
+
+  const notRevoked = await app.inject({ method: "DELETE", url: "/api/v1/keys/key-1/purge" });
+  assert.equal(notRevoked.statusCode, 404);
+});
+
+test("DELETE /api/v1/templates/:id removes it, 404s when missing", async () => {
+  const app = buildApp(makeDeps());
+  const ok = await app.inject({ method: "DELETE", url: `/api/v1/templates/${TPL.id}` });
+  assert.equal(ok.statusCode, 204);
+
+  const missing = await app.inject({ method: "DELETE", url: "/api/v1/templates/nope" });
   assert.equal(missing.statusCode, 404);
 });
