@@ -9,12 +9,11 @@ async function solidPng(r: number, g: number, b: number, size = 8): Promise<Buff
     .toBuffer();
 }
 
-test("composes a PNG sized for text-only (no media) input", async () => {
+test("composes a PNG containing the minimal tweet card", async () => {
   const avatar = await solidPng(200, 30, 30);
   const buf = await composeTweetPng({
     displayName: "Micael Crasto",
     handle: "@MicaelCrasto",
-    verified: true,
     tweetText: "hello world",
     avatarBuffer: avatar,
   });
@@ -24,37 +23,11 @@ test("composes a PNG sized for text-only (no media) input", async () => {
   assert.ok(meta.height && meta.height < 200);
 });
 
-test("composes a taller PNG when a media buffer is supplied", async () => {
-  const avatar = await solidPng(200, 30, 30);
-  const media = await solidPng(30, 30, 200);
-
-  const withoutMedia = await composeTweetPng({
-    displayName: "Micael Crasto",
-    handle: "@MicaelCrasto",
-    verified: false,
-    tweetText: "hello world",
-    avatarBuffer: avatar,
-  });
-  const withMedia = await composeTweetPng({
-    displayName: "Micael Crasto",
-    handle: "@MicaelCrasto",
-    verified: false,
-    tweetText: "hello world",
-    avatarBuffer: avatar,
-    mediaBuffer: media,
-  });
-
-  const a = await sharp(withoutMedia).metadata();
-  const b = await sharp(withMedia).metadata();
-  assert.ok(b.height! > a.height!);
-});
-
 test("the composited PNG is fully opaque where the avatar circle sits (no transparency leaking through)", async () => {
   const avatar = await solidPng(200, 30, 30);
   const buf = await composeTweetPng({
     displayName: "x",
     handle: "@x",
-    verified: false,
     tweetText: "hi",
     avatarBuffer: avatar,
   });
@@ -69,7 +42,6 @@ test("renderTweetPng rejects a private-network avatar URL instead of silently fe
     renderTweetPng({
       displayName: "x",
       handle: "@x",
-      verified: false,
       tweetText: "hi",
       avatarUrl: "http://127.0.0.1:1/x.png",
     }),

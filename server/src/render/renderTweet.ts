@@ -1,15 +1,13 @@
-import sharp, { type OverlayOptions } from "sharp";
-import { buildTweetSvg, MEDIA_RADIUS, type Box, type TweetInput } from "./tweetTemplate.ts";
+import sharp from "sharp";
+import { buildTweetSvg, type TweetInput } from "./tweetTemplate.ts";
 import { fetchImage } from "./imageSource.ts";
 
-export interface RenderTweetInput extends Omit<TweetInput, "hasMedia"> {
+export interface RenderTweetInput extends TweetInput {
   avatarUrl: string;
-  mediaUrl?: string;
 }
 
-export interface ComposeTweetInput extends Omit<TweetInput, "hasMedia"> {
+export interface ComposeTweetInput extends TweetInput {
   avatarBuffer: Buffer;
-  mediaBuffer?: Buffer;
 }
 
 function maskSvg(width: number, height: number, shape: string): Buffer {
@@ -19,10 +17,6 @@ function maskSvg(width: number, height: number, shape: string): Buffer {
 function circleMask(size: number): Buffer {
   const r = size / 2;
   return maskSvg(size, size, `<circle cx="${r}" cy="${r}" r="${r}" fill="#fff"/>`);
-}
-
-function roundedRectMask(width: number, height: number, radius: number): Buffer {
-  return maskSvg(width, height, `<rect width="${width}" height="${height}" rx="${radius}" fill="#fff"/>`);
 }
 
 function maskToFit(raw: Buffer, box: { width: number; height: number }, mask: Buffer): Promise<Buffer> {
@@ -39,28 +33,21 @@ function maskToFit(raw: Buffer, box: { width: number; height: number }, mask: Bu
  * is the thin network-fetching wrapper around it.
  */
 export async function composeTweetPng(input: ComposeTweetInput): Promise<Buffer> {
-  const { svg, layout } = buildTweetSvg({ ...input, hasMedia: Boolean(input.mediaBuffer) });
+  const { svg, layout } = buildTweetSvg(input);
 
-  const [base, avatar, media] = await Promise.all([
+  const [base, avatar] = await Promise.all([
     sharp(Buffer.from(svg)).png().toBuffer(),
     maskToFit(input.avatarBuffer, { width: layout.avatarBox.size, height: layout.avatarBox.size }, circleMask(layout.avatarBox.size)),
-    input.mediaBuffer && layout.mediaBox
-      ? maskToFit(input.mediaBuffer, layout.mediaBox, roundedRectMask(layout.mediaBox.width, layout.mediaBox.height, MEDIA_RADIUS))
-      : Promise.resolve(null),
   ]);
 
-  const composites: OverlayOptions[] = [{ input: avatar, left: layout.avatarBox.x, top: layout.avatarBox.y }];
-  const mediaBox: Box | null = layout.mediaBox;
-  if (media && mediaBox) composites.push({ input: media, left: mediaBox.x, top: mediaBox.y });
-
-  return sharp(base).composite(composites).png().toBuffer();
+  return sharp(base)
+    .composite([{ input: avatar, left: layout.avatarBox.x, top: layout.avatarBox.y }])
+    .png()
+    .toBuffer();
 }
 
-/** Fetches the avatar and (optional) attached photo over HTTP(S) — SSRF-guarded — then composes the PNG. */
+/** Fetches the avatar over HTTP(S) — SSRF-guarded — then composes the PNG. */
 export async function renderTweetPng(input: RenderTweetInput): Promise<Buffer> {
-  const [avatarBuffer, mediaBuffer] = await Promise.all([
-    fetchImage(input.avatarUrl),
-    input.mediaUrl ? fetchImage(input.mediaUrl) : Promise.resolve(undefined),
-  ]);
-  return composeTweetPng({ ...input, avatarBuffer, mediaBuffer });
+  const avatarBuffer = await fetchImage(input.avatarUrl);
+  return composeTweetPng({ ...input, avatarBuffer });
 }

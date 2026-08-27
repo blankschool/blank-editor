@@ -28,12 +28,7 @@ export function mapLayersToTweetInput(layers: Layers): RenderTweetInput {
   const handle = requireText(layers, "handle");
   const tweetText = requireText(layers, "tweetText");
 
-  const verified = !(layers.verifiedBadge?.hide ?? false);
-
-  const mediaLayer = layers.media;
-  const mediaUrl = mediaLayer && !mediaLayer.hide ? mediaLayer.image_url : undefined;
-
-  return { avatarUrl, displayName, handle, tweetText, verified, mediaUrl };
+  return { avatarUrl, displayName, handle, tweetText };
 }
 
 export { LayerValidationError };

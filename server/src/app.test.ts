@@ -102,7 +102,5 @@ test("passes the mapped layer values through to renderTweetPng", async () => {
     displayName: "Micael Crasto",
     handle: "@MicaelCrasto",
     tweetText: "hello",
-    verified: true,
-    mediaUrl: undefined,
   });
 });

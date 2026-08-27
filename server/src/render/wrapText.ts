@@ -5,11 +5,10 @@
  * single-line positioning visually close, not pixel-perfect. Exported so every
  * caller (wrapping, single-line layout) shares one number instead of drifting.
  */
-export const AVG_CHAR_WIDTH_RATIO = 0.52;
-export const BOLD_CHAR_WIDTH_RATIO = 0.58;
+const AVG_CHAR_WIDTH_RATIO = 0.52;
 
-export function estimateTextWidth(text: string, fontSize: number, ratio: number = AVG_CHAR_WIDTH_RATIO): number {
-  return text.length * fontSize * ratio;
+function estimateTextWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * AVG_CHAR_WIDTH_RATIO;
 }
 
 function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): string[] {
