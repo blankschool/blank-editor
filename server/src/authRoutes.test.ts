@@ -31,8 +31,6 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     createApiKey: async (ownerId, name) => ({ id: "key-1", name, secret: "blk_live_generated", createdAt: "2024-01-01T00:00:00.000Z" }),
     revokeApiKey: async () => false,
     deleteApiKey: async () => false,
-    findWorkspaceByEmail: async () => null,
-    createWorkspace: async ({ name, email }) => ({ id: "ws-1", name, email }),
     renderTemplatePng: async () => PNG_BYTES,
     ...overrides,
   };

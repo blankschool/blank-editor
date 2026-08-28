@@ -8,7 +8,7 @@ import { pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
 import { publicRenderUrl, uploadRenderedPng, uploadUserPhoto } from "./storage.ts";
-import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary, Workspace } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
 import {
   clearSessionCookies,
   getAccessCookie,
@@ -55,8 +55,6 @@ export interface AppDeps {
   createApiKey: (ownerId: string, name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
   revokeApiKey: (ownerId: string, id: string) => Promise<boolean>;
   deleteApiKey: (ownerId: string, id: string) => Promise<boolean>;
-  findWorkspaceByEmail: (email: string) => Promise<Workspace | null>;
-  createWorkspace: (input: { name: string; email: string }) => Promise<Workspace>;
   renderTemplatePng: typeof renderTemplatePng;
 }
 
@@ -297,29 +295,6 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     const deleted = await deps.deleteApiKey(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
     return reply.code(204).send();
-  });
-
-  // O console's login/signup: real rows na tabela workspaces, real 404/409, sem senha
-  // verificada (ver o comentário na tabela workspaces em schema.sql). Substituído pela
-  // sessão do Supabase Auth na fase 3 do plano de migração — mantido aqui até esse corte.
-  app.get<{ Params: { email: string } }>("/api/v1/workspace/by-email/:email", async (request, reply) => {
-    const workspace = await deps.findWorkspaceByEmail(decodeURIComponent(request.params.email));
-    if (!workspace) return reply.code(404).send({ error: "no account with this e-mail" });
-    return workspace;
-  });
-
-  app.post<{ Body: { name?: string; email?: string } }>("/api/v1/workspace", async (request, reply) => {
-    const name = request.body?.name?.trim();
-    const email = request.body?.email?.trim();
-    if (!name || !email) return reply.code(400).send({ error: "missing required field: name, email" });
-    // Check-then-create rather than relying on the table's unique constraint and
-    // catching the error: this app has exactly one writer per environment (no
-    // concurrent signups racing for the same e-mail in practice), so the small
-    // TOCTOU window isn't worth reaching into postgres.js's error shape for.
-    const existing = await deps.findWorkspaceByEmail(email);
-    if (existing) return reply.code(409).send({ error: "an account with this e-mail already exists" });
-    const workspace = await deps.createWorkspace({ name, email });
-    return reply.code(201).send(workspace);
   });
 
   // --- Sessão via Supabase Auth (fase 3 do plano de migração) -----------------

@@ -131,32 +131,3 @@ test("a key created for one workspace cannot see another workspace's templates",
   const noAuth = await app.inject({ method: "GET", url: "/api/v1/templates" });
   assert.equal(noAuth.statusCode, 401);
 });
-
-test("workspace signup and login work end-to-end in local mode", async () => {
-  const app = buildApp(createLocalDeps("blk_local_test", async () => Buffer.from("png")));
-
-  const notFound = await app.inject({ method: "GET", url: "/api/v1/workspace/by-email/miguel@blankschool.com.br" });
-  assert.equal(notFound.statusCode, 404);
-
-  const signup = await app.inject({
-    method: "POST",
-    url: "/api/v1/workspace",
-    payload: { name: "Studio do Miguel", email: "Miguel@BlankSchool.com.br" },
-  });
-  assert.equal(signup.statusCode, 201);
-  const created = JSON.parse(signup.body);
-  assert.equal(created.name, "Studio do Miguel");
-  assert.equal(created.email, "miguel@blankschool.com.br", "e-mail é normalizado para minúsculas");
-
-  const dupe = await app.inject({
-    method: "POST",
-    url: "/api/v1/workspace",
-    payload: { name: "Outro", email: "miguel@blankschool.com.br" },
-  });
-  assert.equal(dupe.statusCode, 409);
-
-  // Login busca por e-mail sem diferenciar maiúsculas — a mesma conta criada acima.
-  const login = await app.inject({ method: "GET", url: "/api/v1/workspace/by-email/MIGUEL@blankschool.com.br" });
-  assert.equal(login.statusCode, 200);
-  assert.equal(JSON.parse(login.body).id, created.id);
-});
