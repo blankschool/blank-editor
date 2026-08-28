@@ -1,10 +1,29 @@
 import sharp from "sharp";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildTemplateSvg, listImageLayers, type TemplateOverrides } from "./editableTweetTemplate.ts";
 import { fetchImage } from "./imageSource.ts";
+import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
 import type { ParsedLayers } from "./layers.ts";
 
+/**
+ * O cliente Storage é configurado uma vez no boot (server.ts), quando um projeto Supabase
+ * está presente — sem ele, uma referência `supabase://uploads/...` simplesmente não resolve
+ * (o layer fica sem imagem, como já acontecia pra qualquer src inválido). Módulo-nível em vez
+ * de mais um parâmetro encadeado por AppDeps/app.ts porque é um recurso singleton por
+ * deployment, não algo que varia por request.
+ */
+let storageClient: SupabaseClient | null = null;
+export function configureStorageClient(client: SupabaseClient | null): void {
+  storageClient = client;
+}
+
 async function toDataUrl(url: string): Promise<string> {
-  const raw = await fetchImage(url);
+  const raw = url.startsWith(PRIVATE_UPLOAD_PREFIX)
+    ? await (async () => {
+        if (!storageClient) throw new Error("private upload referenced, but no Storage client is configured");
+        return fetchPrivateUpload(storageClient, url);
+      })()
+    : await fetchImage(url);
   const png = await sharp(raw).png().toBuffer(); // normalize whatever format was fetched to PNG
   return `data:image/png;base64,${png.toString("base64")}`;
 }
@@ -27,7 +46,7 @@ export async function renderTemplatePng(
   // diferente por slide baixaria a foto errada se olhássemos sempre a capa.
   for (const { name, src } of listImageLayers(document, pageIndex)) {
     if (layers.hidden.has(name) || toFetch[name]) continue;
-    if (src && /^https?:\/\//i.test(src)) toFetch[name] = src;
+    if (src && (/^https?:\/\//i.test(src) || src.startsWith(PRIVATE_UPLOAD_PREFIX))) toFetch[name] = src;
   }
 
   const fetched = await Promise.all(

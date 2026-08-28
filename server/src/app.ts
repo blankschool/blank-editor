@@ -1,11 +1,13 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyCookie from "@fastify/cookie";
+import fastifyMultipart from "@fastify/multipart";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
 import { parseLayers, type Layers } from "./render/layers.ts";
-import { pageCount } from "./render/editableTweetTemplate.ts";
+import { pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
+import { publicRenderUrl, uploadRenderedPng, uploadUserPhoto } from "./storage.ts";
 import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary, Workspace } from "./db.ts";
 import {
   clearSessionCookies,
@@ -18,6 +20,16 @@ import {
   signUp,
   verifyAccessToken,
 } from "./supabaseAuth.ts";
+
+/**
+ * Presente só quando há um projeto Supabase de verdade configurado (fase 7 do plano de
+ * migração). Sem isso: `GET /api/v1/templates/:id` não traz `downloadUrl`, `save:true` não
+ * sobe o PNG pro bucket público, e `POST /api/v1/uploads` responde 501 — nenhuma dessas coisas
+ * tem onde existir sem um projeto Supabase por trás.
+ */
+export interface StorageDeps {
+  client: SupabaseClient;
+}
 
 /**
  * Presente só quando há um projeto Supabase de verdade configurado (fase 3 do plano de
@@ -77,9 +89,10 @@ function looksLikeApiKey(token: string): boolean {
   return token.startsWith("blk_");
 }
 
-export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyInstance {
+export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: StorageDeps | null = null): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
   app.register(fastifyCookie);
+  app.register(fastifyMultipart, { limits: { fileSize: 15 * 1024 * 1024 } });
 
   /**
    * Resolve quem está chamando, em três caminhos possíveis (nessa ordem):
@@ -161,6 +174,15 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyIn
     if (save) {
       const merged = applyLayerOverrides(row.document, parsedLayers, pageIndex);
       await deps.updateTemplate(ownerId, template, { document: merged });
+      // O link público de download é um caminho determinístico (storage.ts) — só precisa do
+      // arquivo existir de verdade, o que só acontece depois de um save:true.
+      if (storage) {
+        const resolvedIndex = resolvePageIndex(row.document, pageIndex) ?? 0;
+        await uploadRenderedPng(storage.client, template, resolvedIndex, png).catch(() => {
+          // Falha de upload não derruba o render — a pessoa já tem o PNG na resposta; o link
+          // público só fica indisponível até o próximo save:true bem-sucedido.
+        });
+      }
     }
 
     return reply.header("content-type", "image/png").send(png);
@@ -186,7 +208,10 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyIn
     if (!ownerId) return;
     const row = await deps.findTemplate(ownerId, request.params.id);
     if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
-    return { id: row.id, name: row.name, document: row.document };
+    // Caminho determinístico (storage.ts) — existe sempre que Storage está configurado, mesmo
+    // que o arquivo em si só passe a existir depois do primeiro save:true.
+    const downloadUrl = storage ? publicRenderUrl(storage.client, row.id) : undefined;
+    return { id: row.id, name: row.name, document: row.document, downloadUrl };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/templates/:id/cover", async (request, reply) => {
@@ -223,6 +248,24 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyIn
     const deleted = await deps.deleteTemplate(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     return reply.code(204).send();
+  });
+
+  // Foto pro avatar/media de um template — vai pro bucket privado, isolada por dono via
+  // prefixo de caminho (uploadUserPhoto, storage.ts). Devolve uma referência
+  // (`supabase://uploads/...`) usável direto como `src` de uma layer de imagem; nunca uma URL
+  // pública, porque a foto é privada por natureza (RLS do bucket exige o prefixo bater com
+  // auth.uid(), e o render do Fastify busca isto com a chave service-role, ignorando RLS de
+  // propósito — leitura servidor-a-servidor confiável, não uma requisição vinda do navegador).
+  app.post("/api/v1/uploads", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: "missing file" });
+    const buffer = await file.toBuffer();
+    const src = await uploadUserPhoto(storage.client, ownerId, file.filename, file.mimetype, buffer);
+    return reply.code(201).send({ src });
   });
 
   app.get("/api/v1/keys", async (request, reply) => {

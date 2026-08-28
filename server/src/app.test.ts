@@ -279,6 +279,55 @@ test("PUT /api/v1/templates/:id updates, 404s when missing", async () => {
   assert.equal(missing.statusCode, 404);
 });
 
+// --- Storage (fase 7) ---------------------------------------------------------
+
+/** Cliente Supabase Storage falso — só os métodos que server/src/storage.ts chama. */
+function makeFakeStorageClient() {
+  const uploaded = new Map<string, Buffer>();
+  return {
+    storage: {
+      from: (bucket: string) => ({
+        upload: async (path: string, data: Buffer) => {
+          uploaded.set(`${bucket}/${path}`, data);
+          return { error: null };
+        },
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}` } }),
+        download: async (path: string) => {
+          const data = uploaded.get(`${bucket}/${path}`);
+          if (!data) return { data: null, error: new Error("not found") };
+          return { data: { arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) }, error: null };
+        },
+      }),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+
+test("GET /api/v1/templates/:id has no downloadUrl when Storage isn't configured", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}`, headers: AUTH });
+  assert.equal("downloadUrl" in JSON.parse(res.body), false);
+});
+
+test("GET /api/v1/templates/:id includes a deterministic public downloadUrl when Storage is configured", async () => {
+  const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}`, headers: AUTH });
+  const body = JSON.parse(res.body);
+  assert.match(body.downloadUrl, /\/renders\/tpl-1\/page-1\.png$/);
+});
+
+test("POST /api/v1/uploads responds 501 when Storage isn't configured", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "POST", url: "/api/v1/uploads", headers: AUTH });
+  assert.equal(res.statusCode, 501);
+});
+
+test("POST /api/v1/uploads requires auth even when Storage is configured", async () => {
+  const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({ method: "POST", url: "/api/v1/uploads" });
+  assert.equal(res.statusCode, 401);
+});
+
 // --- API keys ------------------------------------------------------------------
 
 test("GET /api/v1/keys lists keys without exposing a secret", async () => {

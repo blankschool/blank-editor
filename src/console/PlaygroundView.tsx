@@ -1,4 +1,4 @@
-import { Copy, Image as ImageIcon, Play, Type } from "lucide-react";
+import { Copy, Image as ImageIcon, Play, Type, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
   setLayerValue,
   snippetFor,
   startRender,
+  uploadLayerPhoto,
   useConsole,
   type Lang,
 } from "./store";
@@ -38,13 +39,33 @@ function LayerField({ layer }: { layer: { id: number; type: "text" | "image"; na
           {layer.name}
         </label>
       </div>
-      <Input
-        id={`layer-${layer.id}`}
-        value={layer.value}
-        onChange={(e) => setLayerValue(layer.id, e.target.value)}
-        placeholder={layer.type === "text" ? "Texto dinâmico" : "URL da imagem"}
-        className="h-9.5"
-      />
+      <div className="flex items-center gap-1.5">
+        <Input
+          id={`layer-${layer.id}`}
+          value={layer.value}
+          onChange={(e) => setLayerValue(layer.id, e.target.value)}
+          placeholder={layer.type === "text" ? "Texto dinâmico" : "URL da imagem"}
+          className="h-9.5"
+        />
+        {layer.type === "image" && (
+          <label
+            title="Subir uma foto"
+            className="flex h-9.5 w-9.5 flex-none cursor-pointer items-center justify-center rounded-md border border-line text-muted hover:border-line-strong hover:text-text"
+          >
+            <Upload size={14} strokeWidth={1.5} />
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadLayerPhoto(layer.id, file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
+      </div>
     </div>
   );
 }

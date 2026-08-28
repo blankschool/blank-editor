@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { buildApp, type AppDeps, type AuthDeps } from "./app.ts";
+import { buildApp, type AppDeps, type AuthDeps, type StorageDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { createSupabaseAuthClient } from "./supabaseAuth.ts";
+import { createStorageClient } from "./storage.ts";
 import {
   createDb,
   createApiKey,
@@ -19,7 +20,7 @@ import {
   updateTemplate,
 } from "./db.ts";
 import { createLocalDeps } from "./local.ts";
-import { renderTemplatePng } from "./render/renderTweet.ts";
+import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.ts";
 
 // Só em dev: `.env` não existe em produção (env vars vêm injetadas pelo runtime lá), e não faz
 // sentido nenhum exigir esse arquivo pra rodar o servidor de verdade — daí o existsSync antes.
@@ -30,6 +31,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const LOCAL_API_KEY = process.env.LOCAL_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!DATABASE_URL && !LOCAL_API_KEY) {
   console.error("DATABASE_URL is required in production; use LOCAL_API_KEY for local development");
@@ -76,7 +78,19 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   console.warn("SUPABASE_URL/SUPABASE_ANON_KEY not set — /api/v1/auth/* will respond 501");
 }
 
-const app = buildApp(deps, auth);
+// Storage (fase 7): bucket público pro PNG renderizado, bucket privado pra foto que o usuário
+// sobe. Cliente separado do de Auth de propósito — este usa a chave service-role (ignora RLS),
+// nunca deveria ir parar no navegador.
+let storage: StorageDeps | null = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  const client = createStorageClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  storage = { client };
+  configureStorageClient(client);
+} else if (DATABASE_URL) {
+  console.warn("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — Storage (uploads, download links) is disabled");
+}
+
+const app = buildApp(deps, auth, storage);
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })
