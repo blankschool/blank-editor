@@ -1,0 +1,140 @@
+/* Tailwind + shadcn, montados SOBRE o design system que já existe em styles.css.
+ *
+ * Três decisões que valem a leitura:
+ *
+ * 1. Sem preflight. Importamos só `theme` e `utilities`, não `preflight`. O
+ *    editor (src/editor.ts) monta ~50 nós de chrome estilizados por classe em
+ *    styles.css; um reset global do Tailwind zeraria botões, inputs e bordas
+ *    dele. E não faz falta: styles.css já traz as partes do preflight que
+ *    importam (`* { box-sizing }`, `button,input,select { font: inherit }`).
+ *    A única coisa que o utilitário `border-*` precisa e o preflight daria é
+ *    `border-style: solid` por padrão — está no bloco de reset abaixo.
+ *
+ * 2. Nada em @layer, de propósito. Regra da cascata: estilo de autor FORA de
+ *    layer vence qualquer coisa DENTRO de layer, por especificidade que seja.
+ *    styles.css é todo fora de layer, então `button { background: none }`
+ *    (0-0-1) passaria por cima de um `.bg-accent` (0-1-0) que estivesse em
+ *    @layer utilities — todo botão do console sairia sem cor. Com os dois fora
+ *    de layer quem decide é a especificidade, e o utilitário ganha do seletor
+ *    de elemento. O inverso (utilitário atropelar o editor) não acontece: os 56
+ *    nomes de classe do editor foram conferidos e nenhum colide com utilitário
+ *    do Tailwind, e este arquivo é importado ANTES do styles.css, então em
+ *    empate de especificidade o CSS legado ainda vence.
+ *
+ * 3. Os tokens são ALIAS, não cópia. `--color-surface: var(--surface)` aponta
+ *    para o token semântico do styles.css, que já resolve claro/escuro nas três
+ *    formas (:root, prefers-color-scheme, [data-theme]). Então o tema segue
+ *    funcionando sem uma linha de `dark:` e, mais importante, existe uma única
+ *    fonte de verdade de cor para o app inteiro — o console em Tailwind não
+ *    pode divergir do editor em CSS semântico.
+ *
+ * Os nomes canônicos do shadcn (--color-background, --color-primary…) existem
+ * como alias no fim do bloco, então um componente copiado de shadcn.com cai
+ * aqui e funciona sem tradução. Eles são nomes de tema do Tailwind e não
+ * colidem com as triplas HSL (--background, --primary) que styles.css já
+ * define para `hsl(var(--token))`.
+ */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+@theme inline {
+  /* superfícies */
+  --color-bg: var(--bg);
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-inset: var(--inset);
+  --color-avatar: var(--avatar);
+
+  /* linhas */
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  /* texto */
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  /* marca / ação */
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+
+  /* feedback */
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+
+  /* tipografia — a base do chrome é 13px, não os 16px do Tailwind */
+  --font-sans: var(--body);
+  --font-display: var(--display);
+  --font-mono: var(--mono);
+
+  /* raio: 8 / 10 / 12, a escala já adotada no styles.css */
+  --radius-sm: 8px;
+  --radius-md: var(--radius);
+  --radius-lg: 12px;
+
+  --shadow-pop: var(--shadow);
+
+  /* alias canônicos do shadcn */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text);
+  --color-muted-foreground: var(--muted);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--on-accent);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+}
+
+/* Variante `dark:` para o punhado de casos que não passam por token. Cobre as
+ * duas formas que o styles.css usa: a escolha explícita ([data-theme="dark"])
+ * e o padrão do sistema (prefers-color-scheme sem override para claro). */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/* ---------------------------- reset escopado ---------------------------- */
+/* O que o preflight daria e os utilitários de fato precisam. Escopado nas
+ * raízes React ([data-tw-root]) e no conteúdo que o Radix monta em portal no
+ * <body>, fora dessas raízes ([data-tw-portal]) — sem o segundo, dialog,
+ * select e context menu perdem borda e tipografia. */
+:where([data-tw-root], [data-tw-portal]),
+:where([data-tw-root], [data-tw-portal]) *,
+:where([data-tw-root], [data-tw-portal]) *::before,
+:where([data-tw-root], [data-tw-portal]) *::after {
+  border-width: 0;
+  border-style: solid;
+  border-color: var(--border);
+}
+:where([data-tw-root], [data-tw-portal]) {
+  font-family: var(--body);
+  font-size: 13px;
+  color: var(--text);
+}
+:where([data-tw-root], [data-tw-portal]) :is(input, textarea, select, button) {
+  background: none;
+}
+:where([data-tw-root], [data-tw-portal]) :is(input, textarea)::placeholder {
+  color: var(--faint);
+}
