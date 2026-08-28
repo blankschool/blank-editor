@@ -23,14 +23,12 @@ interface RenderBody {
   layers?: Layers;
 }
 
-const BODY_LIMIT_BYTES = 10 * 1024 * 1024; // templates can embed base64 images well past Fastify's 1 MiB default
+const BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
 
   app.get("/health", async () => ({ ok: true }));
-
-  // --- rendering ---------------------------------------------------------
 
   app.post<{ Body: RenderBody }>("/api/v1/render", async (request, reply) => {
     const token = extractBearerToken(request.headers.authorization);
@@ -50,18 +48,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       png = await deps.renderTemplatePng(row.document, parseLayers(layers ?? {}));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Anything renderTemplatePng throws today (SSRF guard, bad document, unreachable/oversized
-      // image) is a bad-input problem, not a server fault — surface it as 400, not a generic 500.
       return reply.code(400).send({ error: message });
     }
 
     return reply.header("content-type", "image/png").send(png);
   });
-
-  // --- templates -----------------------------------------------------------
-  // No auth on these yet — they're reached only through the app's own console, which is itself
-  // unauthenticated for now (single local user). This needs a real session check before this
-  // service is exposed publicly.
 
   app.get("/api/v1/templates", async () => deps.listTemplates());
 
@@ -78,6 +69,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { id: row.id, name: row.name, document: row.document };
   });
 
+  app.get<{ Params: { id: string } }>("/api/v1/templates/:id/cover", async (request, reply) => {
+    const row = await deps.findTemplate(request.params.id);
+    if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    try {
+      const png = await deps.renderTemplatePng(row.document, parseLayers({}));
+      return reply
+        .header("content-type", "image/png")
+        .header("cache-control", "private, max-age=20")
+        .send(png);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+  });
+
   app.put<{ Params: { id: string }; Body: { name?: string; document?: unknown } }>(
     "/api/v1/templates/:id",
     async (request, reply) => {
@@ -92,8 +98,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!deleted) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     return reply.code(204).send();
   });
-
-  // --- API keys --------------------------------------------------------------
 
   app.get("/api/v1/keys", async () => deps.listApiKeys());
 
