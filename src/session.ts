@@ -1,23 +1,17 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * The signed-in identity, real now.
+ * A identidade de quem está logado, real via Supabase Auth (fase 3 do plano de migração).
  *
- * `Session` is exactly the `workspaces` row the server returns from
- * POST /api/v1/workspace (signup) or GET /api/v1/workspace/by-email/:email
- * (login) — see server/schema.sql and server/src/app.ts. This module does not
- * invent any of it; it only caches that row in this browser (localStorage) so
- * console/editor don't refetch it on every navigation, and re-renders whoever
- * reads it via `useSession()` the moment login/signup or "Sair" changes it.
+ * O token de sessão mora num cookie `httpOnly` emitido pelo servidor (`POST /api/v1/auth/*`,
+ * ver `server/src/supabaseAuth.ts`) — este módulo NUNCA lê o cookie diretamente (não dá: JS não
+ * enxerga um cookie httpOnly). O que existe aqui é só o cache em memória de quem o servidor
+ * disse que está logado, populado por `bootSession()` no boot do app (`GET /api/v1/auth/me`,
+ * que o navegador manda o cookie sozinho) e atualizado por login/signup/logout.
  *
- * What this still is NOT: a server session. There's no cookie, no token, no
- * expiry — `router.ts`'s gate just checks "is there a cached workspace row",
- * and LoginApp.tsx's "senha" field is validated for length only, never checked
- * against anything. Anyone with devtools can paste a fake row into
- * localStorage and pass the gate. Real server sessions are separate, larger
- * work; this module's honesty about the boundary is deliberate — see the
- * comment on the `workspaces` table in schema.sql for why a password check
- * isn't bundled in here "for free".
+ * Isso torna a sessão inerentemente assíncrona — diferente da versão anterior (localStorage),
+ * que era síncrona desde o primeiro render. Por isso existe `sessionStatus`: `router.ts` não
+ * decide login-vs-console enquanto ele for `"loading"` (ver `#view-loading` em index.html).
  */
 export interface Session {
   id: string;
@@ -25,22 +19,10 @@ export interface Session {
   email: string;
 }
 
-const KEY = "blank-editor-session";
+export type SessionStatus = "loading" | "authenticated" | "anonymous";
 
-function readFromStorage(): Session | null {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.id === "string" && typeof parsed?.name === "string" && typeof parsed?.email === "string"
-      ? { id: parsed.id, name: parsed.name, email: parsed.email }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-let current: Session | null = readFromStorage();
+let current: Session | null = null;
+let status: SessionStatus = "loading";
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -52,30 +34,66 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
+/** Para quem não é componente React (router.ts) — mesma assinatura de un-/subscribe. */
+export function onSessionChange(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 export function getSession(): Session | null {
   return current;
 }
 
+export function getSessionStatus(): SessionStatus {
+  return status;
+}
+
+/**
+ * Síncrono de propósito — é o que `router.ts` usa pra decidir a rota em cada `apply()`. Só
+ * reflete a sessão de verdade depois que `bootSession()` resolveu ao menos uma vez; antes
+ * disso, `sessionStatus` ainda é `"loading"` e o router nem chega a consultar isto.
+ */
 export function hasSession(): boolean {
   return current !== null;
 }
 
 export function setSession(session: Session): void {
   current = session;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(session));
-  } catch {
-    /* blocked storage — the gate just won't persist across reloads */
-  }
+  status = "authenticated";
   notify();
 }
 
-export function clearSession(): void {
-  current = null;
+/**
+ * Encerra a sessão de verdade no servidor (limpa os cookies httpOnly — JS não consegue fazer
+ * isso sozinho) e só then limpa o cache local. Melhor esforço: mesmo se a chamada falhar
+ * (rede fora do ar), o app trata como deslogado — ficar "logado" localmente sem conseguir
+ * confirmar nada no servidor não ajudaria ninguém.
+ */
+export async function clearSession(): Promise<void> {
   try {
-    localStorage.removeItem(KEY);
+    await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" });
   } catch {
-    /* blocked storage */
+    /* melhor esforço — ver comentário acima */
+  }
+  current = null;
+  status = "anonymous";
+  notify();
+}
+
+/** Roda uma vez no boot do app (main.tsx) — resolve a sessão perguntando ao servidor. */
+export async function bootSession(): Promise<void> {
+  try {
+    const res = await fetch("/api/v1/auth/me", { credentials: "include" });
+    if (res.ok) {
+      const user = await res.json();
+      current = { id: user.ownerId, name: user.name, email: user.email };
+      status = "authenticated";
+    } else {
+      current = null;
+      status = "anonymous";
+    }
+  } catch {
+    current = null;
+    status = "anonymous";
   }
   notify();
 }
@@ -89,6 +107,10 @@ export function clearSession(): void {
  */
 export function useSession(): Session | null {
   return useSyncExternalStore(subscribe, () => current, () => current);
+}
+
+export function useSessionStatus(): SessionStatus {
+  return useSyncExternalStore(subscribe, () => status, () => status);
 }
 
 /** Initials for the avatar — first letter of up to two words, skipping short connectors ("do", "de", "da"). */

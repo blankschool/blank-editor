@@ -6,7 +6,7 @@
  * reads the stage's bounding box, which is only meaningful once the
  * container is actually visible (display:none reports a 0x0 rect).
  */
-import { hasSession } from "./session";
+import { getSessionStatus, hasSession, onSessionChange } from "./session";
 
 export type Route = "login" | "console" | "editor";
 
@@ -37,7 +37,18 @@ export function initRouter(views: Record<Route, HTMLElement>, onShow: Partial<Re
     return ROUTES.includes(first) ? first : DEFAULT_ROUTE;
   }
 
+  const loadingView = document.getElementById("view-loading");
+
   function apply() {
+    // A sessão resolve de forma assíncrona agora (cookie httpOnly, verificado contra o
+    // servidor) — enquanto isso não resolveu ao menos uma vez, nem login nem console/editor
+    // aparecem, senão quem já está logado veria a tela de login piscar a cada refresh.
+    if (getSessionStatus() === "loading") {
+      for (const r of ROUTES) views[r].style.display = "none";
+      return;
+    }
+    if (loadingView) loadingView.style.display = "none";
+
     const requested = requestedRoute();
     const route = requiresSession(requested) && !hasSession() ? "login" : requested;
     // Rewrites the address bar to match what's actually on screen — the same
@@ -50,5 +61,6 @@ export function initRouter(views: Record<Route, HTMLElement>, onShow: Partial<Re
   }
 
   window.addEventListener("hashchange", apply);
+  onSessionChange(apply);
   apply();
 }

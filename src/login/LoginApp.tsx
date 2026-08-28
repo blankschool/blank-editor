@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { navigate } from "../router";
 import { setSession, useSession, type Session } from "../session";
 import { WORKSPACE } from "../console/workspace";
+import { set } from "../console/store";
 import "./login-grid.css";
 
 /**
@@ -132,8 +133,8 @@ export function LoginApp() {
     setError("");
     setLoading(true);
     try {
-      const workspace: Session = login ? await findWorkspace(email.trim()) : await createWorkspace(name.trim(), email.trim());
-      setSession(workspace);
+      const session = login ? await signIn(email.trim(), password) : await signUp(name.trim(), email.trim(), password);
+      setSession(session);
       // O router exige sessão para /console e /editor — sem chamar setSession
       // antes, o próprio navigate seria desfeito pelo gate no primeiro apply().
       navigate("console");
@@ -144,22 +145,35 @@ export function LoginApp() {
     }
   }
 
-  async function findWorkspace(email: string): Promise<Session> {
-    const res = await fetch(`/api/v1/workspace/by-email/${encodeURIComponent(email)}`);
-    if (res.status === 404) throw new Error("Não encontramos uma conta com esse e-mail.");
+  // `credentials: "include"` em ambas: é o que faz o navegador guardar o Set-Cookie
+  // httpOnly que o servidor devolve — sem isso a sessão não persiste entre navegações.
+  async function signIn(email: string, password: string): Promise<Session> {
+    const res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.status === 401) throw new Error("E-mail ou senha incorretos.");
     if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
     return res.json();
   }
 
-  async function createWorkspace(name: string, email: string): Promise<Session> {
-    const res = await fetch("/api/v1/workspace", {
+  async function signUp(name: string, email: string, password: string): Promise<Session> {
+    const res = await fetch("/api/v1/auth/signup", {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, email }),
+      body: JSON.stringify({ name, email, password }),
     });
-    if (res.status === 409) throw new Error("Já existe uma conta com esse e-mail — entre em vez de criar.");
+    if (res.status === 400) throw new Error((await res.json().catch(() => null))?.error ?? "Já existe uma conta com esse e-mail — entre em vez de criar.");
     if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
-    return res.json();
+    const body = await res.json();
+    // A chave "Chave padrão" só é mostrada em texto puro agora, no momento da criação — não tem
+    // como recuperar depois. Guardar aqui faz ela aparecer já revelada na primeira vez que a
+    // pessoa abrir "Chaves de API" (mesmo banner de "copie agora" que uma chave criada à mão usa).
+    if (body.apiKey) set("newKeySecret", { id: body.apiKey.id, secret: body.apiKey.secret });
+    return { id: body.id, name: body.name, email: body.email };
   }
 
   return (

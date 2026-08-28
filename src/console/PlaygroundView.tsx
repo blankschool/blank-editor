@@ -1,5 +1,6 @@
 import { Copy, Image as ImageIcon, Play, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { DevViewHeader } from "./AccountView";
@@ -140,6 +141,20 @@ export function PlaygroundView() {
         <span className="text-xs text-faint">
           Campos vêm do template selecionado. Imagens precisam de uma URL pública.
         </span>
+
+        <label className="flex items-start gap-2.5 rounded-md border border-line bg-inset p-3 text-xs">
+          <Checkbox
+            checked={s.saveAsDesign}
+            onCheckedChange={(v) => set("saveAsDesign", v === true)}
+            className="mt-0.5"
+          />
+          <span className="flex flex-col gap-0.5">
+            <span className="font-medium text-text">Salvar como design</span>
+            <span className="text-faint">
+              Grava o resultado de volta neste template — o mesmo efeito de abrir no editor e salvar. Desligado, é só um teste.
+            </span>
+          </span>
+        </label>
 
         <Button size="xl" onClick={startRender} disabled={s.rendering} className="rounded-md text-sm">
           <Play size={13} fill="currentColor" strokeWidth={0} />

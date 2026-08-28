@@ -121,8 +121,7 @@ export function AccountView() {
           variant="dangerGhost"
           size="md"
           onClick={() => {
-            clearSession();
-            navigate("login");
+            void clearSession().then(() => navigate("login"));
           }}
         >
           <LogOut size={14} strokeWidth={1.5} />
