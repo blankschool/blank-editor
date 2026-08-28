@@ -1,3 +1,4 @@
+import "./chrome.css";
 import { initRouter, navigate } from "./router";
 import { mountLogin } from "./pages/login";
 import { mountConsole } from "./pages/console";

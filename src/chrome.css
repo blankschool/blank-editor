@@ -1,0 +1,52 @@
+/* Chrome único — ícones e hit targets. Sobrescreve width/height dos SVG inline. */
+:root {
+  --icon: 16px;
+  --hit: 32px;
+}
+
+.topbar .iconbtn,
+.tbtn.iconbtn {
+  width: var(--hit);
+  height: var(--hit);
+  padding: 0;
+}
+
+.topbar .iconbtn svg,
+.tbtn.iconbtn svg,
+.bbtn svg,
+.zoomctl svg,
+.addpagebtn svg,
+.pagehead svg,
+.pmini svg,
+.layer .mini svg,
+.qbtn svg,
+.thumbitem.thumbadd svg,
+.seg button svg {
+  width: var(--icon);
+  height: var(--icon);
+}
+
+.pmini {
+  width: 28px;
+  height: 28px;
+}
+
+.layer .mini {
+  width: 28px;
+  height: 28px;
+}
+
+.zoomctl button {
+  height: var(--hit);
+  min-width: var(--hit);
+}
+
+.qbtn {
+  min-width: var(--hit);
+  height: var(--hit);
+}
+
+.bbtn.iconbtn {
+  width: var(--hit);
+  height: var(--hit);
+}
