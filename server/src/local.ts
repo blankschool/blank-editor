@@ -3,8 +3,12 @@ import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
 import type { ApiKeySummary, TemplateRow, Workspace } from "./db.ts";
 
+/** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
+const LOCAL_OWNER_ID = "local-dev-owner";
+
 const SEED_TEMPLATE: TemplateRow = {
   id: "tweet-screenshot",
+  ownerId: LOCAL_OWNER_ID,
   kind: "tweet",
   name: "Tweet Hollywood creators",
   document: {
@@ -28,13 +32,15 @@ const SEED_TEMPLATE: TemplateRow = {
 
 interface StoredApiKey extends ApiKeySummary {
   keyHash: string;
+  ownerId: string;
 }
 
 /**
  * In-memory dependencies for local development: no Postgres, state lives only for the process's
  * lifetime, seeded with one template so the console has something to open on first run. The
  * configured `apiKey` always works (for curl/n8n during development) alongside any key created
- * through the app itself.
+ * through the app itself — todas as chaves criadas aqui pertencem ao mesmo LOCAL_OWNER_ID, já
+ * que não existe Supabase Auth em modo local pra ter mais de uma conta de verdade.
  */
 export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["renderTemplatePng"]): AppDeps {
   const configuredHash = hashApiKey(apiKey);
@@ -58,31 +64,35 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
 
   return {
     findApiKeyOwner: async (keyHash) => {
-      if (keyHash === configuredHash) return { id: "local", name: "local development" };
+      if (keyHash === configuredHash) return { ownerId: LOCAL_OWNER_ID };
       const owner = [...apiKeys.values()].find((k) => k.keyHash === keyHash && !k.revoked);
-      return owner ? { id: owner.id, name: owner.name } : null;
+      return owner ? { ownerId: owner.ownerId } : null;
     },
 
-    findTemplate: async (id) => templates.get(id) ?? null,
+    findTemplate: async (ownerId, id) => {
+      const row = templates.get(id);
+      return row && row.ownerId === ownerId ? row : null;
+    },
 
     // Mais recente primeiro, igual ao `order by updated_at desc` do Postgres em
     // db.ts — a home mostra os últimos editados e as duas pontas têm que
     // concordar na ordem.
-    listTemplates: async () =>
+    listTemplates: async (ownerId) =>
       [...templates.values()]
+        .filter((t) => t.ownerId === ownerId)
         .map((t) => ({ id: t.id, name: t.name, updatedAt: touchedAt.get(t.id) ?? new Date(bootedAt).toISOString() }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
 
-    createTemplate: async ({ name, document }) => {
-      const row: TemplateRow = { id: randomUUID(), kind: "custom", name, document };
+    createTemplate: async (ownerId, { name, document }) => {
+      const row: TemplateRow = { id: randomUUID(), ownerId, kind: "custom", name, document };
       templates.set(row.id, row);
       touch(row.id);
       return row;
     },
 
-    updateTemplate: async (id, { name, document }) => {
+    updateTemplate: async (ownerId, id, { name, document }) => {
       const existing = templates.get(id);
-      if (!existing) return null;
+      if (!existing || existing.ownerId !== ownerId) return null;
       const updated: TemplateRow = {
         ...existing,
         name: name ?? existing.name,
@@ -93,30 +103,35 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       return updated;
     },
 
-    deleteTemplate: async (id) => {
+    deleteTemplate: async (ownerId, id) => {
+      const existing = templates.get(id);
+      if (!existing || existing.ownerId !== ownerId) return false;
       touchedAt.delete(id);
       return templates.delete(id);
     },
 
-    listApiKeys: async () => [...apiKeys.values()].map(({ keyHash: _keyHash, ...summary }) => summary),
+    listApiKeys: async (ownerId) =>
+      [...apiKeys.values()]
+        .filter((k) => k.ownerId === ownerId)
+        .map(({ keyHash: _keyHash, ownerId: _ownerId, ...summary }) => summary),
 
-    createApiKey: async (name) => {
+    createApiKey: async (ownerId, name) => {
       const id = randomUUID();
       const secret = `blk_local_${randomUUID().replace(/-/g, "")}`;
-      apiKeys.set(id, { id, name, createdAt: new Date().toISOString(), revoked: false, keyHash: hashApiKey(secret) });
+      apiKeys.set(id, { id, name, createdAt: new Date().toISOString(), revoked: false, keyHash: hashApiKey(secret), ownerId });
       return { id, name, secret, createdAt: apiKeys.get(id)!.createdAt };
     },
 
-    revokeApiKey: async (id) => {
+    revokeApiKey: async (ownerId, id) => {
       const existing = apiKeys.get(id);
-      if (!existing || existing.revoked) return false;
+      if (!existing || existing.ownerId !== ownerId || existing.revoked) return false;
       apiKeys.set(id, { ...existing, revoked: true });
       return true;
     },
 
-    deleteApiKey: async (id) => {
+    deleteApiKey: async (ownerId, id) => {
       const existing = apiKeys.get(id);
-      if (!existing || !existing.revoked) return false;
+      if (!existing || existing.ownerId !== ownerId || !existing.revoked) return false;
       return apiKeys.delete(id);
     },
 

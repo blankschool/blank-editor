@@ -150,12 +150,19 @@ function computeGroupShifts(
  * sempre o mesmo. Índice base 0 aqui dentro; a API expõe base 1, que é como se
  * fala de "página 2" fora do código.
  */
-function pageAt(document: unknown, pageIndex?: number): EditablePage | null {
+/** O índice de página resolvido — usado tanto pra renderizar quanto (applyLayerOverrides.ts) pra
+ *  saber qual página de fato foi tocada, sem duplicar a mesma conta de clamping em dois lugares. */
+export function resolvePageIndex(document: unknown, pageIndex?: number): number | null {
   const candidate = document as EditableTemplateDocument;
   if (!Array.isArray(candidate?.pages) || candidate.pages.length === 0) return null;
   const requested = pageIndex ?? finite(candidate.active);
-  const index = Math.max(0, Math.min(candidate.pages.length - 1, Math.trunc(finite(requested))));
-  return candidate.pages[index];
+  return Math.max(0, Math.min(candidate.pages.length - 1, Math.trunc(finite(requested))));
+}
+
+function pageAt(document: unknown, pageIndex?: number): EditablePage | null {
+  const candidate = document as EditableTemplateDocument;
+  const index = resolvePageIndex(document, pageIndex);
+  return index === null ? null : candidate.pages![index];
 }
 
 /** Quantas páginas o documento tem — o app usa para recusar uma página fora do intervalo com mensagem útil. */
