@@ -201,7 +201,7 @@ async function startRender() {
   if (state.rendering) return;
   if (!state.apiKey.trim()) {
     state.tab = "response";
-    state.response = JSON.stringify({ ok: false, error: "Cole uma API key primeiro (crie uma em API keys)." }, null, 2);
+    state.response = JSON.stringify({ ok: false, error: "Cole uma API key primeiro (crie uma em Chaves de API)." }, null, 2);
     render();
     return;
   }
@@ -445,11 +445,11 @@ const templateOptions = (templates: TemplateSummary[], currentId: string) =>
   templates.map((t) => `<option value="${esc(t.id)}" ${t.id === currentId ? "selected" : ""}>${esc(t.name)}</option>`).join("");
 
 function chip(name: string, active: boolean, action: string, value: string) {
-  return `<div data-action="${action}" data-value="${esc(value)}" style="cursor:pointer; height:26px; padding:0 12px; border-radius:6px; display:flex; align-items:center; font-size:12px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "var(--on-accent)" : "var(--muted)"};">${esc(name)}</div>`;
+  return `<div data-action="${action}" data-value="${esc(value)}" style="cursor:pointer; height:26px; padding:0 12px; border-radius:8px; display:flex; align-items:center; font-size:12px; font-weight:500; background:${active ? "var(--accent-soft)" : "transparent"}; color:${active ? "var(--accent)" : "var(--muted)"};">${esc(name)}</div>`;
 }
 
 function tab(name: string, active: boolean, action: string) {
-  return `<div data-action="${action}" style="cursor:pointer; height:32px; padding:0 16px; border-radius:7px; display:flex; align-items:center; font-size:13px; font-weight:500; background:${active ? "var(--accent)" : "transparent"}; color:${active ? "var(--on-accent)" : "var(--muted)"};">${esc(name)}</div>`;
+  return `<div data-action="${action}" style="cursor:pointer; height:32px; padding:0 16px; border-radius:8px; display:flex; align-items:center; font-size:13px; font-weight:500; background:${active ? "var(--accent-soft)" : "transparent"}; color:${active ? "var(--accent)" : "var(--muted)"};">${esc(name)}</div>`;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -464,7 +464,7 @@ function renderSidebar(): string {
   const navItem = (label: string, view: View, action: string, icon: string) => {
     const active = s.view === view;
     return `
-      <div data-action="${action}" style="cursor:pointer; display:flex; align-items:center; gap:10px; height:34px; padding:0 10px; border-radius:7px; font-size:13px; font-weight:500; justify-content:${navJustify}; background:${active ? "var(--surface-2)" : "transparent"}; border:1px solid ${active ? "var(--border-strong)" : "transparent"}; color:${active ? "var(--text)" : "var(--muted)"};">
+      <div data-action="${action}" style="cursor:pointer; display:flex; align-items:center; gap:10px; height:34px; padding:0 10px; border-radius:8px; font-size:13px; font-weight:500; justify-content:${navJustify}; background:${active ? "var(--accent-soft)" : "transparent"}; border:1px solid transparent; color:${active ? "var(--accent)" : "var(--muted)"};">
         ${icon}
         ${expanded ? `<span style="white-space:nowrap;">${esc(label)}</span>` : ""}
       </div>`;
@@ -475,26 +475,26 @@ function renderSidebar(): string {
       <div style="display:flex; align-items:center; gap:10px; padding:0 12px 14px; justify-content:${brandJustify};">
         ${expanded ? `
         <span style="flex:1; font-family:var(--display); font-size:13px; font-weight:600; letter-spacing:-0.01em; white-space:nowrap;">Blank Editor</span>` : ""}
-        <div data-action="toggle-aside" title="${s.collapsed ? "Expandir menu" : "Recolher menu"}" style="cursor:pointer; width:26px; height:26px; flex:none; border-radius:7px; display:flex; align-items:center; justify-content:center;">
+        <div data-action="toggle-aside" title="${s.collapsed ? "Expandir menu" : "Recolher menu"}" style="cursor:pointer; width:26px; height:26px; flex:none; border-radius:8px; display:flex; align-items:center; justify-content:center;">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.75" width="12" height="10.5" rx="1.8"></rect><path d="M6.2 2.75v10.5"></path></svg>
         </div>
       </div>
 
       ${expanded ? `
       <div style="padding:0 8px 14px;">
-        <div style="height:32px; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; padding:0 10px; gap:8px;">
+        <div style="height:32px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; padding:0 10px; gap:8px;">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.4" stroke-linecap="round" style="flex:none;"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>
           <input id="searchInput" data-field="search" value="${esc(s.search)}" placeholder="Buscar…" style="flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--text); font-size:12px; font-family:inherit;" />
         </div>
       </div>` : ""}
 
-      ${expanded ? `<div style="padding:0 16px 8px; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint);">Platform</div>` : ""}
+      ${expanded ? `<div style="padding:0 16px 8px; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint);">Plataforma</div>` : ""}
 
       <nav style="display:flex; flex-direction:column; gap:2px; padding:0 8px;">
         ${navItem("Templates", "templates", "go-templates", `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" style="flex:none;"><rect x="1.75" y="1.75" width="5.2" height="5.2" rx="1.2"></rect><rect x="9.05" y="1.75" width="5.2" height="5.2" rx="1.2"></rect><rect x="1.75" y="9.05" width="5.2" height="5.2" rx="1.2"></rect><rect x="9.05" y="9.05" width="5.2" height="5.2" rx="1.2"></rect></svg>`)}
         ${navItem("Playground", "playground", "go-playground", `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><rect x="1.75" y="2.5" width="12.5" height="11" rx="1.6"></rect><path d="M4.6 6.4 6.6 8l-2 1.6"></path><path d="M8.4 10.1h3"></path></svg>`)}
         ${navItem("Importar", "import", "go-import", `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M8 10.4V2.6"></path><path d="M5.2 5.4 8 2.6l2.8 2.8"></path><path d="M2.6 10.9v1.9c0 .4.3.6.7.6h9.4c.4 0 .7-.2.7-.6v-1.9"></path></svg>`)}
-        ${navItem("API keys", "keys", "go-keys", `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="10.4" cy="5.6" r="3.35"></circle><path d="M8.05 7.95 2.6 13.4"></path><path d="M4.5 11.5l1.4 1.4"></path></svg>`)}
+        ${navItem("Chaves de API", "keys", "go-keys", `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="10.4" cy="5.6" r="3.35"></circle><path d="M8.05 7.95 2.6 13.4"></path><path d="M4.5 11.5l1.4 1.4"></path></svg>`)}
       </nav>
 
       <div style="flex:1;"></div>
@@ -506,7 +506,7 @@ function renderSidebar(): string {
 function renderThemeToggle(expanded: boolean): string {
   const current = getTheme();
   const opt = (choice: ThemeChoice, title: string, icon: string) => `
-    <div data-action="set-theme" data-value="${choice}" title="${title}" style="cursor:pointer; flex:1; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center; background:${current === choice ? "var(--surface)" : "transparent"}; color:${current === choice ? "var(--text)" : "var(--faint)"};">${icon}</div>`;
+    <div data-action="set-theme" data-value="${choice}" title="${title}" style="cursor:pointer; flex:1; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center; background:${current === choice ? "var(--surface)" : "transparent"}; color:${current === choice ? "var(--text)" : "var(--faint)"};">${icon}</div>`;
 
   const iconSystem = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.2"></rect><path d="M5.5 13.5h5"></path><path d="M8 11v2.5"></path></svg>`;
   const iconLight = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"></circle><path d="M8 1.6v1.6M8 12.8v1.6M2.6 8h1.6M11.8 8h1.6M4.3 4.3l1.1 1.1M10.6 10.6l1.1 1.1M4.3 11.7l1.1-1.1M10.6 5.4l1.1-1.1"></path></svg>`;
@@ -514,7 +514,7 @@ function renderThemeToggle(expanded: boolean): string {
 
   if (!expanded) {
     return `
-      <div data-action="cycle-theme" title="Tema: ${current}" style="cursor:pointer; margin:0 8px; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; color:var(--faint);">
+      <div data-action="cycle-theme" title="Tema: ${current}" style="cursor:pointer; margin:0 8px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--faint);">
         ${current === "light" ? iconLight : current === "dark" ? iconDark : iconSystem}
       </div>`;
   }
@@ -531,15 +531,19 @@ function renderTemplates(): string {
   const s = state;
   const sortChips = ["Ordem", "A-Z"].map((n) => chip(n, s.sort === n, "pick-sort", n)).join("");
   const periodChips = ["Todos", "Hoje", "7D", "14D", "30D"].map((n) => chip(n, s.period === n, "pick-period", n)).join("");
-  const cardStyle = "aspect-ratio:16/9; border-radius:7px; border:1px dashed var(--border); background:repeating-linear-gradient(45deg, var(--surface) 0 6px, var(--inset) 6px 12px); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; color:var(--faint); cursor:pointer;";
   const visibleTemplates = s.search.trim()
     ? s.templates.filter((t) => t.name.toLowerCase().includes(s.search.trim().toLowerCase()))
     : s.templates;
   const cards = visibleTemplates.length
     ? visibleTemplates.map((t) => `
-      <div data-action="open-template" data-context-template data-id="${t.id}" data-name="${esc(t.name)}" style="${cardStyle}; flex-direction:column; gap:8px;">
-        <strong style="font-family:var(--display); font-size:14px; color:var(--text);">${esc(t.name)}</strong>
-        <span>clique para editar · botão direito p/ mais opções</span>
+      <div class="tplcard" data-action="open-template" data-context-template data-id="${t.id}" data-name="${esc(t.name)}">
+        <div class="tplcard-thumb">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M8 8.5h8"/><path d="M8 12.5h8"/><path d="M8 16.5h5"/></svg>
+        </div>
+        <div class="tplcard-foot">
+          <strong>${esc(t.name)}</strong>
+          <span>clique p/ editar · botão direito p/ mais opções</span>
+        </div>
       </div>`).join("")
     : `<div style="grid-column:1/-1; padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${!s.templatesLoaded ? "carregando…" : s.templates.length === 0 ? "nenhum template ainda — crie um ou importe um JSON" : "nenhum template bate com a busca"}</div>`;
 
@@ -548,11 +552,11 @@ function renderTemplates(): string {
       <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:12px; color:var(--faint);">Ordenar:</span>
-          <div style="display:flex; align-items:center; gap:4px; padding:4px; border-radius:9px; border:1px solid var(--border); background:var(--surface);">${sortChips}</div>
+          <div style="display:flex; align-items:center; gap:4px; padding:4px; border-radius:10px; border:1px solid var(--border); background:var(--surface);">${sortChips}</div>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:12px; color:var(--faint);">Período:</span>
-          <div style="display:flex; align-items:center; gap:4px; padding:4px; border-radius:9px; border:1px solid var(--border); background:var(--surface);">${periodChips}</div>
+          <div style="display:flex; align-items:center; gap:4px; padding:4px; border-radius:10px; border:1px solid var(--border); background:var(--surface);">${periodChips}</div>
         </div>
         <div style="flex:1;"></div>
         <div data-action="go-import" style="cursor:pointer; height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
@@ -573,7 +577,7 @@ function renderPlayground(): string {
   const noLayers = s.layers.length === 0;
 
   const layerCards = s.layers.map((l) => `
-    <div style="border-radius:9px; border:1px solid var(--border); background:var(--inset); padding:12px; display:flex; flex-direction:column; gap:10px;">
+    <div style="border-radius:10px; border:1px solid var(--border); background:var(--inset); padding:12px; display:flex; flex-direction:column; gap:10px;">
       <div style="display:flex; align-items:center; gap:9px;">
         ${l.type === "text"
       ? `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" style="flex:none;"><path d="M3 3.6h10"></path><path d="M8 3.6v9"></path></svg>`
@@ -600,14 +604,13 @@ function renderPlayground(): string {
           <span style="font-size:13px; font-weight:500;">Template</span>
           ${s.templates.length
             ? `<select data-select="template" class="console-field">${templateOptions(s.templates, s.templateId)}</select>
-          <span id="templateIdText" style="font-family:var(--mono); font-size:11px; color:var(--faint);">${esc(s.templateId)}</span>
-          <div data-action="open-template" data-id="${esc(s.templateId)}" style="cursor:pointer; height:32px; border-radius:7px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>`
+          <div data-action="open-template" data-id="${esc(s.templateId)}" style="cursor:pointer; height:32px; border-radius:8px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);">Editar template no canvas</div>`
             : `<div data-action="go-templates" style="cursor:pointer; border-radius:8px; border:1px dashed var(--border); padding:12px; text-align:center; font-size:12px; color:var(--faint);">nenhum template ainda — crie um em Templates</div>`}
         </div>
 
         <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
           <span style="font-size:12px; color:var(--muted);">API key</span>
-          <input data-field="apiKey" value="${esc(s.apiKey)}" placeholder="crie uma em API keys" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
+          <input data-field="apiKey" value="${esc(s.apiKey)}" placeholder="crie uma em Chaves de API" class="console-field" style="height:36px; font-family:var(--mono); font-size:11px;" />
           <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">POST /api/v1/render → ${location.host}</span>
         </div>
 
@@ -617,12 +620,12 @@ function renderPlayground(): string {
 
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${layerCards}
-          ${noLayers ? `<div style="border-radius:9px; border:1px dashed var(--border); padding:22px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--faint);">nenhuma camada</div>` : ""}
+          ${noLayers ? `<div style="border-radius:10px; border:1px dashed var(--border); padding:22px; text-align:center; font-family:var(--mono); font-size:11px; color:var(--faint);">nenhuma camada</div>` : ""}
         </div>
 
         <span style="font-size:12px; color:var(--faint);">Campos vêm do template selecionado. Imagens precisam de uma URL pública.</span>
 
-        <div data-action="render" style="cursor:pointer; height:46px; border-radius:9px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
+        <div data-action="render" style="cursor:pointer; height:46px; border-radius:10px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; justify-content:center; gap:9px; font-size:14px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8 12.8 8l-8.3 5.2z"></path></svg>
           <span>${s.rendering ? "Gerando…" : "Gerar render"}</span>
         </div>
@@ -646,7 +649,7 @@ function renderPlayground(): string {
           <div style="display:flex; align-items:center; gap:4px;">
             ${langChips}
             <div style="flex:1;"></div>
-            <div data-action="copy-code" style="cursor:pointer; height:32px; padding:0 12px; border-radius:7px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
+            <div data-action="copy-code" style="cursor:pointer; height:32px; padding:0 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.2V2.5h-8v8h0.7"></path></svg>
               <span>${s.copiedCode ? "Copiado" : "Copiar"}</span>
             </div>
@@ -683,7 +686,7 @@ function renderImport(): string {
     const appCard = (name: "Canva" | "Figma", state_: string) => `
       <div data-action="open-app-${name}" style="cursor:pointer; border-radius:12px; border:1px solid var(--border); background:var(--surface); padding:18px; display:flex; flex-direction:column; gap:14px;">
         <div style="display:flex; align-items:center; gap:12px;">
-          <div style="width:38px; height:38px; flex:none; border-radius:9px; border:1px solid var(--border-strong); background:var(--avatar);"></div>
+          <div style="width:38px; height:38px; flex:none; border-radius:10px; border:1px solid var(--border-strong); background:var(--avatar);"></div>
           <div style="flex:1; display:flex; flex-direction:column; gap:3px;">
             <span style="font-size:14px; font-weight:500;">${name}</span>
             <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">${esc(state_)}</span>
@@ -734,7 +737,7 @@ function renderImport(): string {
             <span>Importar</span>
           </div>
         </div>
-        <div data-action="close-json-modal" style="cursor:pointer; position:absolute; right:14px; top:14px; width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
+        <div data-action="close-json-modal" style="cursor:pointer; position:absolute; right:14px; top:14px; width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
         </div>
       </div>
@@ -748,7 +751,7 @@ function renderImport(): string {
             <span style="font-family:var(--display); font-size:14px; font-weight:600;">Importar do ${esc(s.app)}</span>
             <span style="font-size:12px; color:var(--faint);">${esc(app?.hint || "")}</span>
           </div>
-          <div data-action="close-app" style="cursor:pointer; width:26px; height:26px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
+          <div data-action="close-app" style="cursor:pointer; width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center;">
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-linecap="round"><path d="M4 4l8 8"></path><path d="M12 4l-8 8"></path></svg>
           </div>
         </div>
@@ -756,7 +759,7 @@ function renderImport(): string {
         <div style="display:flex; flex-direction:column; gap:8px;">
           ${(app?.docs || []).map((d) => `
           <div data-action="pick-app-doc" data-value="${esc(d.name)}" style="cursor:pointer; border-radius:8px; border:1px solid ${s.appDoc === d.name ? "var(--border-strong)" : "var(--border)"}; background:var(--surface-2); padding:10px 12px; display:flex; align-items:center; gap:10px;">
-            <div style="width:26px; height:26px; flex:none; border-radius:6px; border:1px solid var(--border-strong); background:var(--avatar);"></div>
+            <div style="width:26px; height:26px; flex:none; border-radius:8px; border:1px solid var(--border-strong); background:var(--avatar);"></div>
             <span style="flex:1; font-size:12px;">${esc(d.name)}</span>
             <span style="font-family:var(--mono); font-size:10px; color:var(--faint);">${esc(d.meta)}</span>
           </div>`).join("")}
@@ -787,12 +790,12 @@ function renderKeys(): string {
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
 
   const banner = s.newKeySecret ? `
-    <div style="border-radius:9px; border:1px solid var(--accent); background:var(--success-bg); padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
+    <div style="border-radius:10px; border:1px solid var(--success); background:var(--success-bg); padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
       <span style="font-size:12px; font-weight:500;">Chave criada — copie agora, ela não será mostrada de novo.</span>
       <div style="display:flex; align-items:center; gap:8px;">
         <span style="flex:1; font-family:var(--mono); font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(s.newKeySecret.secret)}</span>
-        <div data-action="copy-key" data-id="${s.newKeySecret.id}" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px;">${s.copied === s.newKeySecret.id ? "Copiado" : "Copiar"}</div>
-        <div data-action="dismiss-new-key" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); display:flex; align-items:center; font-size:11px; color:var(--muted);">Ok</div>
+        <div data-action="copy-key" data-id="${s.newKeySecret.id}" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px;">${s.copied === s.newKeySecret.id ? "Copiado" : "Copiar"}</div>
+        <div data-action="dismiss-new-key" style="cursor:pointer; flex:none; height:26px; padding:0 10px; border-radius:8px; border:1px solid var(--border); display:flex; align-items:center; font-size:11px; color:var(--muted);">Ok</div>
       </div>
     </div>` : "";
 
@@ -806,37 +809,37 @@ function renderKeys(): string {
       <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">${k.id === s.newKeySecret?.id ? "mostrada acima" : "••••••••••••"}</span>
       <span style="color:var(--faint);">${fmtDate(k.createdAt)}${k.revoked ? " · revogada" : ""}</span>
       ${k.revoked
-        ? `<div data-action="purge-key" data-id="${k.id}" title="Excluir permanentemente" style="cursor:pointer; justify-self:end; width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--danger);">
+        ? `<div data-action="purge-key" data-id="${k.id}" title="Excluir permanentemente" style="cursor:pointer; justify-self:end; width:26px; height:26px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--danger);">
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.4h10.4"></path><path d="M6.4 4.4V2.9h3.2v1.5"></path><path d="M4.2 4.4l.7 8.7h6.2l.7-8.7"></path></svg>
           </div>`
-        : `<div data-action="revoke-key" data-id="${k.id}" style="cursor:pointer; justify-self:end; height:26px; padding:0 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px; color:var(--danger);">Revoke</div>`}
+        : `<div data-action="revoke-key" data-id="${k.id}" style="cursor:pointer; justify-self:end; height:26px; padding:0 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; font-size:11px; color:var(--danger);">Revogar</div>`}
     </div>`).join("");
 
   return `
     <div style="flex:1; display:flex; flex-direction:column; gap:16px; padding:20px; min-height:0;">
       <div style="display:flex; align-items:center; gap:16px;">
         <div style="display:flex; flex-direction:column; gap:5px;">
-          <span style="font-family:var(--display); font-size:15px; font-weight:600;">API keys</span>
-          <span style="font-size:12px; color:var(--faint);">${s.keys.length}${s.keys.length === 1 ? " key" : " keys"}</span>
+          <span style="font-family:var(--display); font-size:15px; font-weight:600;">Chaves de API</span>
+          <span style="font-size:12px; color:var(--faint);">${s.keys.length}${s.keys.length === 1 ? " chave" : " chaves"}</span>
         </div>
         <div style="flex:1;"></div>
-        <div data-action="create-key" style="cursor:pointer; height:32px; padding:0 14px; border-radius:7px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
+        <div data-action="create-key" style="cursor:pointer; height:32px; padding:0 14px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500;">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.2v9.6"></path><path d="M3.2 8h9.6"></path></svg>
-          <span>Create key</span>
+          <span>Criar chave</span>
         </div>
       </div>
 
       ${banner}
 
-      <div style="border-radius:7px; border:1px solid var(--border); background:var(--surface); overflow:hidden;">
+      <div style="border-radius:8px; border:1px solid var(--border); background:var(--surface); overflow:hidden;">
         <div style="display:grid; grid-template-columns:1.2fr 2fr 1fr 92px; gap:16px; padding:11px 16px; border-bottom:1px solid var(--border); background:var(--surface-2); font-size:11px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);">
-          <span>Name</span><span>Key</span><span>Created</span><span></span>
+          <span>Nome</span><span>Chave</span><span>Criada em</span><span></span>
         </div>
         ${rows}
         ${visibleKeys.length === 0 ? `<div style="padding:40px; text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint);">${s.keys.length === 0 ? "nenhuma chave — crie uma pra começar" : "nenhuma chave bate com a busca"}</div>` : ""}
       </div>
 
-      <div style="border-radius:7px; border:1px dashed var(--border); padding:14px 16px; display:flex; gap:12px; align-items:flex-start;">
+      <div style="border-radius:8px; border:1px dashed var(--border); padding:14px 16px; display:flex; gap:12px; align-items:flex-start;">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--faint)" stroke-width="1.3" stroke-linecap="round" style="flex:none; margin-top:1px;"><circle cx="8" cy="8" r="6.2"></circle><path d="M8 7.2v4"></path><path d="M8 4.9v.1"></path></svg>
         <span style="font-size:12px; line-height:1.6; color:var(--faint); max-width:620px;">A chave só é mostrada uma vez, no momento em que é criada. Revogar tem efeito imediato.</span>
       </div>
@@ -847,10 +850,10 @@ function renderTemplateMenu(): string {
   const m = state.templateMenu;
   if (!m) return "";
   const item = (action: string, label: string, danger = false, disabled = false) => `
-    <div data-action="${disabled ? "" : action}" style="cursor:${disabled ? "default" : "pointer"}; padding:8px 12px; border-radius:6px; font-size:12px; color:${disabled ? "var(--faint)" : danger ? "var(--danger)" : "var(--text)"};" ${disabled ? 'title="em breve"' : ""}>${label}</div>`;
+    <div data-action="${disabled ? "" : action}" style="cursor:${disabled ? "default" : "pointer"}; padding:8px 12px; border-radius:8px; font-size:12px; color:${disabled ? "var(--faint)" : danger ? "var(--danger)" : "var(--text)"};" ${disabled ? 'title="em breve"' : ""}>${label}</div>`;
   return `
     <div data-action="close-template-menu" style="position:fixed; inset:0; z-index:35;">
-      <div data-stop="1" style="position:absolute; top:${m.y}px; left:${m.x}px; min-width:180px; border-radius:9px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:1px;">
+      <div data-stop="1" style="position:absolute; top:${m.y}px; left:${m.x}px; min-width:180px; border-radius:10px; border:1px solid var(--border-strong); background:var(--surface); box-shadow:var(--shadow); padding:6px; display:flex; flex-direction:column; gap:1px;">
         ${item("ctx-open-playground", "Abrir no playground")}
         ${item("ctx-rename-template", "Renomear")}
         ${item("ctx-duplicate-template", "Duplicar")}

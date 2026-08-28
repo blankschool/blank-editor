@@ -47,7 +47,7 @@ function strengthScore(pw: string): number {
 }
 const STRENGTH_LABELS = ["Muito fraca", "Fraca", "Razoável", "Boa", "Forte"];
 const barColor = (i: number, score: number) =>
-  i >= score ? "var(--border)" : score <= 1 ? "var(--danger)" : score === 2 ? "var(--muted)" : "var(--text)";
+  i >= score ? "var(--border)" : score <= 1 ? "var(--danger)" : score === 2 ? "var(--warning)" : "var(--success)";
 
 function paintStrength() {
   if (state.mode !== "signup") return;
@@ -106,8 +106,8 @@ function render() {
           </div>
 
           <div style="display:flex; align-items:center; gap:4px; padding:4px; border-radius:10px; border:1px solid var(--border); background:var(--surface);">
-            <div data-action="go-login" style="cursor:pointer; flex:1; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; background:${login ? "var(--accent)" : "transparent"}; color:${login ? "#111111" : "var(--muted)"};">Entrar</div>
-            <div data-action="go-signup" style="cursor:pointer; flex:1; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; background:${login ? "transparent" : "var(--accent)"}; color:${login ? "var(--muted)" : "#111111"};">Criar conta</div>
+            <div data-action="go-login" style="cursor:pointer; flex:1; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; background:${login ? "var(--accent)" : "transparent"}; color:${login ? "var(--on-accent)" : "var(--muted)"};">Entrar</div>
+            <div data-action="go-signup" style="cursor:pointer; flex:1; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:500; background:${login ? "transparent" : "var(--accent)"}; color:${login ? "var(--muted)" : "var(--on-accent)"};">Criar conta</div>
           </div>
 
           <div style="cursor:pointer; height:40px; border-radius:8px; border:1px solid var(--border); background:var(--surface); display:flex; align-items:center; justify-content:center; gap:9px; font-size:13px; font-weight:500;">
@@ -145,7 +145,7 @@ function render() {
               </div>
               <div style="position:relative; display:flex;">
                 <input id="pwInput" data-field="password" value="${esc(s.password)}" type="${s.reveal ? "text" : "password"}" placeholder="${login ? "••••••••" : "Mínimo de 8 caracteres"}" class="login-field" style="flex:1; min-width:0; padding-right:44px;" />
-                <div data-action="toggle-reveal" title="Mostrar senha" style="cursor:pointer; position:absolute; right:5px; top:5px; width:30px; height:30px; border-radius:6px; display:flex; align-items:center; justify-content:center;">
+                <div data-action="toggle-reveal" title="Mostrar senha" style="cursor:pointer; position:absolute; right:5px; top:5px; width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;">
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 8S4 3.6 8 3.6 14.6 8 14.6 8 12 12.4 8 12.4 1.4 8 1.4 8z"></path><circle cx="8" cy="8" r="1.9"></circle></svg>
                 </div>
               </div>
@@ -160,15 +160,15 @@ function render() {
 
             ${!login ? `
             <div data-action="toggle-terms" style="cursor:pointer; display:flex; align-items:flex-start; gap:9px; padding-top:2px;">
-              <div id="termsBox" style="width:16px; height:16px; flex:none; margin-top:1px; border-radius:4px; border:1px solid ${s.terms ? "var(--text)" : "var(--border-strong)"}; background:${s.terms ? "var(--text)" : "var(--surface)"}; display:flex; align-items:center; justify-content:center;">
-                <svg id="termsCheck" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#111111" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:${s.terms ? "1" : "0"};"><path d="M3.4 8.4l2.9 2.9 6.4-6.6"></path></svg>
+              <div id="termsBox" style="width:16px; height:16px; flex:none; margin-top:1px; border-radius:4px; border:1px solid ${s.terms ? "var(--accent)" : "var(--border-strong)"}; background:${s.terms ? "var(--accent)" : "var(--surface)"}; display:flex; align-items:center; justify-content:center;">
+                <svg id="termsCheck" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--on-accent); opacity:${s.terms ? "1" : "0"};"><path d="M3.4 8.4l2.9 2.9 6.4-6.6"></path></svg>
               </div>
               <span style="font-size:12px; line-height:1.55; color:var(--muted);">Aceito os termos de uso e a política de privacidade.</span>
             </div>` : ""}
 
             ${s.error ? `<div id="loginError" style="border-radius:8px; border:1px solid var(--danger-border); background:var(--danger-bg); padding:10px 12px; font-size:12px; color:var(--danger);">${esc(s.error)}</div>` : ""}
 
-            <div data-action="submit" style="cursor:pointer; height:42px; border-radius:8px; background:var(--accent); color:#111111; display:flex; align-items:center; justify-content:center; gap:8px; font-size:13px; font-weight:500; margin-top:2px; opacity:${s.loading ? "0.6" : "1"};">
+            <div data-action="submit" style="cursor:pointer; height:42px; border-radius:8px; background:var(--accent); color:var(--on-accent); display:flex; align-items:center; justify-content:center; gap:8px; font-size:13px; font-weight:500; margin-top:2px; opacity:${s.loading ? "0.6" : "1"};">
               <span>${s.loading ? "Entrando…" : login ? "Entrar" : "Criar conta"}</span>
             </div>
           </div>
@@ -201,8 +201,8 @@ function bind() {
       const box = document.getElementById("termsBox");
       const check = document.getElementById("termsCheck") as unknown as SVGElement | null;
       if (box) {
-        box.style.borderColor = state.terms ? "var(--text)" : "var(--border-strong)";
-        box.style.background = state.terms ? "var(--text)" : "var(--surface)";
+        box.style.borderColor = state.terms ? "var(--accent)" : "var(--border-strong)";
+        box.style.background = state.terms ? "var(--accent)" : "var(--surface)";
       }
       if (check) (check as unknown as HTMLElement).style.opacity = state.terms ? "1" : "0";
     } else if (action === "submit") {

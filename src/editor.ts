@@ -31,11 +31,11 @@ const PAGE_SIZES = [
 ];
 const TYPE_PT = { rect: "Retângulo", ellipse: "Elipse", triangle: "Triângulo", star: "Estrela", line: "Linha", text: "Texto", image: "Imagem", icon: "Ícone", draw: "Desenho" };
 const PT_ALIGN = { left: "à esquerda", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
-const PALETTE = ["#FCFCFA", "#E3E2DE", "#C4C2BC", "#9B9992", "#6E6C67", "#4A4944", "#2E2D29", "#111111"];
-const STAGE_BG_PRESETS = ["#0A0A09", "#1A1A18", "#2E2D29", "#4A4944", "#6E6C67", "#9B9992", "#C4C2BC", "#E3E2DE"];
+const PALETTE = ["#FFFFFF", "#F3F5F7", "#E3E8ED", "#CBD5DD", "#8296A1", "#4E636E", "#2A3A45", "#131C26"];
+const STAGE_BG_PRESETS = ["#000000", "#181F25", "#2A3A45", "#4E636E", "#8296A1", "#CBD5DD", "#E3E8ED", "#F3F5F7"];
 
 /* ============================ state ============================ */
-const blankPage = () => ({ id: uid(), w: 1080, h: 1080, bg: "#111111", els: [] });
+const blankPage = () => ({ id: uid(), w: 1080, h: 1080, bg: "#000000", els: [] });
 const SEED: Doc = { name: "Design sem título", pages: [blankPage()], active: 0 } as Doc;
 let doc: Doc = SEED;
 let sel: string[] = [];
@@ -43,11 +43,20 @@ let tool = "select";
 let zoom = 1, panX = 0, panY = 0;
 // The workspace behind the page — separate from the page's own "Fundo" fill (that's the
 // artboard's content; this is just the room around it). Remembered per-browser, not per-doc.
+// null means "no explicit choice": the stage falls back to --ground in styles.css, which
+// follows the light/dark theme. An explicit pick pins the colour across both themes.
 const STAGE_BG_KEY = "blank-editor-stage-bg";
-let stageBg = (() => { try { return localStorage.getItem(STAGE_BG_KEY) || "#0A0A09"; } catch { return "#0A0A09"; } })();
+let stageBg: string | null = (() => { try { return localStorage.getItem(STAGE_BG_KEY); } catch { return null; } })();
+function stageGroundHex() {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--ground").trim();
+  return /^#[0-9a-f]{6}$/i.test(v) ? v : "#E3E8ED";
+}
 function applyStageBg() {
-  $("stage").style.background = stageBg;
-  try { localStorage.setItem(STAGE_BG_KEY, stageBg); } catch { /* blocked storage */ }
+  $("stage").style.background = stageBg ?? "";
+  try {
+    if (stageBg) localStorage.setItem(STAGE_BG_KEY, stageBg);
+    else localStorage.removeItem(STAGE_BG_KEY);
+  } catch { /* blocked storage */ }
 }
 let past: string[] = [], future: string[] = [];
 let clipboard = null;
@@ -82,6 +91,25 @@ function pageIndexAtWorldY(y: number): number {
     if (y < pageTop(i) + doc.pages[i].h + PAGE_GAP / 2) return i;
   }
   return doc.pages.length - 1;
+}
+
+/** How far past the document's own edges the view may travel. A little air, never a plane. */
+const VIEW_MARGIN = 120;
+/** The one rule that makes this a document and not an infinite canvas: the page column always
+ * stays in the viewport. Vertically the travel spans the stack (centred while it's shorter than
+ * the stage); horizontally it stays near the column's centred position, opening up only far
+ * enough to reach both edges once the stack is wider than the stage. Every mutation of
+ * panX/panY/zoom must end here — without it, a zoom-out strands the pages in the grey. */
+function clampView() {
+  const s = $("stage").getBoundingClientRect();
+  const docH = stackHeight() * zoom, docW = stackWidth() * zoom;
+  const cy = (s.height - docH) / 2, cx = (s.width - docW) / 2;
+  panY = docH + VIEW_MARGIN * 2 <= s.height
+    ? clamp(panY, cy - docH * 0.25, cy + docH * 0.25)
+    : clamp(panY, s.height - docH - VIEW_MARGIN, VIEW_MARGIN);
+  panX = docW + VIEW_MARGIN * 2 <= s.width
+    ? clamp(panX, cx - docW * 0.25, cx + docW * 0.25)
+    : clamp(panX, s.width - docW - VIEW_MARGIN, VIEW_MARGIN);
 }
 const page = (): Page => doc.pages[clamp(doc.active, 0, doc.pages.length - 1)];
 /** Elements are looked up across every page, not just the active one — with the stack always
@@ -171,22 +199,22 @@ function makeEl(type: string, over: Partial<El> = {}): El {
   const base = {
     id: uid(), type, name: TYPE_PT[type] || type,
     x: 0, y: 0, w: 200, h: 200, rot: 0, opacity: 1, locked: false, hidden: false,
-    fill: "#9B9992", stroke: "", strokeWidth: 0, radius: 0,
+    fill: "#8296A1", stroke: "", strokeWidth: 0, radius: 0,
   };
   const spec = {
     rect: { w: 320, h: 220, radius: 8 },
     ellipse: { w: 260, h: 260 },
     triangle: { w: 280, h: 240 },
     star: { w: 260, h: 260 },
-    line: { w: 320, h: 6, fill: "#FCFCFA" },
+    line: { w: 320, h: 6, fill: "#FFFFFF" },
     text: {
-      w: 520, h: 90, fill: "#FCFCFA", text: "Your text here", font: "Inter",
+      w: 520, h: 90, fill: "#FFFFFF", text: "Your text here", font: "Inter",
       size: 64, weight: 700, italic: false, underline: false, align: "left",
       lh: 1.2, ls: 0,
     },
     image: { w: 420, h: 300, radius: 0 },
-    icon: { w: 24, h: 24, fill: "#FCFCFA", viewBox: "0 0 24 24", path: "" },
-    draw: { fill: "none", stroke: "#FCFCFA", strokeWidth: 6, pts: [] },
+    icon: { w: 24, h: 24, fill: "#FFFFFF", viewBox: "0 0 24 24", path: "" },
+    draw: { fill: "none", stroke: "#FFFFFF", strokeWidth: 6, pts: [] },
   }[type] || {};
   const el = { ...base, ...spec, ...over } as unknown as El;
   if (over.x === undefined) el.x = Math.round((p.w - el.w) / 2);
@@ -355,6 +383,7 @@ function updateActivePageFromScroll() {
     doc.active = idx;
     $("pagecount").textContent = `${doc.active + 1} / ${doc.pages.length}`;
     if (activeTab === "page") renderPanel();
+    refreshPagesUI();
   }
 }
 
@@ -455,7 +484,7 @@ function renderSelToolbar() {
     html += `<button class="qbtn" id="qReplace" title="Substituir imagem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 14l3-3 2.5 2.5L17 10l2 2"/><circle cx="8" cy="9" r="1.3"/></svg></button>`;
   }
   if (showStroke) {
-    html += `<input type="color" id="qStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FCFCFA"}">`;
+    html += `<input type="color" id="qStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
   }
   if (showRadius) {
     html += `<button class="qbtn" id="qRadDown" title="Diminuir raio dos cantos">⌐</button>`;
@@ -536,12 +565,19 @@ window.addEventListener("pointerdown", (ev) => {
 let drag = null;
 let spaceDown = false;
 
+// Right-click pans the canvas (see the pointerdown handler below) instead of opening the
+// browser's native menu, matching Canva.
+$("stage").addEventListener("contextmenu", (ev) => ev.preventDefault());
+
 $("stage").addEventListener("pointerdown", (ev) => {
   // The floating selection toolbar, its "more options" popover, the tool belt, the bottom
-  // bar, and each page's own floating header/add-page button are UI chrome living inside
-  // .stage — not canvas content, so a click there must never fall through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #toolbelt, #flyout, #bottombar, #gridview, .pagehead, #addPageCanvas")) return;
-  if (ev.button === 1 || spaceDown || tool === "hand") { startPan(ev); return; }
+  // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
+  // chrome living inside .stage — not canvas content, so a click there must never fall
+  // through to marquee-select.
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #toolbelt, #flyout, #bottombar, #thumbstrip, #gridview, .pagehead, #addPageCanvas")) return;
+  // Middle-click, right-click, Space+drag, or the hand tool all pan — matching Canva's own
+  // set of ways to pan the canvas.
+  if (ev.button === 1 || ev.button === 2 || spaceDown || tool === "hand") { startPan(ev); return; }
   const hdl = ev.target.closest(".hdl");
   if (hdl) { startTransform(ev, hdl); return; }
   const node = ev.target.closest(".el");
@@ -587,7 +623,10 @@ function startPan(ev) {
   ev.preventDefault();
   const sx = ev.clientX, sy = ev.clientY, px = panX, py = panY;
   drag = {
-    move: (e) => { panX = px + (e.clientX - sx); panY = py + (e.clientY - sy); applyWorld(); updateActivePageFromScroll(); },
+    move: (e) => {
+      panX = px + (e.clientX - sx); panY = py + (e.clientY - sy);
+      clampView(); applyWorld(); updateActivePageFromScroll();
+    },
     up: () => {},
   };
   capture(ev);
@@ -833,7 +872,7 @@ function startDraw(ev) {
       const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       s.dataset.ink = "1";
       s.setAttribute("style", `position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;overflow:visible`);
-      s.innerHTML = `<path d="${pts.map((q, i) => `${i ? "L" : "M"}${q[0] - b.x},${q[1] - b.y}`).join(" ")}" fill="none" stroke="#FCFCFA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
+      s.innerHTML = `<path d="${pts.map((q, i) => `${i ? "L" : "M"}${q[0] - b.x},${q[1] - b.y}`).join(" ")}" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
       $("ovl").appendChild(s);
     },
     up: () => {
@@ -897,42 +936,48 @@ function stopEditing() {
   renderAll();
 }
 
-/* zoom + pan wheel */
+/* scroll + zoom wheel */
 $("stage").addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  // Ctrl/Cmd+wheel zooms the document — and so does a trackpad pinch, which the browser
+  // reports as exactly that. A bare wheel ALWAYS scrolls the document and must never touch
+  // the zoom: that's the difference between a document and an infinite canvas.
   if (ev.ctrlKey || ev.metaKey) {
-    ev.preventDefault();
     zoomAt(ev.clientX, ev.clientY, zoom * (1 - ev.deltaY * 0.01));
-  } else {
-    ev.preventDefault();
-    panX -= ev.shiftKey ? ev.deltaY : ev.deltaX;
-    panY -= ev.shiftKey ? 0 : ev.deltaY;
-    applyWorld(); updateActivePageFromScroll();
+    return;
   }
+  panX -= ev.shiftKey ? ev.deltaY : ev.deltaX;
+  panY -= ev.shiftKey ? 0 : ev.deltaY;
+  clampView(); applyWorld(); updateActivePageFromScroll();
 }, { passive: false });
 
+const ZOOM_MIN = 0.1, ZOOM_MAX = 3;
+/** Rescales the document around the point under the cursor, so the page you're looking at
+ * doesn't jump out from under you. */
 function zoomAt(cx, cy, nz) {
   const r = $("stage").getBoundingClientRect();
   const sx = cx - r.left, sy = cy - r.top;
   const wx = (sx - panX) / zoom, wy = (sy - panY) / zoom;
-  zoom = clamp(nz, 0.05, 8);
+  zoom = clamp(nz, ZOOM_MIN, ZOOM_MAX);
   panX = sx - wx * zoom; panY = sy - wy * zoom;
-  applyWorld(); updateActivePageFromScroll(); renderOverlay();
+  clampView(); applyWorld(); updateActivePageFromScroll(); renderOverlay();
 }
-/** Fits page WIDTH to the viewport — height is unbounded now that pages scroll continuously,
- * Canva/Figma-style — and scrolls so the active page's top sits near the top of the view. */
-/** Scrolls so page `i` is what updateActivePageFromScroll() will also call active: centred
- * if it fits the viewport, shown from its top edge if it's taller than the viewport. */
+/** Scrolls the document so page `i` is what updateActivePageFromScroll() will also call
+ * active: centred if it fits the viewport, aligned to its top edge if it's taller. */
 function scrollToPage(i: number) {
   const s = $("stage").getBoundingClientRect();
   const p = doc.pages[i];
-  const ph = p.h * zoom;
-  panY = ph <= s.height ? s.height / 2 - (pageTop(i) + p.h / 2) * zoom : -pageTop(i) * zoom + 40;
+  panY = p.h * zoom <= s.height - 80
+    ? s.height / 2 - (pageTop(i) + p.h / 2) * zoom
+    : -pageTop(i) * zoom + 40;
+  clampView();
 }
+/** "Ajustar": zooms so the whole active page fits the viewport with padding, then scrolls to it. */
 function zoomFit() {
   const s = $("stage").getBoundingClientRect();
-  const w = stackWidth() || 800;
-  zoom = clamp((s.width - 90) / w, 0.05, 8);
-  panX = (s.width - w * zoom) / 2;
+  const p = page();
+  zoom = clamp(Math.min((s.width - 90) / p.w, (s.height - 90) / p.h), ZOOM_MIN, ZOOM_MAX);
+  panX = (s.width - stackWidth() * zoom) / 2;
   scrollToPage(doc.active);
   applyWorld(); renderOverlay();
 }
@@ -1043,6 +1088,7 @@ const TABS = [
   { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
   { id: "draw", label: "Desenho", icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
   { id: "page", label: "Tela", icon: `<path d="M12 3s6.5 6.8 6.5 10.5A6.5 6.5 0 1 1 5.5 13.5C5.5 9.8 12 3 12 3z"/>` },
+  { id: "pages", label: "Páginas", icon: `<rect x="7" y="3" width="10" height="13" rx="1.3"/><path d="M4.5 19.5h15"/><path d="M4.5 21.5h9"/>` },
   { id: "layers", label: "Camadas", icon: `<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>` },
 ];
 function renderRail() {
@@ -1155,7 +1201,9 @@ window.addEventListener("pointerdown", (ev) => {
 
 function renderPanel() {
   const el = $("panel");
+  el.classList.toggle("pages-index", activeTab === "pages");
   if (!activeTab) { el.hidden = true; return; }
+  if (activeTab === "pages") { el.hidden = false; renderPagesPanel(); return; }
   el.hidden = false;
   const P = page();
   if (activeTab === "text") {
@@ -1194,8 +1242,9 @@ function renderPanel() {
         <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${P.bg}"></div>
       </div>
       <div class="sec"><h4>Fundo do canvas</h4><p class="phint" style="margin-bottom:8px">A área ao redor da página — não o conteúdo dela.</p>
-        <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${stageBg.toLowerCase() === c}" style="background:${c}"></button>`).join("")}</div>
-        <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg}"></div>
+        <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${(stageBg || "").toLowerCase() === c.toLowerCase()}" style="background:${c}"></button>`).join("")}</div>
+        <div class="row" style="margin-bottom:8px"><button class="tbtn ghost" data-stagebg-reset style="flex:1;height:30px;font-size:11.5px" aria-pressed="${!stageBg}">Seguir o tema</button></div>
+        <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg || stageGroundHex()}"></div>
       </div>
       <div class="sec"><h4>Tamanho</h4><p class="phint" style="margin-bottom:8px">Aplica a todas as páginas do documento.</p>
         <div class="grid2" style="margin-bottom:8px">${PAGE_SIZES.map((s) => `<button class="tile" style="height:46px;font-size:10px" data-size="${s.w}x${s.h}">${s.n}<span class="num" style="color:var(--faint)">${s.w}×${s.h}</span></button>`).join("")}</div>
@@ -1231,6 +1280,19 @@ function renderLayers() {
 }
 
 $("panel").addEventListener("click", (ev) => {
+  if (ev.target.closest("#addPagePanel")) { addPage(); return; }
+  const goPage = ev.target.closest("[data-gopage]");
+  if (goPage) { goToPage(+goPage.dataset.gopage); return; }
+  const dupPage = ev.target.closest("[data-duppage]");
+  if (dupPage) { duplicatePage(+dupPage.dataset.duppage); return; }
+  const delPage = ev.target.closest("[data-delpage]");
+  if (delPage) { deletePage(+delPage.dataset.delpage); return; }
+  const upPage = ev.target.closest("[data-moveuppage]");
+  if (upPage) { movePageUp(+upPage.dataset.moveuppage); return; }
+  const downPage = ev.target.closest("[data-movedownpage]");
+  if (downPage) { movePageDown(+downPage.dataset.movedownpage); return; }
+  const hidePage = ev.target.closest("[data-hidepage]");
+  if (hidePage) { togglePageHidden(+hidePage.dataset.hidepage); return; }
   const add = ev.target.closest("[data-add]");
   if (add) {
     const t = add.dataset.add;
@@ -1243,6 +1305,7 @@ $("panel").addEventListener("click", (ev) => {
   }
   const bg = ev.target.closest("[data-bg]");
   if (bg) { page().bg = bg.dataset.bg; commit(); renderAll(); return; }
+  if (ev.target.closest("[data-stagebg-reset]")) { stageBg = null; applyStageBg(); renderPanel(); return; }
   const sbg = ev.target.closest("[data-stagebg]");
   if (sbg) { stageBg = sbg.dataset.stagebg; applyStageBg(); renderPanel(); return; }
   const sz = ev.target.closest("[data-size]:not([data-add])");
@@ -1345,7 +1408,7 @@ function renderProps() {
     </div>` : ""}
 
     ${shows.stroke ? `<div class="sec"><h4>${t === "draw" ? "Traço" : "Borda"}</h4>
-      <div class="row"><div class="field" style="flex:0 0 54px"><input type="color" id="pStroke" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FCFCFA"}"></div>
+      <div class="row"><div class="field" style="flex:0 0 54px"><input type="color" id="pStroke" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}"></div>
       <div class="field" style="flex:1"><label>Espessura</label><input id="pSW" value="${e.strokeWidth || 0}"></div></div></div>` : ""}
 
     ${shows.radius ? `<div class="sec"><h4>Raio dos cantos</h4><div class="field" style="width:96px"><input id="pRad" value="${e.radius || 0}"></div></div>` : ""}
@@ -1403,7 +1466,7 @@ async function buildThumbs() {
       if (thumbs.has(p.id)) continue;
       const c = await renderPageCanvas(p, Math.min(0.2, 150 / p.w));
       thumbs.set(p.id, c.toDataURL("image/jpeg", 0.72));
-      if (!$("gridview").hidden) renderGridView();
+      refreshPagesUI();
     }
   } catch (e) { /* a thumbnail is a nicety, never a blocker */ }
   thumbBusy = false;
@@ -1423,63 +1486,143 @@ const pageMini = (action: string, icon: string, i: number, title: string, disabl
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
   </button>`;
 
-// Page management (move/hide/duplicate/delete/add) lives directly on the main canvas — each
-// page's own floating header, rendered in renderCanvas() — not in a separate side panel.
+// Shared by three surfaces: each page's floating header on the canvas, the scrolling Pages
+// panel, and the thumbnail filmstrip — all delegate here instead of duplicating the mutation.
+function addPage() {
+  const last = doc.pages[doc.pages.length - 1];
+  const p = blankPage(); p.w = last.w; p.h = last.h;
+  doc.pages.push(p); doc.active = doc.pages.length - 1; sel = [];
+  commit(); renderAll(); refreshPagesUI();
+  scrollToPage(doc.active); applyWorld();
+}
+function duplicatePage(i: number) {
+  const copy = structuredClone(doc.pages[i]);
+  copy.id = uid();
+  copy.els.forEach((e) => { e.id = uid(); });
+  doc.pages.splice(i + 1, 0, copy);
+  doc.active = i + 1; sel = [];
+  commit(); renderAll(); buildThumbs(); refreshPagesUI();
+}
+function deletePage(i: number) {
+  doc.pages.splice(i, 1);
+  doc.active = clamp(doc.active, 0, doc.pages.length - 1); sel = [];
+  commit(); renderAll(); refreshPagesUI();
+}
+function movePageUp(i: number) {
+  if (i <= 0) return;
+  [doc.pages[i - 1], doc.pages[i]] = [doc.pages[i], doc.pages[i - 1]];
+  if (doc.active === i) doc.active = i - 1; else if (doc.active === i - 1) doc.active = i;
+  commit(); renderCanvas(); refreshPagesUI();
+}
+function movePageDown(i: number) {
+  if (i >= doc.pages.length - 1) return;
+  [doc.pages[i], doc.pages[i + 1]] = [doc.pages[i + 1], doc.pages[i]];
+  if (doc.active === i) doc.active = i + 1; else if (doc.active === i + 1) doc.active = i;
+  commit(); renderCanvas(); refreshPagesUI();
+}
+function togglePageHidden(i: number) {
+  doc.pages[i].hidden = !doc.pages[i].hidden;
+  commit(); renderCanvas(); refreshPagesUI();
+}
+/** Jumps to page `i` without resetting zoom — used by the pages panel and the thumbnail strip.
+ * Grid view jumps via zoomFit() instead, since it's meant as a reset-and-overview action. */
+function goToPage(i: number) {
+  doc.active = i; sel = []; editingId = null;
+  baseline = snap();
+  renderAll(); scrollToPage(i); applyWorld(); refreshPagesUI();
+}
+
 $("pagestack").addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
-  if (t.closest("#addPageCanvas")) {
-    const last = doc.pages[doc.pages.length - 1];
-    const p = blankPage(); p.w = last.w; p.h = last.h;
-    doc.pages.push(p); doc.active = doc.pages.length - 1; sel = [];
-    commit(); renderAll();
-    scrollToPage(doc.active); applyWorld();
-    return;
-  }
-  const dup = t.closest<HTMLElement>("[data-duppage]");
-  if (dup) {
-    const i = +dup.dataset.duppage;
-    const copy = structuredClone(doc.pages[i]);
-    copy.id = uid();
-    copy.els.forEach((e) => { e.id = uid(); });
-    doc.pages.splice(i + 1, 0, copy);
-    doc.active = i + 1; sel = [];
-    commit(); renderAll(); buildThumbs();
-    return;
-  }
-  const del = t.closest<HTMLElement>("[data-delpage]");
-  if (del) {
-    doc.pages.splice(+del.dataset.delpage, 1);
-    doc.active = clamp(doc.active, 0, doc.pages.length - 1); sel = [];
-    commit(); renderAll(); return;
-  }
-  const up = t.closest<HTMLElement>("[data-moveuppage]");
-  if (up) {
-    const i = +up.dataset.moveuppage;
-    if (i > 0) {
-      [doc.pages[i - 1], doc.pages[i]] = [doc.pages[i], doc.pages[i - 1]];
-      if (doc.active === i) doc.active = i - 1; else if (doc.active === i - 1) doc.active = i;
-      commit(); renderCanvas();
-    }
-    return;
-  }
-  const down = t.closest<HTMLElement>("[data-movedownpage]");
-  if (down) {
-    const i = +down.dataset.movedownpage;
-    if (i < doc.pages.length - 1) {
-      [doc.pages[i], doc.pages[i + 1]] = [doc.pages[i + 1], doc.pages[i]];
-      if (doc.active === i) doc.active = i + 1; else if (doc.active === i + 1) doc.active = i;
-      commit(); renderCanvas();
-    }
-    return;
-  }
-  const hide = t.closest<HTMLElement>("[data-hidepage]");
-  if (hide) {
-    const i = +hide.dataset.hidepage;
-    doc.pages[i].hidden = !doc.pages[i].hidden;
-    commit(); renderCanvas();
-    return;
-  }
+  if (t.closest("#addPageCanvas")) { addPage(); return; }
+  const dup = t.closest<HTMLElement>("[data-duppage]"); if (dup) { duplicatePage(+dup.dataset.duppage); return; }
+  const del = t.closest<HTMLElement>("[data-delpage]"); if (del) { deletePage(+del.dataset.delpage); return; }
+  const up = t.closest<HTMLElement>("[data-moveuppage]"); if (up) { movePageUp(+up.dataset.moveuppage); return; }
+  const down = t.closest<HTMLElement>("[data-movedownpage]"); if (down) { movePageDown(+down.dataset.movedownpage); return; }
+  const hide = t.closest<HTMLElement>("[data-hidepage]"); if (hide) { togglePageHidden(+hide.dataset.hidepage); return; }
 });
+
+/* ---------- pages index (rail tab) ----------
+ * Navigation only: clicking a thumbnail scrolls the document to that page. The document
+ * itself — the scrolling column of artboards — is the centre canvas, never this panel. */
+function renderPagesPanel() {
+  $("panel").innerHTML = `<h4 class="ptitle">Páginas</h4><p class="phint">Índice do documento. Clique numa miniatura para rolar até a página.</p>` +
+    doc.pages.map((p, i) => `
+      <div class="pagenavitem" aria-selected="${i === doc.active}">
+        <div class="pagenavhead">
+          <span class="plabel2">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
+          <div class="pageminis">
+            ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover para cima", i === 0)}
+            ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover para baixo", i === doc.pages.length - 1)}
+            ${pageMini("hidepage", p.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn, i, p.hidden ? "Mostrar página" : "Ocultar página")}
+            ${pageMini("duppage", PAGE_MINI.dup, i, "Duplicar página")}
+            ${doc.pages.length > 1 ? pageMini("delpage", PAGE_MINI.del, i, "Excluir página") : ""}
+          </div>
+        </div>
+        <div class="pagenavthumb" data-gopage="${i}" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+          ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
+          : ""}</div>
+      </div>`).join("") +
+    `<button class="addpagebtn" id="addPagePanel" style="position:static;width:100%;margin-top:2px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Adicionar página
+    </button>`;
+}
+
+/* ---------- thumbnail strip ---------- */
+function renderThumbStrip() {
+  $("thumbstrip").innerHTML = doc.pages.map((p, i) => `
+    <button class="thumbitem" data-gopage="${i}" aria-selected="${i === doc.active}" title="Página ${i + 1}${p.hidden ? " · oculta" : ""}">
+      <div class="thumbitempic" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+        ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
+        : ""}</div>
+      <span class="num">${i + 1}</span>
+    </button>`).join("") +
+    `<button class="thumbitem thumbadd" id="addPageThumb" title="Adicionar página">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>`;
+}
+$("thumbstrip").addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  if (t.closest("#addPageThumb")) { addPage(); return; }
+  const item = t.closest<HTMLElement>("[data-gopage]");
+  if (item) goToPage(+item.dataset.gopage);
+});
+
+/* ---------- how the pages are being viewed ----------
+ * "document" is the canvas itself — the scrolling column — and therefore the resting state,
+ * not something that has to be switched on. The strip and the grid are just navigation laid
+ * over it; closing either drops you back into the document exactly where you were. */
+function currentPagesMode(): "document" | "thumb" | "grid" {
+  if (!$("gridview").hidden) return "grid";
+  if (!$("thumbstrip").hidden) return "thumb";
+  return "document";
+}
+function updatePagesModeButtons() {
+  const m = currentPagesMode();
+  $("docViewBtn").setAttribute("aria-pressed", String(m === "document"));
+  $("thumbViewBtn").setAttribute("aria-pressed", String(m === "thumb"));
+  $("gridViewBtn").setAttribute("aria-pressed", String(m === "grid"));
+}
+function refreshPagesUI() {
+  if (activeTab === "pages") renderPagesPanel();
+  if (!$("thumbstrip").hidden) renderThumbStrip();
+  if (!$("gridview").hidden) renderGridView();
+}
+function setPagesMode(mode: "document" | "thumb" | "grid") {
+  // Re-clicking the strip or the grid closes it, which is the same thing as going back to the
+  // bare document — so both of those collapse to "document".
+  const next = currentPagesMode() === mode ? "document" : mode;
+  $("gridview").hidden = true;
+  if (next === "document") $("thumbstrip").hidden = true;
+  if (next === "thumb") { $("thumbstrip").hidden = false; renderThumbStrip(); }
+  if (next === "grid") { renderGridView(); $("gridview").hidden = false; }
+  updatePagesModeButtons();
+}
+$("docViewBtn").addEventListener("click", () => setPagesMode("document"));
+$("thumbViewBtn").addEventListener("click", () => setPagesMode("thumb"));
+$("gridViewBtn").addEventListener("click", () => setPagesMode("grid"));
+$("pageCountBtn").addEventListener("click", () => setPagesMode("grid"));
 
 /* ---------- grid view ---------- */
 function renderGridView() {
@@ -1491,16 +1634,14 @@ function renderGridView() {
       <span class="plabel">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
     </div>`).join("");
 }
-$("gridViewBtn").addEventListener("click", () => { renderGridView(); $("gridview").hidden = false; });
 $("gridview").addEventListener("click", (ev) => {
   const cell = (ev.target as HTMLElement).closest<HTMLElement>("[data-gridpage]");
-  if (!cell) { $("gridview").hidden = true; return; }
+  if (!cell) { setPagesMode("document"); return; }
   doc.active = +cell.dataset.gridpage; sel = []; editingId = null;
   baseline = snap();
-  $("gridview").hidden = true;
+  setPagesMode("document");
   renderAll(); zoomFit();
 });
-$("pageCountBtn").addEventListener("click", () => { renderGridView(); $("gridview").hidden = false; });
 
 /* ---------- present mode ---------- */
 let presentIdx = 0;
@@ -1857,7 +1998,7 @@ const typing = () => {
 };
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("present").hidden) { exitPresent(); return; }
-  if (e.key === "Escape" && !$("gridview").hidden) { $("gridview").hidden = true; return; }
+  if (e.key === "Escape" && !$("gridview").hidden) { setPagesMode("document"); return; }
   if (e.code === "Space" && !typing()) { spaceDown = true; $("stage").style.cursor = "grab"; }
   if (typing()) { if (e.key === "Escape") (document.activeElement as HTMLElement).blur(); return; }
   const mod = e.metaKey || e.ctrlKey;
@@ -1872,6 +2013,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && (k === "=" || k === "+")) { e.preventDefault(); $("zoomin").click(); return; }
   if (mod && k === "-") { e.preventDefault(); $("zoomout").click(); return; }
   if (mod && k === "0") { e.preventDefault(); zoomFit(); return; }
+  if (mod && k === "1") { e.preventDefault(); const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); return; }
   if (mod && e.key === "]") { e.preventDefault(); order("up"); return; }
   if (mod && e.key === "[") { e.preventDefault(); order("down"); return; }
   if (e.key === "Delete" || e.key === "Backspace") { if (sel.length) { e.preventDefault(); deleteSel(); } return; }
@@ -2014,9 +2156,10 @@ export function mountEditor() {
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
   renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs(); syncHistory();
+  updatePagesModeButtons();
   requestAnimationFrame(zoomFit);
   document.fonts.ready.then(() => renderCanvas());
-  window.addEventListener("resize", () => { if (editorMounted) applyWorld(); });
+  window.addEventListener("resize", () => { if (editorMounted) { clampView(); applyWorld(); } });
 }
 
 // Automation handle. The fidelity suite renders pages through the real export
