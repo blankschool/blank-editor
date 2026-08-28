@@ -60,3 +60,8 @@ export async function createTemplateOnServer(name: string, document: Doc): Promi
   const { id } = await res.json();
   return id as string;
 }
+
+export async function deleteTemplateOnServer(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/templates/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("failed to delete template");
+}

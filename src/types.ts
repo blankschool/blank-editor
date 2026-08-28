@@ -98,6 +98,8 @@ export interface Page {
   h: number;
   bg: string;
   els: El[];
+  /** Skipped by the "present" mode and by multi-page PDF export; still editable directly. */
+  hidden?: boolean;
 }
 
 export interface Doc {

@@ -2,7 +2,7 @@ import "./styles.css";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
-import { fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer } from "./templateStore";
+import { fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer } from "./templateStore";
 
 declare global {
   interface Window {
@@ -25,7 +25,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Playfair Display", "Lora", "Oswald", "Bebas Neue", "DM Serif Display", "Caveat"];
 const PAGE_SIZES = [
-  { n: "Post", w: 1080, h: 1080 }, { n: "Story", w: 1080, h: 1920 },
+  { n: "Post", w: 1080, h: 1080 }, { n: "Post 4:5", w: 1080, h: 1350 }, { n: "Story", w: 1080, h: 1920 },
   { n: "Slide", w: 1920, h: 1080 }, { n: "A4", w: 794, h: 1123 },
   { n: "Capa", w: 1200, h: 630 }, { n: "Cartão", w: 1050, h: 600 },
 ];
@@ -54,11 +54,47 @@ let clipboard = null;
 let editingId = null;
 let lastClickId: string | null = null;
 let lastClickTime = 0;
+// Whether the "⋯ Mais opções" popover (the old full properties panel) is open —
+// reset to closed whenever the selection itself changes, but left alone across
+// property edits on the same selection so it doesn't snap shut mid-adjustment.
+let propPopOpen = false;
+let propPopKey = "";
 let activeTab = "elements";
 const imgCache = new Map<string, HTMLImageElement>();
 
-const page = (): Page => doc.pages[doc.active];
-const byId = (id: string): El | undefined => page().els.find((e) => e.id === id);
+// Pages stack vertically in one continuous canvas (Canva-style), separated by this gap —
+// wide enough to fit each page's floating header (label + move/hide/duplicate/delete).
+const PAGE_GAP = 64;
+function pageTop(i: number): number {
+  let y = 0;
+  for (let k = 0; k < i; k++) y += doc.pages[k].h + PAGE_GAP;
+  return y;
+}
+function stackHeight(): number {
+  return doc.pages.length ? pageTop(doc.pages.length - 1) + doc.pages[doc.pages.length - 1].h : 0;
+}
+function stackWidth(): number {
+  return doc.pages.reduce((m, p) => Math.max(m, p.w), 0);
+}
+/** Which page a world Y falls into — the gap between pages splits down the middle. */
+function pageIndexAtWorldY(y: number): number {
+  for (let i = 0; i < doc.pages.length; i++) {
+    if (y < pageTop(i) + doc.pages[i].h + PAGE_GAP / 2) return i;
+  }
+  return doc.pages.length - 1;
+}
+const page = (): Page => doc.pages[clamp(doc.active, 0, doc.pages.length - 1)];
+/** Elements are looked up across every page, not just the active one — with the stack always
+ * visible, the current selection can be (and dragging can land) on any page. */
+function locate(id: string): { pageIdx: number; el: El } | null {
+  for (let i = 0; i < doc.pages.length; i++) {
+    const el = doc.pages[i].els.find((e) => e.id === id);
+    if (el) return { pageIdx: i, el };
+  }
+  return null;
+}
+const byId = (id: string): El | undefined => locate(id)?.el;
+const pageIdxOf = (id: string): number => locate(id)?.pageIdx ?? doc.active;
 const selEls = () => sel.map(byId).filter(Boolean);
 // Images live once in doc.assets; elements point at them with "@key" so the
 // same photo used on several slides is stored a single time.
@@ -81,7 +117,7 @@ function commit() {
 }
 function restore(json) {
   const o = JSON.parse(json);
-  doc = o.d; sel = o.s.filter((id) => o.d.pages[o.d.active]?.els.some((e) => e.id === id));
+  doc = o.d; sel = o.s.filter((id) => o.d.pages.some((p) => p.els.some((e) => e.id === id)));
   editingId = null;
   $("docname").value = doc.name;
   renderAll();
@@ -100,7 +136,10 @@ function redo() {
   restore(baseline);
   persist(); syncHistory();
 }
-function syncHistory() { /* undo/redo are keyboard-only, Figma-style — nothing to sync */ }
+function syncHistory() {
+  $("undoBtn").disabled = !past.length;
+  $("redoBtn").disabled = !future.length;
+}
 
 const LS = "blank-editor-doc-v1";
 let persistTimer = null;
@@ -120,7 +159,7 @@ function loadPersisted() {
     if (!o || !Array.isArray(o.pages) || !o.pages.length) return false;
     // A saved copy of an OLDER seed would hide the current design forever.
     if (SEED.seedId && o.seedId !== SEED.seedId) { localStorage.removeItem(LS); return false; }
-    doc = o; doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
+    doc = normalizeDoc(o); doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
     return true;
   } catch (e) { return false; }
 }
@@ -179,8 +218,9 @@ function bbox(els: El[]) {
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
-function toPage(ev: { clientX: number; clientY: number }) {
-  const r = $("pagebox").getBoundingClientRect();
+/** World coordinates, in canvas pixels — the frame every page is stacked into. */
+function toWorld(ev: { clientX: number; clientY: number }) {
+  const r = $("world").getBoundingClientRect();
   return { x: (ev.clientX - r.left) / zoom, y: (ev.clientY - r.top) / zoom };
 }
 
@@ -261,45 +301,88 @@ function elInner(e: any) {
   return "";
 }
 
+function pageHeaderHtml(i: number, p: Page): string {
+  return `<div class="pagehead" data-pageidx="${i}">
+    <span class="plabel2">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
+    <div class="pageminis">
+      ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover para cima", i === 0)}
+      ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover para baixo", i === doc.pages.length - 1)}
+      ${pageMini("hidepage", p.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn, i, p.hidden ? "Mostrar página" : "Ocultar página")}
+      ${pageMini("duppage", PAGE_MINI.dup, i, "Duplicar página")}
+      ${doc.pages.length > 1 ? pageMini("delpage", PAGE_MINI.del, i, "Excluir página") : ""}
+    </div>
+  </div>`;
+}
+
 function renderCanvas() {
-  const p = page();
-  const box = $("pagebox");
-  box.style.width = p.w + "px";
-  box.style.height = p.h + "px";
-  box.style.background = p.bg;
-  box.innerHTML = p.els
-    .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
-    .join("");
-  // text auto-height
-  for (const e of p.els) {
-    if (e.type !== "text") continue;
-    const node = box.querySelector(`[data-txt="${e.id}"]`);
-    if (node) {
-      const h = Math.max(20, Math.ceil(node.scrollHeight));
-      if (Math.abs(h - e.h) > 1) { e.h = h; node.parentElement.style.height = h + "px"; }
+  const stack = $("pagestack");
+  const stackW = stackWidth();
+  stack.style.width = stackW + "px";
+  stack.style.height = stackHeight() + "px";
+  stack.innerHTML = doc.pages.map((p, i) => `
+    <div class="pagewrap" style="top:${pageTop(i)}px; left:${(stackW - p.w) / 2}px; width:${p.w}px; height:${p.h}px;">
+      ${pageHeaderHtml(i, p)}
+      <div class="pagebox" data-pageidx="${i}" style="width:${p.w}px; height:${p.h}px; background:${p.bg}; opacity:${p.hidden ? .45 : 1}">${p.els
+        .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
+        .join("")}</div>
+    </div>`).join("") +
+    `<div class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + PAGE_GAP / 2 - 20}px; width:${stackW}px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Adicionar página
+    </div>`;
+  // text auto-height, across every page
+  for (const p of doc.pages) {
+    for (const e of p.els) {
+      if (e.type !== "text") continue;
+      const node = stack.querySelector(`[data-txt="${e.id}"]`);
+      if (node) {
+        const h = Math.max(20, Math.ceil(node.scrollHeight));
+        if (!Number.isFinite(e.h) || Math.abs(h - e.h) > 1) { e.h = h; (node.parentElement as HTMLElement).style.height = h + "px"; }
+      }
     }
   }
   applyWorld();
   renderOverlay();
 }
 
+/** The page nearest the viewport centre becomes "active" as you scroll, Canva-style — it's
+ * what the Tela tab edits and what the bottom-bar page counter shows. */
+function updateActivePageFromScroll() {
+  const s = $("stage").getBoundingClientRect();
+  const centerWorldY = (s.height / 2 - panY) / zoom;
+  const idx = clamp(pageIndexAtWorldY(centerWorldY), 0, doc.pages.length - 1);
+  if (idx !== doc.active) {
+    doc.active = idx;
+    $("pagecount").textContent = `${doc.active + 1} / ${doc.pages.length}`;
+    if (activeTab === "page") renderPanel();
+  }
+}
+
 function applyWorld() {
   $("world").style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
   $("ovl").style.setProperty("--inv", 1 / zoom);
-  $("pagebox").parentElement.style.setProperty("--inv", 1 / zoom);
   $("zoomval").textContent = Math.round(zoom * 100) + "%";
+  $("pagecount").textContent = `${doc.active + 1} / ${doc.pages.length}`;
   const o = $("ovl");
-  o.style.width = page().w + "px";
-  o.style.height = page().h + "px";
+  o.style.width = stackWidth() + "px";
+  o.style.height = stackHeight() + "px";
+  positionFloatingUI();
 }
 
 const HANDLES: Array<[string, number, number]> = [["nw", 0, 0], ["n", .5, 0], ["ne", 1, 0], ["e", 1, .5], ["se", 1, 1], ["s", .5, 1], ["sw", 0, 1], ["w", 0, .5]];
 const CURSORS = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
 
+/** Selected elements with .y translated into world space (i.e. + their own page's stack
+ * offset) — every overlay/toolbar position is computed in this frame since #ovl spans the
+ * whole page stack, not a single page. */
+function worldSelEls() {
+  return selEls().filter((e) => !e.hidden).map((e) => ({ ...e, y: pageTop(pageIdxOf(e.id)) + e.y }));
+}
+
 function renderOverlay() {
   const o = $("ovl");
-  const els = selEls().filter((e) => !e.hidden);
-  if (!els.length || editingId) { o.innerHTML = ""; return; }
+  const els = worldSelEls();
+  if (!els.length || editingId) { o.innerHTML = ""; positionFloatingUI(); return; }
   let html = "";
   if (els.length === 1) {
     const e = els[0];
@@ -321,7 +404,131 @@ function renderOverlay() {
     </div>`;
   }
   o.innerHTML = html;
+  positionFloatingUI();
 }
+
+/* Anchors the slim floating toolbar (and, if open, the "more options" popover)
+ * to the current selection's bounding box, in screen space — outside .world,
+ * so it doesn't scale with zoom the way the on-canvas handles do. */
+function positionFloatingUI() {
+  const bar = $("seltoolbar"), pop = $("proppop");
+  const els = worldSelEls();
+  const key = sel.join(",");
+  if (key !== propPopKey) { propPopKey = key; propPopOpen = false; }
+  if (!els.length || editingId) { bar.hidden = true; pop.hidden = true; return; }
+  const b = els.length === 1 ? els[0] : bbox(els);
+  bar.hidden = false;
+  bar.style.left = (panX + (b.x + b.w / 2) * zoom) + "px";
+  bar.style.top = (panY + b.y * zoom) + "px";
+  if (propPopOpen) {
+    pop.hidden = false;
+    pop.style.left = (panX + (b.x + b.w) * zoom) + "px";
+    pop.style.top = (panY + (b.y + b.h / 2) * zoom) + "px";
+  } else {
+    pop.hidden = true;
+  }
+}
+
+const QALIGN_ICON = {
+  left: `<path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/>`,
+  center: `<path d="M4 6h16"/><path d="M7 12h10"/><path d="M5.5 18h13"/>`,
+  right: `<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>`,
+};
+/* The slim always-visible bar above the selection — quick access to the handful
+ * of properties worth one click; everything else lives behind "⋯" in #proppop,
+ * which is just the original #props panel relocated, unchanged. */
+function renderSelToolbar() {
+  const bar = $("seltoolbar");
+  const els = selEls().filter((e) => !e.hidden);
+  if (!els.length || editingId) { bar.innerHTML = ""; return; }
+  const e = els[0];
+  const one = els.length === 1;
+  const t = e.type;
+  const showFill = one && ["rect", "ellipse", "triangle", "star", "line", "text", "icon"].includes(t);
+  const showReplace = one && t === "image";
+  const showStroke = one && ["rect", "ellipse", "image", "draw"].includes(t);
+  const showRadius = one && ["rect", "image"].includes(t);
+  const showFlip = one && t !== "text";
+  let html = "";
+  if (showFill) html += `<input type="color" id="qFill" class="qcolor" title="Cor" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
+  if (showReplace) {
+    html += `<button class="qbtn" id="qReplace" title="Substituir imagem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 14l3-3 2.5 2.5L17 10l2 2"/><circle cx="8" cy="9" r="1.3"/></svg></button>`;
+  }
+  if (showStroke) {
+    html += `<input type="color" id="qStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FCFCFA"}">`;
+  }
+  if (showRadius) {
+    html += `<button class="qbtn" id="qRadDown" title="Diminuir raio dos cantos">⌐</button>`;
+    html += `<span class="qsizeval num">${Math.round(e.radius || 0)}</span>`;
+    html += `<button class="qbtn" id="qRadUp" title="Aumentar raio dos cantos">◠</button>`;
+  }
+  if (showFlip) {
+    html += `<button class="qbtn" data-qflip="h" title="Espelhar na horizontal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7L4 12l4 5z"/><path d="M16 7l4 5-4 5z"/></svg></button>`;
+    html += `<button class="qbtn" data-qflip="v" title="Espelhar na vertical"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8l5-4 5 4z"/><path d="M7 16l5 4 5-4z"/></svg></button>`;
+  }
+  if (showReplace || showStroke || showRadius || showFlip) html += `<div class="qsep"></div>`;
+  if (one && t === "text") {
+    html += `<select id="qFont" class="qselect" title="Fonte">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
+    html += `<div class="qsep"></div>`;
+    html += `<button class="qbtn" id="qSizeDown" title="Diminuir corpo">−</button>`;
+    html += `<span class="qsizeval num">${Math.round(e.size)}</span>`;
+    html += `<button class="qbtn" id="qSizeUp" title="Aumentar corpo">+</button>`;
+    html += `<div class="qsep"></div>`;
+    html += `<button class="qbtn" data-qtw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800" title="Negrito">B</button>`;
+    html += `<button class="qbtn" data-qtw="italic" aria-pressed="${!!e.italic}" style="font-style:italic" title="Itálico">I</button>`;
+    html += `<button class="qbtn" data-qtw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline" title="Sublinhado">U</button>`;
+    html += `<div class="qsep"></div>`;
+    html += (["left", "center", "right"] as const).map((a) => `<button class="qbtn" data-qta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
+    html += `<div class="qsep"></div>`;
+  }
+  html += `<button class="qbtn" id="qMore" aria-pressed="${propPopOpen}" title="Mais opções">⋯</button>`;
+  bar.innerHTML = html;
+}
+$("seltoolbar").addEventListener("click", (ev) => {
+  const tw = (ev.target as HTMLElement).closest<HTMLElement>("[data-qtw]");
+  if (tw) {
+    const k = tw.dataset.qtw, e = selEls()[0];
+    if (k === "bold") patch({ weight: e.weight >= 700 ? 400 : 700 }, true);
+    if (k === "italic") patch({ italic: !e.italic }, true);
+    if (k === "underline") patch({ underline: !e.underline }, true);
+    renderSelToolbar(); renderProps(); return;
+  }
+  const ta = (ev.target as HTMLElement).closest<HTMLElement>("[data-qta]");
+  if (ta) { patch({ align: ta.dataset.qta }, true); renderSelToolbar(); renderProps(); return; }
+  const qf = (ev.target as HTMLElement).closest<HTMLElement>("[data-qflip]");
+  if (qf) { flip(qf.dataset.qflip); return; }
+  if ((ev.target as HTMLElement).closest("#qSizeUp")) { const e = selEls()[0]; patch({ size: (e.size || 16) + 2 }, true); renderSelToolbar(); renderProps(); return; }
+  if ((ev.target as HTMLElement).closest("#qSizeDown")) { const e = selEls()[0]; patch({ size: Math.max(6, (e.size || 16) - 2) }, true); renderSelToolbar(); renderProps(); return; }
+  if ((ev.target as HTMLElement).closest("#qRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderSelToolbar(); renderProps(); return; }
+  if ((ev.target as HTMLElement).closest("#qRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderSelToolbar(); renderProps(); return; }
+  if ((ev.target as HTMLElement).closest("#qReplace")) { $("fileImgReplace").click(); return; }
+  if ((ev.target as HTMLElement).closest("#qMore")) { propPopOpen = !propPopOpen; renderSelToolbar(); positionFloatingUI(); return; }
+});
+$("seltoolbar").addEventListener("input", (ev) => {
+  const t = ev.target as HTMLInputElement;
+  if (t.id === "qFill") patch({ fill: t.value });
+  if (t.id === "qFont") patch({ font: t.value }, true);
+  if (t.id === "qStroke") patch({ stroke: t.value });
+});
+$("seltoolbar").addEventListener("change", (ev) => {
+  const id = (ev.target as HTMLElement).id;
+  if (id === "qFill" || id === "qStroke") commit();
+});
+$("fileImgReplace").addEventListener("change", async (ev) => {
+  const input = ev.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = "";
+  const e = selEls()[0];
+  if (!f || !e || e.type !== "image") return;
+  const src = await new Promise<string>((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result as string); fr.readAsDataURL(f); });
+  const img = await loadImg(src).catch(() => null);
+  if (!img) { toast(`Não foi possível ler ${f.name}.`); return; }
+  patch({ src }, true);
+});
+window.addEventListener("pointerdown", (ev) => {
+  const t = ev.target as HTMLElement | null;
+  if (propPopOpen && t && !t.closest("#proppop") && !t.closest("#qMore")) { propPopOpen = false; positionFloatingUI(); }
+}, true);
 
 
 
@@ -330,6 +537,10 @@ let drag = null;
 let spaceDown = false;
 
 $("stage").addEventListener("pointerdown", (ev) => {
+  // The floating selection toolbar, its "more options" popover, the tool belt, the bottom
+  // bar, and each page's own floating header/add-page button are UI chrome living inside
+  // .stage — not canvas content, so a click there must never fall through to marquee-select.
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #toolbelt, #flyout, #bottombar, #gridview, .pagehead, #addPageCanvas")) return;
   if (ev.button === 1 || spaceDown || tool === "hand") { startPan(ev); return; }
   const hdl = ev.target.closest(".hdl");
   if (hdl) { startTransform(ev, hdl); return; }
@@ -338,6 +549,8 @@ $("stage").addEventListener("pointerdown", (ev) => {
   if (tool === "draw") { startDraw(ev); return; }
 
   if (!node) {
+    const pageBox = (ev.target as HTMLElement).closest<HTMLElement>(".pagebox");
+    if (pageBox) doc.active = +pageBox.dataset.pageidx;
     if (editingId) stopEditing();
     startMarquee(ev);
     return;
@@ -374,60 +587,113 @@ function startPan(ev) {
   ev.preventDefault();
   const sx = ev.clientX, sy = ev.clientY, px = panX, py = panY;
   drag = {
-    move: (e) => { panX = px + (e.clientX - sx); panY = py + (e.clientY - sy); applyWorld(); },
+    move: (e) => { panX = px + (e.clientX - sx); panY = py + (e.clientY - sy); applyWorld(); updateActivePageFromScroll(); },
     up: () => {},
   };
   capture(ev);
 }
 
+/* Dragging can carry an element from one page into another (Canva-style). While the drag is
+ * live, moved elements are shown via unclipped "ghost" copies in #ovl (world space, so they
+ * can visually cross a page's own overflow:hidden boundary); the real data — and which
+ * page's `els` array actually owns each element — only updates on drop. */
 function startMove(ev) {
-  const start = toPage(ev);
+  const start = toWorld(ev);
   const els = selEls().filter((e) => !e.locked);
   if (!els.length) return;
-  const orig = els.map((e) => ({ e, x: e.x, y: e.y }));
+  const orig = els.map((e) => ({ e, pageIdx: pageIdxOf(e.id), x: e.x, y: e.y }));
   let moved = false;
+  const ghosts = orig.map((o) => {
+    const g = document.createElement("div");
+    g.className = "el dragghost";
+    g.style.cssText = elStyle(o.e);
+    g.innerHTML = elInner(o.e);
+    $("ovl").appendChild(g);
+    return g;
+  });
+  const place = (dx: number, dy: number) => {
+    orig.forEach((o, i) => {
+      ghosts[i].style.left = (o.x + dx) + "px";
+      ghosts[i].style.top = (pageTop(o.pageIdx) + o.y + dy) + "px";
+    });
+  };
+  place(0, 0);
   drag = {
     move: (e) => {
-      const p = toPage(e);
+      const p = toWorld(e);
       let dx = p.x - start.x, dy = p.y - start.y;
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       if (Math.abs(dx) > .5 || Math.abs(dy) > .5) moved = true;
-      for (const o of orig) { o.e.x = Math.round(o.x + dx); o.e.y = Math.round(o.y + dy); }
-      const g = snapMove(els, e.altKey);
-      for (const o of orig) { o.e.x += g.dx; o.e.y += g.dy; }
-      renderCanvas(); drawGuides(g.guides);
+      const g = snapMove(orig, dx, dy, e.altKey);
+      dx += g.dx; dy += g.dy;
+      place(dx, dy);
+      drawGuides(g.guides, orig[0].pageIdx);
       moved && renderProps();
     },
-    up: () => { clearGuides(); if (moved) commit(); },
+    up: (e) => {
+      ghosts.forEach((g) => g.remove());
+      clearGuides();
+      if (!moved) return;
+      const p = toWorld(e);
+      let dx = p.x - start.x, dy = p.y - start.y;
+      if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      const g = snapMove(orig, dx, dy, e.altKey);
+      dx += g.dx; dy += g.dy;
+      for (const o of orig) {
+        const worldY = pageTop(o.pageIdx) + o.y + dy;
+        const targetPageIdx = pageIndexAtWorldY(worldY + o.e.h / 2);
+        if (targetPageIdx !== o.pageIdx) {
+          const arr = doc.pages[o.pageIdx].els;
+          const at = arr.indexOf(o.e);
+          if (at >= 0) arr.splice(at, 1);
+          doc.pages[targetPageIdx].els.push(o.e);
+        }
+        o.e.x = Math.round(o.x + dx);
+        o.e.y = Math.round(worldY - pageTop(targetPageIdx));
+      }
+      commit();
+    },
   };
   capture(ev);
 }
 
-function snapMove(els, off) {
+/** Snaps against the OTHER elements on the drag's starting page only — once the selection has
+ * moved into a different page's territory, snapping simply stops rather than re-targeting. */
+function snapMove(orig, dx: number, dy: number, off: boolean) {
   if (off) return { dx: 0, dy: 0, guides: [] };
-  const p = page(), b = bbox(els), T = 6 / zoom, guides = [];
-  const others = p.els.filter((e) => !els.includes(e) && !e.hidden);
+  const pageIdx = orig[0].pageIdx;
+  const p = doc.pages[pageIdx];
+  const movingIds = new Set(orig.map((o) => o.e.id));
+  const others = p.els.filter((e) => !movingIds.has(e.id) && !e.hidden);
+  const xs = orig.map((o) => o.x + dx), ys = orig.map((o) => o.y + dy);
+  const b = {
+    x: Math.min(...xs), y: Math.min(...ys),
+    w: Math.max(...orig.map((o) => o.x + dx + o.e.w)) - Math.min(...xs),
+    h: Math.max(...orig.map((o) => o.y + dy + o.e.h)) - Math.min(...ys),
+  };
+  const T = 6 / zoom, guides = [];
   const xt = [p.w / 2, 0, p.w], yt = [p.h / 2, 0, p.h];
   for (const o of others) { xt.push(o.x, o.x + o.w / 2, o.x + o.w); yt.push(o.y, o.y + o.h / 2, o.y + o.h); }
-  let dx = 0, dy = 0, bx = T, by = T, gx = null, gy = null;
+  let sdx = 0, sdy = 0, bx = T, by = T, gx = null, gy = null;
   for (const t of xt) for (const v of [b.x, b.x + b.w / 2, b.x + b.w]) {
-    const d = t - v; if (Math.abs(d) < bx) { bx = Math.abs(d); dx = d; gx = t; }
+    const d = t - v; if (Math.abs(d) < bx) { bx = Math.abs(d); sdx = d; gx = t; }
   }
   for (const t of yt) for (const v of [b.y, b.y + b.h / 2, b.y + b.h]) {
-    const d = t - v; if (Math.abs(d) < by) { by = Math.abs(d); dy = d; gy = t; }
+    const d = t - v; if (Math.abs(d) < by) { by = Math.abs(d); sdy = d; gy = t; }
   }
   if (gx !== null) guides.push({ v: 1, at: gx });
   if (gy !== null) guides.push({ v: 0, at: gy });
-  return { dx: Math.round(dx), dy: Math.round(dy), guides };
+  return { dx: Math.round(sdx), dy: Math.round(sdy), guides };
 }
-function drawGuides(gs) {
+function drawGuides(gs, pageIdx: number) {
   clearGuides();
   const o = $("ovl");
+  const top = pageTop(pageIdx), p = doc.pages[pageIdx];
   for (const g of gs) {
     const d = document.createElement("div");
     d.className = "guide";
-    if (g.v) { d.style.cssText = `left:${g.at}px;top:0;width:1px;height:${page().h}px`; }
-    else { d.style.cssText = `top:${g.at}px;left:0;height:1px;width:${page().w}px`; }
+    if (g.v) { d.style.cssText = `left:${g.at}px;top:${top}px;width:1px;height:${p.h}px`; }
+    else { d.style.cssText = `top:${top + g.at}px;left:0;height:1px;width:${p.w}px`; }
     d.dataset.guide = "1";
     o.appendChild(d);
   }
@@ -440,16 +706,17 @@ function startTransform(ev, hdl) {
   const multi = hdl.dataset.multi === "1";
   const els = selEls().filter((e) => !e.locked);
   if (!els.length) return;
-  const start = toPage(ev);
+  const start = toWorld(ev);
 
   if (kind === "rot") {
     const e = els[0];
-    const cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+    const top = pageTop(pageIdxOf(e.id));
+    const cx = e.x + e.w / 2, cy = top + e.y + e.h / 2;
     const a0 = Math.atan2(start.y - cy, start.x - cx) * 180 / Math.PI;
     const r0 = e.rot;
     drag = {
       move: (m) => {
-        const p = toPage(m);
+        const p = toWorld(m);
         let a = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI - a0 + r0;
         if (m.shiftKey) a = Math.round(a / 15) * 15;
         e.rot = Math.round(((a % 360) + 360) % 360);
@@ -465,7 +732,7 @@ function startTransform(ev, hdl) {
     const orig = els.map((e) => ({ e, x: e.x, y: e.y, w: e.w, h: e.h, size: e.size }));
     drag = {
       move: (m) => {
-        const p = toPage(m);
+        const p = toWorld(m);
         let sx = 1, sy = 1;
         if (kind.includes("e")) sx = (p.x - b.x) / b.w;
         if (kind.includes("w")) sx = (b.x + b.w - p.x) / b.w;
@@ -495,7 +762,7 @@ function startTransform(ev, hdl) {
   const corner = kind.length === 2;
   drag = {
     move: (m) => {
-      const p = toPage(m);
+      const p = toWorld(m);
       const d = rot(p.x - start.x, p.y - start.y, -o.rot);
       let nw = o.w, nh = o.h, ox = 0, oy = 0;
       if (kind.includes("e")) nw = o.w + d.x;
@@ -524,7 +791,7 @@ function startTransform(ev, hdl) {
 }
 
 function startMarquee(ev) {
-  const start = toPage(ev);
+  const start = toWorld(ev);
   const box = document.createElement("div");
   box.className = "marquee";
   $("ovl").appendChild(box);
@@ -532,11 +799,19 @@ function startMarquee(ev) {
   const base = [...sel];
   drag = {
     move: (m) => {
-      const p = toPage(m);
+      const p = toWorld(m);
       const x = Math.min(start.x, p.x), y = Math.min(start.y, p.y);
       const w = Math.abs(p.x - start.x), h = Math.abs(p.y - start.y);
       box.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-      const hit = page().els.filter((e) => !e.hidden && e.x < x + w && e.x + e.w > x && e.y < y + h && e.y + e.h > y).map((e) => e.id);
+      const hit: string[] = [];
+      doc.pages.forEach((pg, pi) => {
+        const top = pageTop(pi);
+        for (const e of pg.els) {
+          if (e.hidden) continue;
+          const ey = top + e.y;
+          if (e.x < x + w && e.x + e.w > x && ey < y + h && ey + e.h > y) hit.push(e.id);
+        }
+      });
       sel = [...new Set([...base, ...hit])];
       renderLayers();
     },
@@ -546,11 +821,11 @@ function startMarquee(ev) {
 }
 
 function startDraw(ev) {
-  const start = toPage(ev);
+  const start = toWorld(ev);
   const pts = [[start.x, start.y]];
   drag = {
     move: (m) => {
-      const p = toPage(m);
+      const p = toWorld(m);
       pts.push([p.x, p.y]);
       const b = ptsBox(pts);
       const prev = $("ovl").querySelector("[data-ink]");
@@ -565,8 +840,9 @@ function startDraw(ev) {
       $("ovl").querySelectorAll("[data-ink]").forEach((n) => n.remove());
       if (pts.length < 2) return;
       const b = ptsBox(pts);
+      doc.active = pageIndexAtWorldY(b.y + b.h / 2);
       addEl("draw", {
-        x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h),
+        x: Math.round(b.x), y: Math.round(b.y - pageTop(doc.active)), w: Math.round(b.w), h: Math.round(b.h),
         pts: pts.map((q) => [(q[0] - b.x) / (b.w || 1), (q[1] - b.y) / (b.h || 1)]),
         name: "Desenho",
       });
@@ -596,7 +872,7 @@ function capture(ev) {
 /* text editing */
 function startEditingText(id) {
   const el = byId(id);
-  const node = $("pagebox").querySelector(`.el[data-id="${id}"]`);
+  const node = $("pagestack").querySelector(`.el[data-id="${id}"]`);
   // Locked only guards position/size/deletion — text content stays editable, since template
   // authors lock fields specifically to keep them from being moved while still filling them in.
   if (!el || !node || el.type !== "text") return;
@@ -610,7 +886,7 @@ function startEditingText(id) {
 }
 function stopEditing() {
   if (!editingId) return;
-  const t = $("pagebox").querySelector(`[data-txt="${editingId}"]`);
+  const t = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
   const el = byId(editingId);
   if (t && el) {
     const v = t.innerText.replace(/ /g, " ").replace(/\n$/, "");
@@ -630,7 +906,7 @@ $("stage").addEventListener("wheel", (ev) => {
     ev.preventDefault();
     panX -= ev.shiftKey ? ev.deltaY : ev.deltaX;
     panY -= ev.shiftKey ? 0 : ev.deltaY;
-    applyWorld();
+    applyWorld(); updateActivePageFromScroll();
   }
 }, { passive: false });
 
@@ -640,13 +916,24 @@ function zoomAt(cx, cy, nz) {
   const wx = (sx - panX) / zoom, wy = (sy - panY) / zoom;
   zoom = clamp(nz, 0.05, 8);
   panX = sx - wx * zoom; panY = sy - wy * zoom;
-  applyWorld(); renderOverlay();
+  applyWorld(); updateActivePageFromScroll(); renderOverlay();
+}
+/** Fits page WIDTH to the viewport — height is unbounded now that pages scroll continuously,
+ * Canva/Figma-style — and scrolls so the active page's top sits near the top of the view. */
+/** Scrolls so page `i` is what updateActivePageFromScroll() will also call active: centred
+ * if it fits the viewport, shown from its top edge if it's taller than the viewport. */
+function scrollToPage(i: number) {
+  const s = $("stage").getBoundingClientRect();
+  const p = doc.pages[i];
+  const ph = p.h * zoom;
+  panY = ph <= s.height ? s.height / 2 - (pageTop(i) + p.h / 2) * zoom : -pageTop(i) * zoom + 40;
 }
 function zoomFit() {
-  const s = $("stage").getBoundingClientRect(), p = page();
-  zoom = clamp(Math.min((s.width - 90) / p.w, (s.height - 90) / p.h), 0.05, 8);
-  panX = (s.width - p.w * zoom) / 2;
-  panY = (s.height - p.h * zoom) / 2;
+  const s = $("stage").getBoundingClientRect();
+  const w = stackWidth() || 800;
+  zoom = clamp((s.width - 90) / w, 0.05, 8);
+  panX = (s.width - w * zoom) / 2;
+  scrollToPage(doc.active);
   applyWorld(); renderOverlay();
 }
 
@@ -655,8 +942,7 @@ function zoomFit() {
 /* ============================ commands ============================ */
 function deleteSel() {
   const locked = selEls().some((e) => e.locked);
-  const p = page();
-  p.els = p.els.filter((e) => !sel.includes(e.id) || e.locked);
+  for (const p of doc.pages) p.els = p.els.filter((e) => !sel.includes(e.id) || e.locked);
   if (!locked) sel = [];
   commit(); renderAll();
 }
@@ -688,7 +974,7 @@ function duplicateSel() {
   const els = selEls();
   if (!els.length) return;
   const copies = remapGroupIds(els.map((e) => ({ ...structuredClone(e), id: uid(), x: e.x + 24, y: e.y + 24 })));
-  page().els.push(...copies);
+  els.forEach((e, i) => doc.pages[pageIdxOf(e.id)].els.push(copies[i]));
   sel = copies.map((c) => c.id);
   commit(); renderAll();
 }
@@ -704,20 +990,27 @@ function paste() {
   commit(); renderAll();
 }
 function order(dir) {
-  const p = page();
-  const idx = sel.map((id) => p.els.findIndex((e) => e.id === id)).filter((i) => i >= 0).sort((a, b) => a - b);
-  if (!idx.length) return;
-  if (dir === "front") { const m = idx.map((i) => p.els[i]); for (const e of m) { p.els.splice(p.els.indexOf(e), 1); p.els.push(e); } }
-  if (dir === "back") { const m = idx.map((i) => p.els[i]); for (const e of [...m].reverse()) { p.els.splice(p.els.indexOf(e), 1); p.els.unshift(e); } }
-  if (dir === "up") for (const i of [...idx].reverse()) { if (i < p.els.length - 1) { [p.els[i], p.els[i + 1]] = [p.els[i + 1], p.els[i]]; } }
-  if (dir === "down") for (const i of idx) { if (i > 0) { [p.els[i], p.els[i - 1]] = [p.els[i - 1], p.els[i]]; } }
+  const byPage = new Map<number, string[]>();
+  for (const id of sel) {
+    const idx = pageIdxOf(id);
+    if (!byPage.has(idx)) byPage.set(idx, []);
+    byPage.get(idx).push(id);
+  }
+  for (const [pIdx, ids] of byPage) {
+    const p = doc.pages[pIdx];
+    const idx = ids.map((id) => p.els.findIndex((e) => e.id === id)).filter((i) => i >= 0).sort((a, b) => a - b);
+    if (!idx.length) continue;
+    if (dir === "front") { const m = idx.map((i) => p.els[i]); for (const e of m) { p.els.splice(p.els.indexOf(e), 1); p.els.push(e); } }
+    if (dir === "back") { const m = idx.map((i) => p.els[i]); for (const e of [...m].reverse()) { p.els.splice(p.els.indexOf(e), 1); p.els.unshift(e); } }
+    if (dir === "up") for (const i of [...idx].reverse()) { if (i < p.els.length - 1) { [p.els[i], p.els[i + 1]] = [p.els[i + 1], p.els[i]]; } }
+    if (dir === "down") for (const i of idx) { if (i > 0) { [p.els[i], p.els[i - 1]] = [p.els[i - 1], p.els[i]]; } }
+  }
   commit(); renderAll();
 }
 function align(how) {
   const els = selEls().filter((e) => !e.locked);
   if (!els.length) return;
-  const p = page();
-  const b = els.length > 1 ? bbox(els) : { x: 0, y: 0, w: p.w, h: p.h };
+  const b = els.length > 1 ? bbox(els) : (() => { const p = doc.pages[pageIdxOf(els[0].id)]; return { x: 0, y: 0, w: p.w, h: p.h }; })();
   for (const e of els) {
     if (how === "left") e.x = Math.round(b.x);
     if (how === "cx") e.x = Math.round(b.x + (b.w - e.w) / 2);
@@ -745,7 +1038,6 @@ function patch(props: Partial<El>, immediate?: boolean) {
 
 /* ============================ left rail + panels ============================ */
 const TABS = [
-  { id: "pages", label: "Páginas", icon: `<rect x="4" y="3" width="12" height="16" rx="1.5"/><path d="M8 21h10a2 2 0 0 0 2-2V8"/>` },
   { id: "text", label: "Texto", icon: `<path d="M4 6h16"/><path d="M12 6v14"/>` },
   { id: "elements", label: "Formas", icon: `<circle cx="9" cy="9" r="5"/><rect x="11" y="11" width="9" height="9" rx="1.5"/>` },
   { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
@@ -905,12 +1197,11 @@ function renderPanel() {
         <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${stageBg.toLowerCase() === c}" style="background:${c}"></button>`).join("")}</div>
         <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg}"></div>
       </div>
-      <div class="sec"><h4>Tamanho</h4>
+      <div class="sec"><h4>Tamanho</h4><p class="phint" style="margin-bottom:8px">Aplica a todas as páginas do documento.</p>
         <div class="grid2" style="margin-bottom:8px">${PAGE_SIZES.map((s) => `<button class="tile" style="height:46px;font-size:10px" data-size="${s.w}x${s.h}">${s.n}<span class="num" style="color:var(--faint)">${s.w}×${s.h}</span></button>`).join("")}</div>
         <div class="row"><div class="field"><label>L</label><input class="num" id="pgW" value="${P.w}"></div><div class="field"><label>A</label><input class="num" id="pgH" value="${P.h}"></div></div>
       </div>`;
   }
-  if (activeTab === "pages") renderPages();
   if (activeTab === "layers") renderLayers();
 }
 
@@ -957,7 +1248,8 @@ $("panel").addEventListener("click", (ev) => {
   const sz = ev.target.closest("[data-size]:not([data-add])");
   if (sz) {
     const [w, h] = sz.dataset.size.split("x").map(Number);
-    page().w = w; page().h = h; commit(); renderAll(); zoomFit(); return;
+    for (const p of doc.pages) { p.w = w; p.h = h; }
+    commit(); renderAll(); zoomFit(); return;
   }
   if (ev.target.closest("#pickImg")) { $("fileImg").click(); return; }
   if (ev.target.closest("#drawOn")) { setTool(tool === "draw" ? "select" : "draw"); return; }
@@ -977,7 +1269,7 @@ $("panel").addEventListener("input", (ev) => {
   if (ev.target.id === "stageBgPick") { stageBg = ev.target.value; applyStageBg(); }
   if (ev.target.id === "pgW" || ev.target.id === "pgH") {
     const w = +$("pgW").value, h = +$("pgH").value;
-    if (w > 20 && h > 20) { page().w = w; page().h = h; renderCanvas(); }
+    if (w > 20 && h > 20) { for (const p of doc.pages) { p.w = w; p.h = h; } renderCanvas(); }
   }
 });
 $("panel").addEventListener("change", (ev) => {
@@ -987,13 +1279,11 @@ $("panel").addEventListener("change", (ev) => {
 
 /* ============================ properties ============================ */
 function renderProps() {
+  renderSelToolbar();
   const box = $("props");
   const els = selEls();
   if (!els.length) {
-    box.innerHTML = `<div class="sec"><h4>Nada selecionado</h4>
-      <p class="empty">Clique em um objeto para editá-lo. Arraste na área vazia para selecionar por retângulo, ou segure <b>Shift</b> para somar à seleção.</p></div>
-      <div class="sec"><h4>Página ${doc.active + 1} de ${doc.pages.length}</h4>
-      <p class="empty num">${page().w} × ${page().h} px</p></div>`;
+    box.innerHTML = "";
     return;
   }
   const e = els[0];
@@ -1113,34 +1403,39 @@ async function buildThumbs() {
       if (thumbs.has(p.id)) continue;
       const c = await renderPageCanvas(p, Math.min(0.2, 150 / p.w));
       thumbs.set(p.id, c.toDataURL("image/jpeg", 0.72));
-      if (activeTab === "pages") renderPages();
+      if (!$("gridview").hidden) renderGridView();
     }
   } catch (e) { /* a thumbnail is a nicety, never a blocker */ }
   thumbBusy = false;
 }
 const dirtyThumb = (id?: string) => { thumbs.delete(id || page().id); buildThumbs(); };
 
-function renderPages() {
-  if (activeTab !== "pages") return;
-  $("panel").innerHTML = `<h4 class="ptitle">Páginas</h4><p class="phint">Cada página exporta como imagem própria; o PDF leva todas.</p>
-    <div class="pages" id="pages">` + doc.pages.map((p, i) => `
-      <div class="pagethumb" data-page="${i}" aria-selected="${i === doc.active}">
-        <div class="pt" style="background:${p.bg}">${thumbs.has(p.id)
-          ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
-          : ""}</div>
-        <span class="plabel">Página ${i + 1}</span>
-        <button class="pdup" data-duppage="${i}" title="Duplicar página"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"><rect x="3" y="3" width="13" height="13" rx="2"/><rect x="8" y="8" width="13" height="13" rx="2"/></svg></button>
-        ${doc.pages.length > 1 ? `<button class="pdel" data-delpage="${i}" title="Excluir página"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>` : ""}
-      </div>`).join("") +
-    `<button class="addpage" id="addPage" title="Adicionar página"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>`;
-}
-$("panel").addEventListener("click", (ev) => {
-  if (ev.target.closest("#addPage")) {
-    const p = blankPage(); p.w = page().w; p.h = page().h;
+const PAGE_MINI = {
+  up: `<path d="M12 19V6"/><path d="M6 11l6-5 6 5"/>`,
+  down: `<path d="M12 5v13"/><path d="M6 13l6 5 6-5"/>`,
+  hideOn: `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.6"/>`,
+  hideOff: `<path d="M3 3l18 18"/><path d="M10.6 5.2A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.4 4.2M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7c1.3 0 2.5-.3 3.6-.7"/>`,
+  dup: `<rect x="3" y="3" width="13" height="13" rx="2"/><rect x="8" y="8" width="13" height="13" rx="2"/>`,
+  del: `<path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/>`,
+};
+const pageMini = (action: string, icon: string, i: number, title: string, disabled = false) => `
+  <button class="pmini" data-${action}="${i}" title="${title}" ${disabled ? "disabled" : ""}>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+  </button>`;
+
+// Page management (move/hide/duplicate/delete/add) lives directly on the main canvas — each
+// page's own floating header, rendered in renderCanvas() — not in a separate side panel.
+$("pagestack").addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  if (t.closest("#addPageCanvas")) {
+    const last = doc.pages[doc.pages.length - 1];
+    const p = blankPage(); p.w = last.w; p.h = last.h;
     doc.pages.push(p); doc.active = doc.pages.length - 1; sel = [];
-    commit(); renderAll(); zoomFit(); return;
+    commit(); renderAll();
+    scrollToPage(doc.active); applyWorld();
+    return;
   }
-  const dup = ev.target.closest("[data-duppage]");
+  const dup = t.closest<HTMLElement>("[data-duppage]");
   if (dup) {
     const i = +dup.dataset.duppage;
     const copy = structuredClone(doc.pages[i]);
@@ -1148,25 +1443,92 @@ $("panel").addEventListener("click", (ev) => {
     copy.els.forEach((e) => { e.id = uid(); });
     doc.pages.splice(i + 1, 0, copy);
     doc.active = i + 1; sel = [];
-    commit(); renderAll(); buildThumbs(); zoomFit();
+    commit(); renderAll(); buildThumbs();
     return;
   }
-  const del = ev.target.closest("[data-delpage]");
+  const del = t.closest<HTMLElement>("[data-delpage]");
   if (del) {
     doc.pages.splice(+del.dataset.delpage, 1);
     doc.active = clamp(doc.active, 0, doc.pages.length - 1); sel = [];
     commit(); renderAll(); return;
   }
-  const th = ev.target.closest("[data-page]");
-  if (th) {
-    doc.active = +th.dataset.page; sel = []; editingId = null;
-    // Navigation is a view change, not an edit. Without refreshing the baseline
-    // the next undo rewinds the page switch too, throwing you onto another page
-    // and making the edit look like it was never undone.
-    baseline = snap();
-    renderAll(); zoomFit();
+  const up = t.closest<HTMLElement>("[data-moveuppage]");
+  if (up) {
+    const i = +up.dataset.moveuppage;
+    if (i > 0) {
+      [doc.pages[i - 1], doc.pages[i]] = [doc.pages[i], doc.pages[i - 1]];
+      if (doc.active === i) doc.active = i - 1; else if (doc.active === i - 1) doc.active = i;
+      commit(); renderCanvas();
+    }
+    return;
+  }
+  const down = t.closest<HTMLElement>("[data-movedownpage]");
+  if (down) {
+    const i = +down.dataset.movedownpage;
+    if (i < doc.pages.length - 1) {
+      [doc.pages[i], doc.pages[i + 1]] = [doc.pages[i + 1], doc.pages[i]];
+      if (doc.active === i) doc.active = i + 1; else if (doc.active === i + 1) doc.active = i;
+      commit(); renderCanvas();
+    }
+    return;
+  }
+  const hide = t.closest<HTMLElement>("[data-hidepage]");
+  if (hide) {
+    const i = +hide.dataset.hidepage;
+    doc.pages[i].hidden = !doc.pages[i].hidden;
+    commit(); renderCanvas();
+    return;
   }
 });
+
+/* ---------- grid view ---------- */
+function renderGridView() {
+  $("gridview").innerHTML = doc.pages.map((p, i) => `
+    <div class="gridcell" data-gridpage="${i}" aria-selected="${i === doc.active}">
+      <div class="pt" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+        ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
+        : ""}</div>
+      <span class="plabel">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
+    </div>`).join("");
+}
+$("gridViewBtn").addEventListener("click", () => { renderGridView(); $("gridview").hidden = false; });
+$("gridview").addEventListener("click", (ev) => {
+  const cell = (ev.target as HTMLElement).closest<HTMLElement>("[data-gridpage]");
+  if (!cell) { $("gridview").hidden = true; return; }
+  doc.active = +cell.dataset.gridpage; sel = []; editingId = null;
+  baseline = snap();
+  $("gridview").hidden = true;
+  renderAll(); zoomFit();
+});
+$("pageCountBtn").addEventListener("click", () => { renderGridView(); $("gridview").hidden = false; });
+
+/* ---------- present mode ---------- */
+let presentIdx = 0;
+function presentablePages() {
+  const list = doc.pages.filter((p) => !p.hidden);
+  return list.length ? list : doc.pages;
+}
+async function renderPresentFrame() {
+  const pages = presentablePages();
+  presentIdx = clamp(presentIdx, 0, pages.length - 1);
+  const c = await renderPageCanvas(pages[presentIdx], Math.min(2, 1600 / pages[presentIdx].w));
+  ($("presentImg") as HTMLImageElement).src = c.toDataURL("image/png");
+}
+async function enterPresent() {
+  presentIdx = Math.max(0, presentablePages().indexOf(page()));
+  $("present").hidden = false;
+  await renderPresentFrame();
+  document.documentElement.requestFullscreen?.().catch(() => {});
+}
+function exitPresent() {
+  $("present").hidden = true;
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+}
+$("presentBtn").addEventListener("click", enterPresent);
+$("presentExit").addEventListener("click", exitPresent);
+$("presentPrev").addEventListener("click", () => { presentIdx--; renderPresentFrame(); });
+$("presentNext").addEventListener("click", () => { presentIdx++; renderPresentFrame(); });
+$("present").addEventListener("click", (ev) => { if (ev.target === $("present")) exitPresent(); });
 
 
 
@@ -1197,6 +1559,9 @@ async function loadImg(src: string): Promise<HTMLImageElement> {
   if (imgCache.has(src)) return imgCache.get(src);
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const i = new Image();
+    // Without this, a remote image (anything not a data: URI) taints the canvas it's drawn
+    // into — export/present/thumbnails then throw SecurityError on toDataURL/toBlob.
+    if (!src.startsWith("data:")) i.crossOrigin = "anonymous";
     i.onload = () => res(i); i.onerror = rej; i.src = src;
   });
   imgCache.set(src, img);
@@ -1349,7 +1714,7 @@ async function doExport() {
     }
     if (expFmt === "pdf") {
       const pgs = [];
-      for (const p of doc.pages) {
+      for (const p of doc.pages.filter((p) => !p.hidden)) {
         const c = await renderPageCanvas(p, expScale);
         const b64 = c.toDataURL("image/jpeg", 0.92).split(",")[1];
         pgs.push({ bytes: b64ToBytes(b64), pw: c.width, ph: c.height, w: p.w, h: p.h });
@@ -1373,14 +1738,81 @@ async function doExport() {
   }
 }
 
+/* file menu */
+function closeFileMenu() {
+  $("fileMenu").hidden = true;
+  $("fileMenuBtn").setAttribute("aria-expanded", "false");
+}
+function renderFileMenu() {
+  const canManage = !!doc.seedId;
+  const item = (action: string, label: string, danger = false) => `
+    <button data-fmaction="${action}" class="${danger ? "danger" : ""}">${label}</button>`;
+  $("fileMenu").innerHTML = [
+    item("rename", "Renomear"),
+    canManage ? item("duplicate", "Duplicar") : "",
+    canManage ? item("copy-id", "Copiar ID") : "",
+    item("open-json", "Abrir arquivo local…"),
+    canManage ? `<div class="dropsep"></div>${item("delete", "Excluir", true)}` : "",
+  ].join("");
+}
+$("fileMenuBtn").addEventListener("click", () => {
+  const open = !$("fileMenu").hidden;
+  if (open) { closeFileMenu(); return; }
+  renderFileMenu();
+  $("fileMenu").hidden = false;
+  $("fileMenuBtn").setAttribute("aria-expanded", "true");
+});
+$("fileMenu").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-fmaction]");
+  if (!b) return;
+  const action = b.dataset.fmaction;
+  closeFileMenu();
+  if (action === "rename") { $("docname").focus(); $("docname").select(); return; }
+  if (action === "open-json") { $("fileJson").click(); return; }
+  if (action === "copy-id") {
+    navigator.clipboard?.writeText(doc.seedId || "").then(() => toast("ID copiado")).catch(() => {});
+    return;
+  }
+  if (action === "duplicate") {
+    try {
+      const id = await createTemplateOnServer(`${doc.name} (cópia)`, doc);
+      toast("Template duplicado");
+      openTemplateById(id);
+    } catch { toast("Não foi possível duplicar."); }
+    return;
+  }
+  if (action === "delete") {
+    $("confirmMsg").textContent = `Excluir o template "${doc.name}"? Isso não pode ser desfeito.`;
+    $("confirmScrim").hidden = false;
+    return;
+  }
+});
+$("resizeBtn").addEventListener("click", () => { activeTab = "page"; renderRail(); renderPanel(); });
+window.addEventListener("pointerdown", (ev) => {
+  const t = ev.target as HTMLElement | null;
+  if (t && !t.closest("#fileMenu") && !t.closest("#fileMenuBtn")) closeFileMenu();
+}, true);
+
+$("confirmCancel").addEventListener("click", () => { $("confirmScrim").hidden = true; });
+$("confirmScrim").addEventListener("click", (e) => { if (e.target === $("confirmScrim")) $("confirmScrim").hidden = true; });
+$("confirmGo").addEventListener("click", async () => {
+  $("confirmScrim").hidden = true;
+  const id = doc.seedId;
+  if (!id) return;
+  try {
+    await deleteTemplateOnServer(id);
+    toast("Template excluído");
+    location.hash = "/console/templates";
+  } catch { toast("Não foi possível excluir."); }
+});
+
 /* import / upload */
-$("importBtn").addEventListener("click", () => $("fileJson").click());
 $("fileJson").addEventListener("change", async (ev) => {
   const f = ev.target.files[0]; if (!f) return;
   try {
     const o = JSON.parse(await f.text());
     if (!o.pages?.length) throw new Error("no pages");
-    doc = o; doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1); sel = [];
+    doc = normalizeDoc(o); doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1); sel = [];
     $("docname").value = doc.name || "Untitled design";
     commit(); renderAll(); zoomFit(); toast("Design aberto");
   } catch (e) { toast("Esse arquivo não é um design criado por este editor."); }
@@ -1415,6 +1847,8 @@ $("zoomout").onclick = () => { const r = $("stage").getBoundingClientRect(); zoo
 $("zoomfit").onclick = zoomFit;
 $("docname").addEventListener("input", (e) => { doc.name = e.target.value; persist(); });
 $("docname").addEventListener("change", commit);
+$("undoBtn").addEventListener("click", undo);
+$("redoBtn").addEventListener("click", redo);
 
 const typing = () => {
   const a = document.activeElement;
@@ -1422,6 +1856,8 @@ const typing = () => {
   return !!el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable);
 };
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("present").hidden) { exitPresent(); return; }
+  if (e.key === "Escape" && !$("gridview").hidden) { $("gridview").hidden = true; return; }
   if (e.code === "Space" && !typing()) { spaceDown = true; $("stage").style.cursor = "grab"; }
   if (typing()) { if (e.key === "Escape") (document.activeElement as HTMLElement).blur(); return; }
   const mod = e.metaKey || e.ctrlKey;
@@ -1477,7 +1913,7 @@ function toast(msg) {
 
 /* ============================ boot ============================ */
 function renderAll() {
-  renderCanvas(); renderPages(); renderProps(); renderLayers();
+  renderCanvas(); renderProps(); renderLayers();
 }
 
 // The app now has three routes (login/console/editor) sharing one page, and
@@ -1519,8 +1955,22 @@ export function openTweetTemplate() {
 }
 
 /** Opens any template document (by value) on the canvas — used for the seed template, an imported JSON file, or one fetched from the server by id. */
+/** Fills in defaults for fields an older/handwritten/imported document might be missing —
+ * otherwise a bare `NaN` (e.g. a missing `rot`) silently poisons any math done on it later. */
+function normalizeDoc(d: Doc): Doc {
+  for (const p of d.pages) {
+    for (const e of p.els) {
+      if (!Number.isFinite(e.rot)) e.rot = 0;
+      if (!Number.isFinite(e.opacity)) e.opacity = 1;
+      if (!Number.isFinite(e.w)) e.w = 20;
+      if (!Number.isFinite(e.h)) e.h = 20;
+    }
+  }
+  return d;
+}
+
 export function openTemplateDocument(templateDoc: Doc) {
-  doc = templateDoc;
+  doc = normalizeDoc(templateDoc);
   doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
   pendingDocument = true;
   sel = [];
@@ -1530,6 +1980,7 @@ export function openTemplateDocument(templateDoc: Doc) {
   if (editorMounted) {
     $("docname").value = doc.name;
     renderAll();
+    syncHistory();
     buildThumbs();
     requestAnimationFrame(zoomFit);
   }
@@ -1562,7 +2013,7 @@ export function mountEditor() {
   applyStageBg();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
-  renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs();
+  renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs(); syncHistory();
   requestAnimationFrame(zoomFit);
   document.fonts.ready.then(() => renderCanvas());
   window.addEventListener("resize", () => { if (editorMounted) applyWorld(); });

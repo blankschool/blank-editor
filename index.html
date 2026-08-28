@@ -12,48 +12,67 @@
 <div id="view-console" style="display:none; height:100%"></div>
 <div id="view-editor" style="display:none; height:100%">
 <div class="app">
+  <header class="topbar" id="topbar">
+    <button class="tbtn ghost iconbtn" id="backToConsole" title="Voltar para o console" aria-label="Voltar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <div class="menuwrap">
+      <button class="tbtn ghost" id="fileMenuBtn" aria-haspopup="menu" aria-expanded="false">Arquivo</button>
+      <div class="dropmenu" id="fileMenu" hidden></div>
+    </div>
+    <button class="tbtn ghost" id="resizeBtn">Redimensionar</button>
+    <input class="docname" id="docname" value="Design sem título" aria-label="Nome do design">
+    <div class="spacer"></div>
+    <button class="tbtn ghost iconbtn" id="undoBtn" title="Desfazer (⌘Z)" disabled>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8H16.5C18.9853 8 21 10.0147 21 12.5C21 14.9853 18.9853 17 16.5 17H11"/><path d="M10 12L7 8L10 4"/></svg>
+    </button>
+    <button class="tbtn ghost iconbtn" id="redoBtn" title="Refazer (⌘⇧Z)" disabled>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8H7.5C5.01472 8 3 10.0147 3 12.5C3 14.9853 5.01472 17 7.5 17H13"/><path d="M14 12L17 8L14 4"/></svg>
+    </button>
+    <button class="tbtn primary" id="exportBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></svg>
+      Exportar
+    </button>
+  </header>
+
   <div class="body">
     <nav class="rail" id="rail"></nav>
     <aside class="panel" id="panel" hidden></aside>
 
     <main class="stage" id="stage">
       <div class="world" id="world">
-        <div class="pagebox" id="pagebox"></div>
+        <div class="pagestack" id="pagestack"></div>
         <div class="ovl" id="ovl"></div>
       </div>
+      <div class="seltoolbar" id="seltoolbar" hidden></div>
+      <div class="proppop" id="proppop" hidden><div class="props" id="props"></div></div>
       <div class="toolbelt" id="toolbelt" role="toolbar" aria-label="Ferramentas"></div>
       <div class="flyout" id="flyout" hidden></div>
-    </main>
-
-    <aside class="propspanel">
-      <div class="propshead">
-        <div class="headrow" style="margin-bottom: 6px">
-          <button class="tbtn ghost iconbtn" id="backToConsole" title="Voltar para o console" aria-label="Voltar">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-          </button>
-          <input class="docname" id="docname" value="Design sem título" aria-label="Nome do design" style="margin-bottom: 0">
+      <div class="bottombar" id="bottombar">
+        <div class="zoomctl">
+          <button id="zoomout" title="Reduzir zoom (⌘−)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+          <span class="zoomval num" id="zoomval">100%</span>
+          <button id="zoomin" title="Ampliar zoom (⌘+)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button id="zoomfit" title="Ajustar à tela (⌘0)" class="fitbtn">Ajustar</button>
         </div>
-        <div class="headrow">
-          <div class="zoomctl">
-            <button id="zoomout" title="Reduzir zoom (⌘−)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
-            <span class="zoomval num" id="zoomval">100%</span>
-            <button id="zoomin" title="Ampliar zoom (⌘+)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-            <button id="zoomfit" title="Ajustar à tela (⌘0)" class="fitbtn">Ajustar</button>
-            <div class="spacer"></div>
-          </div>
-        </div>
-        <div class="headrow" style="margin-top: 6px">
-          <button class="tbtn ghost iconbtn" id="importBtn" title="Abrir um arquivo .json" aria-label="Abrir">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17z"/></svg>
-          </button>
-          <button class="tbtn primary" id="exportBtn" style="flex: 1">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></svg>
-            Exportar
-          </button>
-        </div>
+        <div class="bbsep"></div>
+        <button class="bbtn" id="pageCountBtn" title="Páginas"><span id="pagecount" class="num">1 / 1</span></button>
+        <div class="bbsep"></div>
+        <button class="bbtn iconbtn" id="gridViewBtn" title="Ver todas as páginas em grade">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.2"/></svg>
+        </button>
+        <button class="bbtn iconbtn" id="presentBtn" title="Apresentar em tela cheia">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H4v4"/><path d="M16 3h4v4"/><path d="M8 21H4v-4"/><path d="M16 21h4v-4"/></svg>
+        </button>
       </div>
-      <div class="props" id="props"></div>
-    </aside>
+      <div class="gridview" id="gridview" hidden></div>
+      <div class="present" id="present" hidden>
+        <img id="presentImg" alt="">
+        <button class="presentbtn" id="presentPrev" title="Anterior"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="presentbtn" id="presentNext" title="Próxima"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="presentexit" id="presentExit" title="Sair (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </main>
   </div>
 </div>
 
@@ -72,8 +91,20 @@
   </div>
 </div>
 
+<div class="scrim" id="confirmScrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle">Excluir template</h3>
+    <p class="phint" id="confirmMsg" style="margin-bottom:16px"></p>
+    <div class="row">
+      <button class="tbtn ghost" id="confirmCancel" style="flex:1">Cancelar</button>
+      <button class="tbtn primary" id="confirmGo" style="flex:1;background:var(--danger)">Excluir</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
+<input type="file" id="fileImgReplace" accept="image/*" hidden>
 <input type="file" id="fileJson" accept="application/json,.json" hidden>
 </div>
 <script type="module" src="/src/main.ts"></script>
