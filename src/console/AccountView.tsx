@@ -1,9 +1,9 @@
 import { ChevronLeft, ChevronRight, FileDown, KeyRound, LogOut, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { navigate } from "../router";
-import { clearSession } from "../session";
+import { clearSession, initials, useSession } from "../session";
 import { goToView, useConsole, type View } from "./store";
-import { WORKSPACE, workspaceInitials } from "./workspace";
+import { WORKSPACE } from "./workspace";
 
 const DEV_ENTRIES: ReadonlyArray<{
   view: View;
@@ -59,6 +59,7 @@ export function DevViewHeader({ title, children }: { title: string; children?: R
 
 export function AccountView() {
   const s = useConsole();
+  const session = useSession();
   const liveKeys = s.keys.filter((k) => !k.revoked).length;
 
   return (
@@ -67,13 +68,11 @@ export function AccountView() {
 
       <div className="flex items-center gap-4 rounded-lg border border-line bg-surface p-4.5">
         <div className="flex h-11 w-11 flex-none items-center justify-center rounded-full border border-line-strong bg-surface-2 text-[13px] font-semibold text-muted">
-          {workspaceInitials()}
+          {session ? initials(session.name) : "?"}
         </div>
         <div className="flex flex-1 flex-col gap-1">
-          <span className="font-display text-sm font-semibold">{WORKSPACE.name}</span>
-          <span className="text-xs text-faint">
-            {WORKSPACE.brand} · plano atual
-          </span>
+          <span className="font-display text-sm font-semibold">{session?.name ?? "…"}</span>
+          <span className="text-xs text-faint">{session?.email ?? WORKSPACE.brand}</span>
         </div>
         <span className="flex-none rounded-full bg-accent-soft px-3 py-1.5 text-[11px] font-medium text-accent">
           {WORKSPACE.plan}
