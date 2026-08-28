@@ -410,6 +410,22 @@ export function setLayerValue(id: number, value: string) {
   notify();
 }
 
+/** Sobe uma foto pro bucket privado (fase 7) e usa a referência devolvida como valor da layer —
+ *  alternativa a colar uma URL pública, pra quem quer subir a própria imagem em vez de linkar
+ *  uma que já está em algum lugar. */
+export async function uploadLayerPhoto(id: number, file: File) {
+  const layer = state.layers.find((l) => l.id === id);
+  if (!layer) return;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch("/api/v1/uploads", { method: "POST", body: form });
+    if (!res.ok) return;
+    const { src } = await res.json();
+    setLayerValue(id, src);
+  } catch { /* upload falhou — o campo continua com o que tinha antes */ }
+}
+
 /* ---------------------------- templates ---------------------------- */
 
 /**
@@ -787,6 +803,16 @@ export async function duplicateTemplate(id: string, name: string) {
   if (!res.ok) return;
   state.templatesLoaded = false;
   await loadTemplates();
+}
+
+/** Abre o link público do último render salvo (fase 7 do plano de migração) numa aba nova —
+ *  o link em si é determinístico (storage.ts), então só existe de verdade depois de um
+ *  `save:true`; sem isso o servidor simplesmente não manda `downloadUrl` na resposta. */
+export async function downloadTemplate(id: string) {
+  const res = await fetch(`/api/v1/templates/${id}`);
+  if (!res.ok) return;
+  const { downloadUrl } = await res.json();
+  if (downloadUrl) window.open(downloadUrl, "_blank");
 }
 
 export function askDeleteTemplate(id: string, name: string) {

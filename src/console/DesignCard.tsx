@@ -11,6 +11,7 @@ import { relativeTime } from "./relativeTime";
 import {
   askDeleteTemplate,
   copyText,
+  downloadTemplate,
   duplicateTemplate,
   goToView,
   openTemplateById,
@@ -164,6 +165,7 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
         >
           Testar na API
         </ContextMenuItem>
+        <ContextMenuItem onSelect={() => downloadTemplate(id)}>Baixar</ContextMenuItem>
         {/* onSelect com preventDefault: o menu tem que ficar aberto para o "ID copiado" ser visto. */}
         <ContextMenuItem
           onSelect={(event) => {
