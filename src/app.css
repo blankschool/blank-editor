@@ -138,3 +138,12 @@
 :where([data-tw-root], [data-tw-portal]) :is(input, textarea)::placeholder {
   color: var(--faint);
 }
+
+/* Margem zero em bloco de texto. Também é preflight, e a falta dela não aparecia
+ * enquanto tudo era <span> e <div>: assim que o login virou um card com <h1> e
+ * <p>, as margens padrão do navegador (0.67em no h1, 1em no p) somaram-se aos
+ * `gap` do flex e o card ficou com o dobro do respiro pretendido. Vale para
+ * todos os títulos das views, não só o login. */
+:where([data-tw-root], [data-tw-portal]) :is(h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre) {
+  margin: 0;
+}
