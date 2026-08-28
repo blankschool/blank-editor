@@ -88,3 +88,7 @@ export async function refreshSession(client: SupabaseClient, refreshToken: strin
 export function getRefreshCookie(request: FastifyRequest): string | undefined {
   return request.cookies[REFRESH_COOKIE];
 }
+
+export function getAccessCookie(request: FastifyRequest): string | undefined {
+  return request.cookies[ACCESS_COOKIE];
+}

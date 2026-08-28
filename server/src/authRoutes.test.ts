@@ -110,6 +110,21 @@ test("signup creates a session cookie, a default API key, and scopes templates t
   assert.deepEqual(JSON.parse(me.body), { ownerId: OWNER_ID, email: FAKE_USER.email, name: "Studio do Miguel" });
 });
 
+test("auth/token hands back the raw JWT from the session cookie, for the Gerar screen's Edge Function call", async () => {
+  const app = buildApp(makeDeps(), makeAuth());
+  const login = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { email: "miguel@example.com", password: "senha-certa" },
+  });
+  const withCookie = await app.inject({ method: "GET", url: "/api/v1/auth/token", headers: { cookie: cookieHeader(login) } });
+  assert.equal(withCookie.statusCode, 200);
+  assert.equal(JSON.parse(withCookie.body).accessToken, FAKE_SESSION.access_token);
+
+  const withoutCookie = await app.inject({ method: "GET", url: "/api/v1/auth/token" });
+  assert.equal(withoutCookie.statusCode, 401);
+});
+
 test("signup 400s when a required field is missing", async () => {
   const app = buildApp(makeDeps(), makeAuth());
   const res = await app.inject({ method: "POST", url: "/api/v1/auth/signup", payload: { name: "X", email: "x@example.com" } });
