@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, TemplateRow, Workspace } from "./db.ts";
+import type { ApiKeySummary, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -48,7 +48,6 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
     [SEED_TEMPLATE.id, SEED_TEMPLATE],
   ]);
   const apiKeys = new Map<string, StoredApiKey>();
-  const workspaces = new Map<string, Workspace>(); // key: lowercased e-mail
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -133,14 +132,6 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       const existing = apiKeys.get(id);
       if (!existing || existing.ownerId !== ownerId || !existing.revoked) return false;
       return apiKeys.delete(id);
-    },
-
-    findWorkspaceByEmail: async (email) => workspaces.get(email.toLowerCase()) ?? null,
-
-    createWorkspace: async ({ name, email }) => {
-      const workspace: Workspace = { id: randomUUID(), name, email: email.toLowerCase() };
-      workspaces.set(workspace.email, workspace);
-      return workspace;
     },
 
     renderTemplatePng,

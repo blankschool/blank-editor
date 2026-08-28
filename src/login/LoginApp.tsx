@@ -36,13 +36,9 @@ import "./login-grid.css";
  * criação de conta pede a mais (nome, força da senha) só aparece nesse modo,
  * dentro do mesmo card, em vez de virar uma segunda tela.
  *
- * Criar conta grava um workspace de verdade no Postgres (POST /api/v1/workspace)
- * e entrar busca esse mesmo workspace pelo e-mail (GET .../by-email/:email) —
- * ver session.ts para o porquê de isso ainda não ser uma sessão de servidor.
- * O campo "senha" continua sem verificação nenhuma: existe validação de
- * tamanho, mas nada aqui compara com um hash guardado. Isso é deliberado e
- * documentado no schema (server/schema.sql) — construir isso é trabalho maior
- * e separado, não algo para empacotar de graça junto do resto.
+ * Criar conta e entrar falam com o Supabase Auth de verdade (POST /api/v1/auth/signup
+ * e /api/v1/auth/login) — sessão real, num cookie httpOnly que o servidor emite; ver
+ * session.ts. Senha checada de verdade pelo próprio Supabase Auth.
  */
 
 type Mode = "login" | "signup";

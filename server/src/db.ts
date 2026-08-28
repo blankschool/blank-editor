@@ -37,12 +37,6 @@ export interface ApiKeySummary {
   revoked: boolean;
 }
 
-export interface Workspace {
-  id: string;
-  name: string;
-  email: string;
-}
-
 /** Every read/write below is scoped by `ownerId` — the isolation between workspaces lives here,
  *  not only in Postgres RLS (RLS is enabled on these tables too, as a second layer, but this
  *  explicit `where owner_id = ...` is what the app actually relies on). */
@@ -138,27 +132,4 @@ export async function deleteApiKey(sql: Sql, ownerId: string, id: string): Promi
     delete from api_keys where id = ${id} and owner_id = ${ownerId} and revoked_at is not null returning id
   `;
   return rows.length > 0;
-}
-
-/**
- * Legado: a identidade "de mentirinha" antes do Supabase Auth (fase 3). Fica até o corte do
- * frontend (fase 5) estar estável em produção — ver server/schema.sql e o plano de migração.
- */
-export async function findWorkspaceByEmail(sql: Sql, email: string): Promise<Workspace | null> {
-  const rows = await sql<Workspace[]>`
-    select id, name, email from workspaces where email = ${email.toLowerCase()}
-  `;
-  return rows[0] ?? null;
-}
-
-export async function createWorkspace(
-  sql: Sql,
-  input: { id: string; name: string; email: string },
-): Promise<Workspace> {
-  const rows = await sql<Workspace[]>`
-    insert into workspaces (id, name, email)
-    values (${input.id}, ${input.name}, ${input.email.toLowerCase()})
-    returning id, name, email
-  `;
-  return rows[0];
 }
