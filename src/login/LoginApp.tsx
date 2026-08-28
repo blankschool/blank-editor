@@ -1,23 +1,48 @@
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { navigate } from "../router";
+import { setSession, useSession, type Session } from "../session";
 import { WORKSPACE } from "../console/workspace";
+import { set } from "../console/store";
+import "./login-grid.css";
 
 /**
- * Card central, no formato de tela de entrada de SaaS: marca, título, uma linha
- * de apoio, campos rotulados, um botão de largura cheia e um link embaixo. A
- * versão anterior espalhava tudo numa coluna solta de 360px sem moldura, com o
- * seletor Entrar/Criar conta competindo com o título logo acima.
+ * Um card central sobre um fundo de tela inteira: grid animado sobre --accent,
+ * com a frase de produto acima do card. Pedido como o bloco pago
+ * `@reui/auth-1` do reui.io — não instalei esse pacote. Três motivos, nenhum
+ * contornável escrevendo em volta:
+ *
+ *  1. É um bloco Pro: o próprio workflow que veio junto diz para PARAR e pedir
+ *     a licença se ela não estiver disponível. Não tenho REUI_LICENSE_KEY, e
+ *     inventar uma chave não é uma opção.
+ *  2. O workflow pressupõe `pnpm` e um projeto já inicializado pelo shadcn CLI
+ *     (components.json). Este repo usa npm e não tem components.json de
+ *     propósito — os componentes em src/components/ui são portados à mão,
+ *     coordenados com os tokens deste app.css (ver o comentário longo lá sobre
+ *     por que o Tailwind entra sem @layer). Rodar `shadcn init` por cima
+ *     arrisca reescrever exatamente essa configuração.
+ *  3. O registro reui.io é pensado para Next.js (App Router, "use client").
+ *     Este projeto é Vite de propósito — foi a decisão central desta sessão.
+ *
+ * O que está aqui é a MESMA peça visual — grid mascarado, frase de produto,
+ * card compacto — reconstruída com o que o projeto já tem. Sem Google, sem
+ * Apple, sem logo e sem a foto do Unsplash, como pedido. Era split-screen
+ * numa primeira versão; virou fundo único porque a tela ficava melhor com o
+ * card centralizado sobre a peça, não ao lado dela.
  *
  * O modo entrar é intencionalmente curto — e-mail, senha, Entrar. O que a
- * criação de conta pede a mais (nome, força da senha, termos) só aparece nesse
- * modo, dentro do mesmo card, em vez de virar uma segunda tela.
+ * criação de conta pede a mais (nome, força da senha) só aparece nesse modo,
+ * dentro do mesmo card, em vez de virar uma segunda tela.
  *
- * Continua sem autenticação de verdade por trás: valida os campos e navega para
- * o console depois de 700ms. Não é a rota de boot justamente por isso.
+ * Criar conta grava um workspace de verdade no Postgres (POST /api/v1/workspace)
+ * e entrar busca esse mesmo workspace pelo e-mail (GET .../by-email/:email) —
+ * ver session.ts para o porquê de isso ainda não ser uma sessão de servidor.
+ * O campo "senha" continua sem verificação nenhuma: existe validação de
+ * tamanho, mas nada aqui compara com um hash guardado. Isso é deliberado e
+ * documentado no schema (server/schema.sql) — construir isso é trabalho maior
+ * e separado, não algo para empacotar de graça junto do resto.
  */
 
 type Mode = "login" | "signup";
@@ -38,28 +63,6 @@ function barColor(index: number, score: number): string {
   if (score <= 1) return "var(--danger)";
   if (score === 2) return "var(--warning)";
   return "var(--success)";
-}
-
-function BrandMark() {
-  return (
-    <div
-      aria-hidden
-      className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent font-display text-[22px] font-bold leading-none text-on-accent"
-    >
-      B
-    </div>
-  );
-}
-
-function GoogleMark() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 48 48" className="shrink-0" aria-hidden>
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z" />
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-      <path fill="#4CAF50" d="M24 44c5.4 0 10.4-2.1 14.1-5.5l-6.5-5.5C29.5 34.8 26.9 36 24 36c-5.3 0-9.7-3.1-11.3-7.9l-6.5 5C9.6 39.7 16.3 44 24 44z" />
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.5 5.5C40.9 36.4 44 30.9 44 24c0-1.2-.1-2.4-.4-3.5z" />
-    </svg>
-  );
 }
 
 function Field({
@@ -87,12 +90,30 @@ export function LoginApp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
-  const [terms, setTerms] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const submitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  useEffect(() => () => clearTimeout(submitTimer.current), []);
+  // Esta tela nunca desmonta (o router só alterna display), então "Sair" por si
+  // só não limpa nada aqui — sem isto, quem criava conta e depois saía via
+  // Sair via a tela de login voltar ainda em modo "Criar conta", com os campos
+  // antigos preenchidos. O gatilho certo é a própria transição de sessão: só
+  // reseta quando ela vai de presente para nula, que é exatamente o momento
+  // de um logout — nunca no primeiro carregamento (sessão ausente desde o
+  // início não é uma saída) nem enquanto alguém troca de aba manualmente entre
+  // Entrar/Criar conta.
+  const session = useSession();
+  const hadSession = useRef(session !== null);
+  useEffect(() => {
+    if (hadSession.current && !session) {
+      setMode("login");
+      setName("");
+      setEmail("");
+      setPassword("");
+      setReveal(false);
+      setError("");
+    }
+    hadSession.current = session !== null;
+  }, [session]);
 
   const login = mode === "login";
   const score = strengthScore(password);
@@ -105,153 +126,174 @@ export function LoginApp() {
     };
   }
 
-  function submit() {
+  async function submit() {
     if (!email.trim() || !password) return setError("Preencha e-mail e senha para continuar.");
     if (!login && !name.trim()) return setError("Informe seu nome.");
     if (!login && password.length < 8) return setError("A senha precisa de pelo menos 8 caracteres.");
-    if (!login && !terms) return setError("Aceite os termos para criar a conta.");
     setError("");
     setLoading(true);
-    clearTimeout(submitTimer.current);
-    submitTimer.current = setTimeout(() => navigate("console"), 700);
+    try {
+      const session = login ? await signIn(email.trim(), password) : await signUp(name.trim(), email.trim(), password);
+      setSession(session);
+      // O router exige sessão para /console e /editor — sem chamar setSession
+      // antes, o próprio navigate seria desfeito pelo gate no primeiro apply().
+      navigate("console");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não deu para falar com o servidor agora.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // bg-bg (branco puro, #FFFFFF), não bg-ground (#E3E8ED) — o ground é o chumbo
-  // do stage do editor, feito para dar contraste a artboards que também são
-  // brancos. A tela de login não tem artboard nenhum, então herdar aquele cinza
-  // só deixava tudo com aparência empoeirada em vez de limpa.
+  // `credentials: "include"` em ambas: é o que faz o navegador guardar o Set-Cookie
+  // httpOnly que o servidor devolve — sem isso a sessão não persiste entre navegações.
+  async function signIn(email: string, password: string): Promise<Session> {
+    const res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.status === 401) throw new Error("E-mail ou senha incorretos.");
+    if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
+    return res.json();
+  }
+
+  async function signUp(name: string, email: string, password: string): Promise<Session> {
+    const res = await fetch("/api/v1/auth/signup", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, email, password }),
+    });
+    if (res.status === 400) throw new Error((await res.json().catch(() => null))?.error ?? "Já existe uma conta com esse e-mail — entre em vez de criar.");
+    if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
+    const body = await res.json();
+    // A chave "Chave padrão" só é mostrada em texto puro agora, no momento da criação — não tem
+    // como recuperar depois. Guardar aqui faz ela aparecer já revelada na primeira vez que a
+    // pessoa abrir "Chaves de API" (mesmo banner de "copie agora" que uma chave criada à mão usa).
+    if (body.apiKey) set("newKeySecret", { id: body.apiKey.id, secret: body.apiKey.secret });
+    return { id: body.id, name: body.name, email: body.email };
+  }
+
   return (
-    <div data-tw-root className="flex min-h-screen items-center justify-center bg-bg p-4">
-      <div className="w-full max-w-md rounded-lg border border-line bg-surface shadow-pop">
-        <div className="flex flex-col items-center gap-4 p-6 text-center">
-          <BrandMark />
-          <div className="flex flex-col gap-1.5">
-            <h1 className="font-display text-2xl font-semibold -tracking-[0.02em]">
-              {login ? WORKSPACE.brand : `Criar conta na ${WORKSPACE.brand}`}
-            </h1>
-            <p className="text-[13px] text-muted">
-              {login ? "Entre com sua conta para continuar" : WORKSPACE.tagline}
-            </p>
-          </div>
+    <div data-tw-root className="relative flex min-h-screen items-center justify-center overflow-hidden bg-accent p-4">
+      <div aria-hidden className="login-grid login-grid--on-accent pointer-events-none absolute inset-0" />
+
+      <div className="relative flex w-full max-w-md flex-col items-center gap-8 py-10">
+        {/* A frase de produto, sempre visível — antes só aparecia dentro do card,
+            e só no modo de criar conta. Como fundo virou tela inteira, ela sobe
+            para fora do card e fica constante: é a mesma promessa para quem
+            entra e para quem cria conta. */}
+        <div className="flex flex-col items-center gap-3 text-center">
+          <p className="font-display text-3xl font-semibold leading-[1.15] tracking-tight text-on-accent sm:text-4xl">
+            {WORKSPACE.tagline}
+          </p>
+          <p className="max-w-sm text-[15px] leading-relaxed text-on-accent/85">
+            Escolha um modelo, nomeie as camadas e chame a API — o mesmo design, gerado quantas vezes precisar.
+          </p>
         </div>
 
-        <form
-          className="flex flex-col gap-4 p-6 pt-0"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          {!login && (
-            <Field id="loginName" label="Nome">
+        <div className="w-full rounded-lg border border-line bg-surface shadow-pop">
+          <form
+            className="flex flex-col gap-4 p-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <p className="text-center text-[13px] text-muted">
+              {login ? "Entre com sua conta para continuar" : "Crie sua conta gratuitamente"}
+            </p>
+
+            {!login && (
+              <Field id="loginName" label="Nome">
+                <Input
+                  id="loginName"
+                  value={name}
+                  onChange={(e) => edit(setName)(e.target.value)}
+                  placeholder="Como devemos te chamar"
+                  className="rounded-md bg-bg"
+                />
+              </Field>
+            )}
+
+            <Field id="loginEmail" label="E-mail">
               <Input
-                id="loginName"
-                value={name}
-                onChange={(e) => edit(setName)(e.target.value)}
-                placeholder="Como devemos te chamar"
+                id="loginEmail"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => edit(setEmail)(e.target.value)}
+                placeholder="voce@empresa.com"
                 className="rounded-md bg-bg"
               />
             </Field>
-          )}
 
-          <Field id="loginEmail" label="E-mail">
-            <Input
-              id="loginEmail"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => edit(setEmail)(e.target.value)}
-              placeholder="voce@empresa.com"
-              className="rounded-md bg-bg"
-            />
-          </Field>
+            <Field id="loginPassword" label="Senha">
+              <div className="relative flex">
+                <Input
+                  id="loginPassword"
+                  type={reveal ? "text" : "password"}
+                  autoComplete={login ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(e) => edit(setPassword)(e.target.value)}
+                  placeholder="••••••••"
+                  className="min-w-0 flex-1 rounded-md bg-bg pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setReveal((v) => !v)}
+                  title={reveal ? "Ocultar senha" : "Mostrar senha"}
+                  aria-label={reveal ? "Ocultar senha" : "Mostrar senha"}
+                  className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
+                >
+                  {reveal ? <EyeOff size={15} strokeWidth={1.4} /> : <Eye size={15} strokeWidth={1.4} />}
+                </button>
+              </div>
 
-          <Field id="loginPassword" label="Senha">
-            <div className="relative flex">
-              <Input
-                id="loginPassword"
-                type={reveal ? "text" : "password"}
-                autoComplete={login ? "current-password" : "new-password"}
-                value={password}
-                onChange={(e) => edit(setPassword)(e.target.value)}
-                placeholder="••••••••"
-                className="min-w-0 flex-1 rounded-md bg-bg pr-11"
-              />
-              <button
-                type="button"
-                onClick={() => setReveal((v) => !v)}
-                title={reveal ? "Ocultar senha" : "Mostrar senha"}
-                aria-label={reveal ? "Ocultar senha" : "Mostrar senha"}
-                className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
-              >
-                {reveal ? <EyeOff size={15} strokeWidth={1.4} /> : <Eye size={15} strokeWidth={1.4} />}
-              </button>
-            </div>
-
-            {!login && (
-              <div className="flex flex-col gap-1.5 pt-1">
-                <div className="flex gap-1.5" aria-hidden>
-                  {[0, 1, 2, 3].map((i) => (
-                    <div key={i} className="h-[3px] flex-1 rounded-[2px]" style={{ background: barColor(i, score) }} />
-                  ))}
+              {!login && (
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <div className="flex gap-1.5" aria-hidden>
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="h-[3px] flex-1 rounded-[2px]" style={{ background: barColor(i, score) }} />
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-faint" aria-live="polite">
+                    {password ? `Força da senha: ${STRENGTH_LABELS[score]}` : "Use letras, números e um símbolo."}
+                  </span>
                 </div>
-                <span className="text-[11px] text-faint" aria-live="polite">
-                  {password ? `Força da senha: ${STRENGTH_LABELS[score]}` : "Use letras, números e um símbolo."}
-                </span>
+              )}
+            </Field>
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-md border border-danger-border bg-danger-bg px-3 py-2.5 text-[13px] text-danger"
+              >
+                {error}
               </div>
             )}
-          </Field>
 
-          {!login && (
-            <label className="flex cursor-pointer items-start gap-2.5">
-              <Checkbox
-                checked={terms}
-                onCheckedChange={(checked) => {
-                  setTerms(checked === true);
+            <Button type="submit" size="lg" disabled={loading} className="w-full rounded-md text-[13px]">
+              {loading ? "Entrando…" : login ? "Entrar" : "Criar conta"}
+            </Button>
+
+            <p className="text-center text-[13px] text-muted">
+              {login ? "Não tem conta?" : "Já tem uma conta?"}{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setMode(login ? "signup" : "login");
                   setError("");
                 }}
-                className="mt-px"
-              />
-              <span className="text-xs leading-[1.55] text-muted">
-                Aceito os termos de uso e a política de privacidade.
-              </span>
-            </label>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              className="rounded-md border border-danger-border bg-danger-bg px-3 py-2.5 text-[13px] text-danger"
-            >
-              {error}
-            </div>
-          )}
-
-          <Button type="submit" size="lg" disabled={loading} className="w-full rounded-md text-[13px]">
-            {loading ? "Entrando…" : login ? "Entrar" : "Criar conta"}
-          </Button>
-
-          {/* Abaixo do botão e sem divisor gritante: entrar por e-mail é o caminho
-              principal desta tela, o social é alternativa. */}
-          <Button type="button" variant="outline" size="lg" className="w-full rounded-md bg-bg text-[13px] text-text">
-            <GoogleMark />
-            Continuar com Google
-          </Button>
-
-          <p className="text-center text-[13px] text-muted">
-            {login ? "Não tem conta?" : "Já tem uma conta?"}{" "}
-            <button
-              type="button"
-              onClick={() => {
-                setMode(login ? "signup" : "login");
-                setError("");
-              }}
-              className="font-medium text-accent hover:underline"
-            >
-              {login ? "Criar conta" : "Entrar"}
-            </button>
-          </p>
-        </form>
+                className="font-medium text-accent hover:underline"
+              >
+                {login ? "Criar conta" : "Entrar"}
+              </button>
+            </p>
+          </form>
+        </div>
       </div>
     </div>
   );

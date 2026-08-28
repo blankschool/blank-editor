@@ -66,6 +66,8 @@ export interface State {
   appDoc: string | null;
   tab: "preview" | "response";
   lang: Lang;
+  /** Desligado por padrão: testar no Playground nunca sobrescreve um template sozinho. */
+  saveAsDesign: boolean;
   rendering: boolean;
   rendered: boolean;
   response: string | null;
@@ -119,6 +121,7 @@ export const state: State = {
   appDoc: null,
   tab: "preview",
   lang: "JavaScript",
+  saveAsDesign: false,
   rendering: false,
   rendered: false,
   response: null,
@@ -279,12 +282,17 @@ function requestBody(): Record<string, unknown> {
   const body: Record<string, unknown> = { template: state.templateId };
   if (state.templatePages > 1) body.page = state.page;
   body.layers = requestLayers();
+  // Desligado por padrão (ver State.saveAsDesign) — testar aqui nunca sobrescreve um template
+  // sozinho; só quando a pessoa liga o toggle "Salvar como design" é que o render passa a
+  // gravar de volta na própria linha do template (server/src/app.ts).
+  if (state.saveAsDesign) body.save = true;
   return body;
 }
 
 export function snippetFor(lang: Lang): string {
   const s = state;
   const jsonLayers = JSON.stringify(requestLayers());
+  const saveArg = s.saveAsDesign ? `"save": true, ` : "";
   const pageArg = s.templatePages > 1 ? `"page": ${s.page}, ` : "";
   const pagePy = s.templatePages > 1 ? `"page": ${s.page}, ` : "";
   const key = s.apiKey || "SUA_API_KEY";
@@ -292,15 +300,15 @@ export function snippetFor(lang: Lang): string {
   const tid = s.templateId;
 
   if (lang === "Python") {
-    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", ${pagePy}"layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
+    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", ${pagePy}${saveArg}"layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
   }
   if (lang === "cURL") {
-    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}",${s.templatePages > 1 ? `"page":${s.page},` : ""}"layers":${jsonLayers}}' \\\n  --output twitter.png`;
+    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}",${s.templatePages > 1 ? `"page":${s.page},` : ""}${s.saveAsDesign ? `"save":true,` : ""}"layers":${jsonLayers}}' \\\n  --output twitter.png`;
   }
   if (lang === "PHP") {
-    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n${s.templatePages > 1 ? `        "page"     => ${s.page},\n` : ""}        "layers"   => $layers,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
+    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n${s.templatePages > 1 ? `        "page"     => ${s.page},\n` : ""}${s.saveAsDesign ? `        "save"     => true,\n` : ""}        "layers"   => $layers,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
   }
-  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template: "${tid}", ${pageArg}layers: ${jsonLayers} }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
+  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template: "${tid}", ${pageArg}${saveArg}layers: ${jsonLayers} }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
 }
 
 export async function startRender() {

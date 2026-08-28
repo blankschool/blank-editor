@@ -13,8 +13,13 @@ import { initTheme } from "./theme";
 import { ConsoleApp } from "./console/ConsoleApp";
 import { openConsole } from "./console/store";
 import { LoginApp } from "./login/LoginApp";
+import { bootSession } from "./session";
 
 initTheme();
+// Assíncrono de propósito: a sessão vive num cookie httpOnly, então só o servidor sabe dizer
+// quem está logado. initRouter já reage sozinho quando isto resolve (router.ts assina
+// onSessionChange) — não precisa aguardar aqui antes de montar o resto do app.
+void bootSession();
 
 const views = {
   login: document.getElementById("view-login")!,

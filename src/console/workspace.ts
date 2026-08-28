@@ -1,26 +1,16 @@
 /**
- * Identidade do workspace.
+ * Product copy — the app's own brand, not anyone's personal data.
  *
- * Está num arquivo só, e é constante, porque o servidor ainda não tem conceito
- * de usuário nem de conta: não existe tabela de users, o login não autentica
- * nada e a API de render se autoriza por chave, não por sessão. Fingir um nome
- * vindo do backend seria pior que assumir um — quando houver `GET /api/v1/me`,
- * é este módulo que troca de implementação, e nada mais.
+ * This file used to also hold a hardcoded tenant name ("Studio do Miguel")
+ * that the header showed regardless of who was signed in. That's gone: the
+ * real signed-in identity now lives in session.ts, backed by the `workspaces`
+ * table (server/schema.sql) and read via `useSession()`. What's left here is
+ * exactly the stuff that's legitimately static — the product's own name and
+ * tagline don't change per visitor.
  */
 export const WORKSPACE = {
   brand: "Blank",
-  name: "Studio do Miguel",
   /** A frase de produto do topo. Diz o mecanismo (desenhar) e o retorno (renderizar em escala) numa linha. */
   tagline: "Desenhe uma vez. Renderize mil vezes.",
   plan: "API inclusa",
 } as const;
-
-/** Iniciais para o avatar — sem foto, o nome do workspace é a única fonte. */
-export function workspaceInitials(): string {
-  return WORKSPACE.name
-    .split(/\s+/)
-    .filter((word) => word.length > 2) // descarta "do", "de", "da"
-    .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
-    .join("");
-}

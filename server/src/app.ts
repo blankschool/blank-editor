@@ -1,21 +1,49 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import fastifyCookie from "@fastify/cookie";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
 import { parseLayers, type Layers } from "./render/layers.ts";
 import { pageCount } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
-import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
+import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
+import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary, Workspace } from "./db.ts";
+import {
+  clearSessionCookies,
+  getRefreshCookie,
+  refreshSession,
+  resolveSessionFromCookies,
+  setSessionCookies,
+  signIn,
+  signUp,
+  verifyAccessToken,
+} from "./supabaseAuth.ts";
+
+/**
+ * Presente só quando há um projeto Supabase de verdade configurado (fase 3 do plano de
+ * migração). Em modo local puro (sem Postgres/Supabase — `server/src/local.ts`) isso é
+ * omitido, e as rotas `/api/v1/auth/*` respondem 501: não faz sentido fingir Auth sem um
+ * projeto Supabase por trás. As rotas de template/chave continuam funcionando via chave de
+ * API Bearer normalmente, com ou sem isso configurado.
+ */
+export interface AuthDeps {
+  client: SupabaseClient;
+  /** Cria a "Chave padrão" logo após o signup — ver AppDeps.createApiKey (fase 2, já owner-aware). */
+  createDefaultApiKey: (ownerId: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
+}
 
 export interface AppDeps {
   findApiKeyOwner: (keyHash: string) => Promise<ApiKeyOwner | null>;
-  findTemplate: (id: string) => Promise<TemplateRow | null>;
-  listTemplates: () => Promise<TemplateSummary[]>;
-  createTemplate: (input: { name: string; document: unknown }) => Promise<TemplateRow>;
-  updateTemplate: (id: string, input: { name?: string; document?: unknown }) => Promise<TemplateRow | null>;
-  deleteTemplate: (id: string) => Promise<boolean>;
-  listApiKeys: () => Promise<ApiKeySummary[]>;
-  createApiKey: (name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
-  revokeApiKey: (id: string) => Promise<boolean>;
-  deleteApiKey: (id: string) => Promise<boolean>;
+  findTemplate: (ownerId: string, id: string) => Promise<TemplateRow | null>;
+  listTemplates: (ownerId: string) => Promise<TemplateSummary[]>;
+  createTemplate: (ownerId: string, input: { name: string; document: unknown }) => Promise<TemplateRow>;
+  updateTemplate: (ownerId: string, id: string, input: { name?: string; document?: unknown }) => Promise<TemplateRow | null>;
+  deleteTemplate: (ownerId: string, id: string) => Promise<boolean>;
+  listApiKeys: (ownerId: string) => Promise<ApiKeySummary[]>;
+  createApiKey: (ownerId: string, name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
+  revokeApiKey: (ownerId: string, id: string) => Promise<boolean>;
+  deleteApiKey: (ownerId: string, id: string) => Promise<boolean>;
+  findWorkspaceByEmail: (email: string) => Promise<Workspace | null>;
+  createWorkspace: (input: { name: string; email: string }) => Promise<Workspace>;
   renderTemplatePng: typeof renderTemplatePng;
 }
 
@@ -31,26 +59,76 @@ interface RenderBody {
    * de "página 2"; o índice base 0 fica dentro do renderer.
    */
   page?: number;
+  /**
+   * Opt-in: grava as camadas resolvidas de volta na própria linha do template renderizado (só
+   * na página que foi de fato renderizada) — o mesmo efeito de abrir o template no editor e
+   * salvar, só que disparado pela API. Nada muda por padrão; sem isto o render continua sendo
+   * só leitura, como sempre foi. Ver applyLayerOverrides.ts.
+   */
+  save?: boolean;
 }
 
 const BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 
-export function buildApp(deps: AppDeps): FastifyInstance {
+/** Chaves de API deste app sempre têm esse prefixo — é o que distingue "isto é uma chave de API,
+ *  faça o hash e procure no banco" de "isto é um JWT do Supabase, verifique com o Auth". */
+function looksLikeApiKey(token: string): boolean {
+  return token.startsWith("blk_");
+}
+
+export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
+  app.register(fastifyCookie);
+
+  /**
+   * Resolve quem está chamando, em três caminhos possíveis (nessa ordem):
+   *  1. Cookie de sessão do console (Supabase Auth) — só existe quando `auth` está configurado.
+   *  2. Authorization: Bearer <chave de API> — o mecanismo de sempre, hash + lookup no banco.
+   *  3. Authorization: Bearer <JWT do Supabase> — usado pela Edge Function da tela "Gerar", que
+   *     repassa o JWT de quem está logado no navegador em vez de guardar uma chave de API própria.
+   * Os três caminhos resolvem pro mesmo formato (ownerId) — nenhuma rota trata os três de forma
+   * diferente depois disso.
+   */
+  async function requireOwner(request: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+    if (auth) {
+      const bySession = await resolveSessionFromCookies(request, auth.client);
+      if (bySession) return bySession.ownerId;
+    }
+
+    const token = extractBearerToken(request.headers.authorization);
+    if (!token) {
+      reply.code(401).send({ error: "missing session cookie or Authorization: Bearer <api key>" });
+      return null;
+    }
+
+    if (looksLikeApiKey(token)) {
+      const owner = await deps.findApiKeyOwner(hashApiKey(token));
+      if (!owner) {
+        reply.code(401).send({ error: "invalid or revoked API key" });
+        return null;
+      }
+      return owner.ownerId;
+    }
+
+    if (auth) {
+      const bySupabaseJwt = await verifyAccessToken(auth.client, token);
+      if (bySupabaseJwt) return bySupabaseJwt.ownerId;
+    }
+
+    reply.code(401).send({ error: "invalid or revoked API key" });
+    return null;
+  }
 
   app.get("/health", async () => ({ ok: true }));
 
   app.post<{ Body: RenderBody }>("/api/v1/render", async (request, reply) => {
-    const token = extractBearerToken(request.headers.authorization);
-    if (!token) return reply.code(401).send({ error: "missing Authorization: Bearer <api key>" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
 
-    const owner = await deps.findApiKeyOwner(hashApiKey(token));
-    if (!owner) return reply.code(401).send({ error: "invalid or revoked API key" });
-
-    const { template, layers, page } = request.body ?? {};
+    const { template, layers, page, save } = request.body ?? {};
     if (!template) return reply.code(400).send({ error: "missing required field: template" });
 
-    const row = await deps.findTemplate(template);
+    const row = await deps.findTemplate(ownerId, template);
     if (!row) return reply.code(404).send({ error: `template not found: ${template}` });
 
     // Página fora do intervalo é erro, não silêncio: pedir a 4 num carrossel de 3
@@ -66,34 +144,54 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       pageIndex = page - 1;
     }
 
+    const parsedLayers = parseLayers(layers ?? {});
+
     let png: Buffer;
     try {
-      png = await deps.renderTemplatePng(row.document, parseLayers(layers ?? {}), pageIndex);
+      png = await deps.renderTemplatePng(row.document, parsedLayers, pageIndex);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(400).send({ error: message });
     }
 
+    // Opt-in: o mesmo efeito de abrir esse template no editor e salvar, só que disparado pela
+    // API. A resposta continua sendo só o PNG de sempre — quem chamou já sabe o id do template
+    // que passou, não tem id novo pra devolver.
+    if (save) {
+      const merged = applyLayerOverrides(row.document, parsedLayers, pageIndex);
+      await deps.updateTemplate(ownerId, template, { document: merged });
+    }
+
     return reply.header("content-type", "image/png").send(png);
   });
 
-  app.get("/api/v1/templates", async () => deps.listTemplates());
+  app.get("/api/v1/templates", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    return deps.listTemplates(ownerId);
+  });
 
   app.post<{ Body: { name?: string; document?: unknown } }>("/api/v1/templates", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
     const { name, document } = request.body ?? {};
     if (!name || !document) return reply.code(400).send({ error: "missing required field: name, document" });
-    const row = await deps.createTemplate({ name, document });
+    const row = await deps.createTemplate(ownerId, { name, document });
     return reply.code(201).send({ id: row.id, name: row.name });
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/templates/:id", async (request, reply) => {
-    const row = await deps.findTemplate(request.params.id);
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const row = await deps.findTemplate(ownerId, request.params.id);
     if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     return { id: row.id, name: row.name, document: row.document };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/templates/:id/cover", async (request, reply) => {
-    const row = await deps.findTemplate(request.params.id);
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const row = await deps.findTemplate(ownerId, request.params.id);
     if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     try {
       const png = await deps.renderTemplatePng(row.document, parseLayers({}));
@@ -110,37 +208,172 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.put<{ Params: { id: string }; Body: { name?: string; document?: unknown } }>(
     "/api/v1/templates/:id",
     async (request, reply) => {
-      const row = await deps.updateTemplate(request.params.id, request.body ?? {});
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.updateTemplate(ownerId, request.params.id, request.body ?? {});
       if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
       return { id: row.id, name: row.name };
     },
   );
 
   app.delete<{ Params: { id: string } }>("/api/v1/templates/:id", async (request, reply) => {
-    const deleted = await deps.deleteTemplate(request.params.id);
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const deleted = await deps.deleteTemplate(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     return reply.code(204).send();
   });
 
-  app.get("/api/v1/keys", async () => deps.listApiKeys());
+  app.get("/api/v1/keys", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    return deps.listApiKeys(ownerId);
+  });
 
   app.post<{ Body: { name?: string } }>("/api/v1/keys", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
     const name = request.body?.name;
     if (!name) return reply.code(400).send({ error: "missing required field: name" });
-    const created = await deps.createApiKey(name);
+    const created = await deps.createApiKey(ownerId, name);
     return reply.code(201).send(created);
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/keys/:id", async (request, reply) => {
-    const revoked = await deps.revokeApiKey(request.params.id);
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const revoked = await deps.revokeApiKey(ownerId, request.params.id);
     if (!revoked) return reply.code(404).send({ error: `key not found or already revoked: ${request.params.id}` });
     return reply.code(204).send();
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/keys/:id/purge", async (request, reply) => {
-    const deleted = await deps.deleteApiKey(request.params.id);
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const deleted = await deps.deleteApiKey(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
     return reply.code(204).send();
+  });
+
+  // O console's login/signup: real rows na tabela workspaces, real 404/409, sem senha
+  // verificada (ver o comentário na tabela workspaces em schema.sql). Substituído pela
+  // sessão do Supabase Auth na fase 3 do plano de migração — mantido aqui até esse corte.
+  app.get<{ Params: { email: string } }>("/api/v1/workspace/by-email/:email", async (request, reply) => {
+    const workspace = await deps.findWorkspaceByEmail(decodeURIComponent(request.params.email));
+    if (!workspace) return reply.code(404).send({ error: "no account with this e-mail" });
+    return workspace;
+  });
+
+  app.post<{ Body: { name?: string; email?: string } }>("/api/v1/workspace", async (request, reply) => {
+    const name = request.body?.name?.trim();
+    const email = request.body?.email?.trim();
+    if (!name || !email) return reply.code(400).send({ error: "missing required field: name, email" });
+    // Check-then-create rather than relying on the table's unique constraint and
+    // catching the error: this app has exactly one writer per environment (no
+    // concurrent signups racing for the same e-mail in practice), so the small
+    // TOCTOU window isn't worth reaching into postgres.js's error shape for.
+    const existing = await deps.findWorkspaceByEmail(email);
+    if (existing) return reply.code(409).send({ error: "an account with this e-mail already exists" });
+    const workspace = await deps.createWorkspace({ name, email });
+    return reply.code(201).send(workspace);
+  });
+
+  // --- Sessão via Supabase Auth (fase 3 do plano de migração) -----------------
+  // Só existem de verdade quando `auth` foi passado pra buildApp — sem um projeto Supabase
+  // configurado, 501: não tem Auth nenhum pra autenticar contra.
+  function requireAuthConfigured(reply: FastifyReply): AuthDeps | null {
+    if (auth) return auth;
+    reply.code(501).send({ error: "Supabase Auth is not configured on this server" });
+    return null;
+  }
+
+  app.post<{ Body: { name?: string; email?: string; password?: string } }>("/api/v1/auth/signup", async (request, reply) => {
+    const a = requireAuthConfigured(reply);
+    if (!a) return;
+    const name = request.body?.name?.trim();
+    const email = request.body?.email?.trim();
+    const password = request.body?.password;
+    if (!name || !email || !password) return reply.code(400).send({ error: "missing required field: name, email, password" });
+
+    let result;
+    try {
+      result = await signUp(a.client, { name, email, password });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+    if (!result.session || !result.user) {
+      // E-mail de confirmação exigido no projeto Supabase — não é o caso combinado (sem
+      // confirmação), mas se alguém religar essa opção lá, é melhor um erro claro do que um
+      // 200 com sessão vazia.
+      return reply.code(400).send({ error: "signup succeeded but requires e-mail confirmation, which this app does not expect" });
+    }
+
+    setSessionCookies(reply, result.session);
+    const defaultKey = await a.createDefaultApiKey(result.user.id);
+    return reply.code(201).send({
+      id: result.user.id,
+      name,
+      email: result.user.email,
+      apiKey: { id: defaultKey.id, name: defaultKey.name, secret: defaultKey.secret },
+    });
+  });
+
+  app.post<{ Body: { email?: string; password?: string } }>("/api/v1/auth/login", async (request, reply) => {
+    const a = requireAuthConfigured(reply);
+    if (!a) return;
+    const email = request.body?.email?.trim();
+    const password = request.body?.password;
+    if (!email || !password) return reply.code(400).send({ error: "missing required field: email, password" });
+
+    let result;
+    try {
+      result = await signIn(a.client, { email, password });
+    } catch {
+      return reply.code(401).send({ error: "invalid e-mail or password" });
+    }
+    if (!result.session || !result.user) return reply.code(401).send({ error: "invalid e-mail or password" });
+
+    setSessionCookies(reply, result.session);
+    return {
+      id: result.user.id,
+      name: typeof result.user.user_metadata?.name === "string" ? result.user.user_metadata.name : "",
+      email: result.user.email,
+    };
+  });
+
+  app.post("/api/v1/auth/logout", async (_request, reply) => {
+    clearSessionCookies(reply);
+    return reply.code(204).send();
+  });
+
+  app.post("/api/v1/auth/refresh", async (request, reply) => {
+    const a = requireAuthConfigured(reply);
+    if (!a) return;
+    const refreshToken = getRefreshCookie(request);
+    if (!refreshToken) return reply.code(401).send({ error: "no session to refresh" });
+
+    let result;
+    try {
+      result = await refreshSession(a.client, refreshToken);
+    } catch {
+      clearSessionCookies(reply);
+      return reply.code(401).send({ error: "session expired, please log in again" });
+    }
+    if (!result.session) {
+      clearSessionCookies(reply);
+      return reply.code(401).send({ error: "session expired, please log in again" });
+    }
+    setSessionCookies(reply, result.session);
+    return reply.code(204).send();
+  });
+
+  app.get("/api/v1/auth/me", async (request, reply) => {
+    const a = requireAuthConfigured(reply);
+    if (!a) return;
+    const user = await resolveSessionFromCookies(request, a.client);
+    if (!user) return reply.code(401).send({ error: "not signed in" });
+    return user;
   });
 
   return app;
