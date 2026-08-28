@@ -1,0 +1,44 @@
+/*
+ * Fundo em grid, à deriva lenta, cobrindo a tela de login inteira atrás do
+ * card. CSS puro, sem canvas nem lib de animação: é decoração de uma tela só,
+ * não vale uma dependência nova neste projeto que já evita peso sem
+ * necessidade (ver a nota sobre "concurrently" em scripts/dev.mjs pela mesma
+ * razão).
+ *
+ * Arquivo próprio, não dentro de app.css: é decoração de UMA tela, não token
+ * de tema nem reset compartilhado — o resto do app não precisa carregar isto.
+ */
+@keyframes login-grid-drift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 48px 48px;
+  }
+}
+
+.login-grid {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: login-grid-drift 70s linear infinite;
+}
+
+/* Sobre --accent (fundo cheio da tela agora, não mais um painel de meia tela):
+ * linhas claras translúcidas em vez do token --border, que é escuro demais
+ * para ler sobre azul. A máscara é quase imperceptível de propósito — cobre
+ * a tela quase de ponta a ponta, só a fade um pouco nos cantos. */
+.login-grid--on-accent {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.16) 1px, transparent 1px);
+  -webkit-mask-image: radial-gradient(ellipse 120% 120% at 50% 45%, black 0%, transparent 92%);
+  mask-image: radial-gradient(ellipse 120% 120% at 50% 45%, black 0%, transparent 92%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-grid {
+    animation: none;
+  }
+}
