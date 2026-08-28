@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { navigate } from "../router";
 import { setSession } from "../session";
@@ -14,8 +13,8 @@ import { WORKSPACE } from "../console/workspace";
  * senha. Sem login social por ora: um caminho só, sem alternativa a manter.
  *
  * O modo entrar é intencionalmente curto — e-mail, senha, Entrar. O que a
- * criação de conta pede a mais (nome, força da senha, termos) só aparece nesse
- * modo, dentro do mesmo card, em vez de virar uma segunda tela.
+ * criação de conta pede a mais (nome, força da senha) só aparece nesse modo,
+ * dentro do mesmo card, em vez de virar uma segunda tela.
  *
  * Continua sem autenticação de verdade por trás: valida os campos e navega para
  * o console depois de 700ms. Não é a rota de boot justamente por isso.
@@ -66,7 +65,6 @@ export function LoginApp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
-  const [terms, setTerms] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const submitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -88,7 +86,6 @@ export function LoginApp() {
     if (!email.trim() || !password) return setError("Preencha e-mail e senha para continuar.");
     if (!login && !name.trim()) return setError("Informe seu nome.");
     if (!login && password.length < 8) return setError("A senha precisa de pelo menos 8 caracteres.");
-    if (!login && !terms) return setError("Aceite os termos para criar a conta.");
     setError("");
     setLoading(true);
     clearTimeout(submitTimer.current);
@@ -178,22 +175,6 @@ export function LoginApp() {
               </div>
             )}
           </Field>
-
-          {!login && (
-            <label className="flex cursor-pointer items-start gap-2.5">
-              <Checkbox
-                checked={terms}
-                onCheckedChange={(checked) => {
-                  setTerms(checked === true);
-                  setError("");
-                }}
-                className="mt-px"
-              />
-              <span className="text-xs leading-[1.55] text-muted">
-                Aceito os termos de uso e a política de privacidade.
-              </span>
-            </label>
-          )}
 
           {error && (
             <div
