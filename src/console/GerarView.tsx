@@ -1,10 +1,9 @@
 import { Check, FileEdit, Loader2, Save, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
-import { StarterPreview } from "./DocPreview";
 import {
-  STARTERS,
   commitGerarLayerEdit,
+  goToView,
   openGeneratedInEditor,
   runGerarGenerate,
   saveGeneratedAsNewDesign,
@@ -15,41 +14,38 @@ import {
   useConsole,
 } from "./store";
 
-/** Faixa de modelos: os 3 starters (mesma miniatura do "Começar por um modelo") + os designs
- *  salvos da conta ("Meus"). Escolher qualquer um zera a geração anterior (store.ts). */
+/** Faixa de modelos: só os designs já salvos da conta — Gerar escreve em cima de um template
+ *  que já existe, nunca inventa um layout do zero (isso é o "Começar por um modelo", em Designs).
+ *  Escolher qualquer um zera a geração anterior (store.ts). */
 function ModelStrip() {
   const s = useConsole();
+
+  if (s.templates.length === 0) {
+    return (
+      <div className="flex flex-col gap-2.5">
+        <span className="text-[13px] font-medium">Escolha o modelo</span>
+        <button
+          type="button"
+          onClick={() => goToView("designs")}
+          className="rounded-sm border border-dashed border-line p-3 text-center text-xs text-faint hover:text-muted"
+        >
+          nenhum design ainda — crie um em Designs
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2.5">
       <span className="text-[13px] font-medium">Escolha o modelo</span>
       <div className="flex flex-wrap gap-2.5">
-        {STARTERS.map((starter) => {
-          const active = s.gerarSource?.kind === "starter" && s.gerarSource.starter.id === starter.id;
-          return (
-            <button
-              key={starter.id}
-              type="button"
-              onClick={() => selectGerarSource({ kind: "starter", starter })}
-              className={`flex items-center gap-2.5 rounded-md border p-2 text-left transition-colors ${
-                active ? "border-accent bg-accent-soft" : "border-line bg-surface hover:border-line-strong"
-              }`}
-            >
-              <div className="flex h-14 items-center justify-center rounded-sm bg-inset p-1">
-                <StarterPreview doc={starter.build()} width={starter.ratio === "9 / 16" ? 34 : 48} />
-              </div>
-              <span className="text-xs font-medium">{starter.label}</span>
-            </button>
-          );
-        })}
-
         {s.templates.map((t) => {
-          const active = s.gerarSource?.kind === "template" && s.gerarSource.templateId === t.id;
+          const active = s.gerarSource?.templateId === t.id;
           return (
             <button
               key={t.id}
               type="button"
-              onClick={() => selectGerarSource({ kind: "template", templateId: t.id, name: t.name })}
+              onClick={() => selectGerarSource({ templateId: t.id, name: t.name })}
               className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
                 active ? "border-accent bg-accent-soft" : "border-line bg-surface hover:border-line-strong"
               }`}
