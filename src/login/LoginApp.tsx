@@ -116,8 +116,12 @@ export function LoginApp() {
     submitTimer.current = setTimeout(() => navigate("console"), 700);
   }
 
+  // bg-bg (branco puro, #FFFFFF), não bg-ground (#E3E8ED) — o ground é o chumbo
+  // do stage do editor, feito para dar contraste a artboards que também são
+  // brancos. A tela de login não tem artboard nenhum, então herdar aquele cinza
+  // só deixava tudo com aparência empoeirada em vez de limpa.
   return (
-    <div data-tw-root className="flex min-h-screen items-center justify-center bg-ground p-4">
+    <div data-tw-root className="flex min-h-screen items-center justify-center bg-bg p-4">
       <div className="w-full max-w-md rounded-lg border border-line bg-surface shadow-pop">
         <div className="flex flex-col items-center gap-4 p-6 text-center">
           <BrandMark />
