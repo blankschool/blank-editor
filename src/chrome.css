@@ -1,8 +1,42 @@
-/* Chrome único — ícones e hit targets. Sobrescreve width/height dos SVG inline. */
+/* Régua visível — mesma do x-creator-buddy (botão 40px, ícone 16–20px, texto 14px).
+ * Importado DEPOIS de styles.css para vencer o empate de especificidade. */
 :root {
-  --icon: 18px;
-  --hit: 36px;
+  --icon: 20px;
+  --hit: 40px;
   --page-unscale: 1;
+}
+
+body {
+  font-size: 14px;
+}
+
+.topbar {
+  height: 56px;
+  gap: 8px;
+  padding: 0 12px;
+}
+.topbar .docname {
+  font-size: 15px;
+  max-width: 320px;
+  padding: 6px 8px;
+}
+.tbtn {
+  height: var(--hit);
+  min-width: var(--hit);
+  padding: 0 12px;
+  font-size: 14px;
+}
+.tbtn.primary {
+  padding: 0 16px;
+}
+.dropmenu button {
+  height: 40px;
+  font-size: 14px;
+}
+.sep,
+.bbsep,
+.tbsep {
+  height: 24px;
 }
 
 .topbar .iconbtn,
@@ -22,24 +56,16 @@
 .layer .mini svg,
 .qbtn svg,
 .thumbitem.thumbadd svg,
-.seg button svg {
+.seg button svg,
+.tbelt svg,
+.tchev svg {
   width: var(--icon);
   height: var(--icon);
 }
 
-/* O cabeçalho da página e o botão de adicionar vivem DENTRO do world, então o
- * zoom os encolhe junto com a página; --page-unscale os devolve a pixels de
- * tela. A compensação NÃO pode ir no container: os dois são caixas da largura
- * da página (.pagehead é left:0/right:0, .addpagebtn recebe width=stackW), e
- * escalar a caixa escala a largura — o que jogava os ícones, alinhados à
- * direita, para fora da página. Quem escala é o conteúdo, cada parte ancorada
- * no seu próprio lado; a caixa continua do tamanho da página. */
-/* .pagewrap .pagehead, não só .pagehead: este arquivo é importado ANTES do
- * styles.css, então em empate de especificidade ele perde — e styles.css
- * declara `margin-bottom: 12px` no mesmo seletor. */
 .pagewrap .pagehead {
   margin-bottom: calc(12px * var(--page-unscale));
-  min-height: calc(22px * var(--page-unscale));
+  min-height: calc(28px * var(--page-unscale));
 }
 .pagehead .plabel2 {
   transform: scale(var(--page-unscale));
@@ -50,7 +76,7 @@
   transform-origin: right center;
 }
 .plabel2 {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
 }
@@ -60,51 +86,66 @@
 .pmini {
   width: var(--hit);
   height: var(--hit);
+  border-radius: 8px;
 }
 
-/* Largura vem da página (inline, em world px) e fica intacta — só o peso
- * visual é devolvido a pixels de tela. O topo é o centro do vão entre as
- * páginas, então o translateY(-50%) mantém o botão centrado com qualquer altura. */
 .addpagebtn {
   transform: translateY(-50%);
   height: calc(44px * var(--page-unscale));
-  font-size: calc(13px * var(--page-unscale));
+  font-size: calc(14px * var(--page-unscale));
   border-radius: calc(8px * var(--page-unscale));
   border-width: calc(1.5px * var(--page-unscale));
-  gap: calc(7px * var(--page-unscale));
+  gap: calc(8px * var(--page-unscale));
 }
 .addpagebtn svg {
   width: calc(var(--icon) * var(--page-unscale));
   height: calc(var(--icon) * var(--page-unscale));
 }
-/* O botão do painel de páginas não vive no world: sem zoom, sem compensação. */
 #addPagePanel {
   transform: none;
-  height: 40px;
-  font-size: 12px;
+  height: 44px;
+  font-size: 14px;
   border-radius: 8px;
   border-width: 1.5px;
-  gap: 7px;
+  gap: 8px;
 }
 
+.layer {
+  padding: 8px 8px;
+  gap: 8px;
+}
+.layer .lname {
+  font-size: 14px;
+}
 .layer .mini {
   width: var(--hit);
   height: var(--hit);
+  border-radius: 8px;
 }
 
 .zoomctl button {
   height: var(--hit);
   min-width: var(--hit);
 }
-
 .qbtn {
   min-width: var(--hit);
   height: var(--hit);
+  font-size: 14px;
+}
+.qselect,
+.qsizeval {
+  height: var(--hit);
+  font-size: 13px;
+}
+.qcolor {
+  width: 32px;
+  height: 32px;
 }
 
 .bbtn {
   height: var(--hit);
   font-size: 13px;
+  padding: 0 10px;
 }
 .bbtn.iconbtn {
   width: var(--hit);
@@ -114,30 +155,37 @@
 .fitbtn {
   font-size: 13px;
 }
+.zoomctl .fitbtn {
+  font-size: 13px;
+}
 
 .rail {
-  width: 72px;
+  width: 80px;
 }
 .railbtn {
-  width: 64px;
-  height: 56px;
+  width: 68px;
+  height: 60px;
   font-size: 11px;
-  gap: 4px;
+  gap: 5px;
 }
 .railbtn svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
 
+.panel {
+  width: 260px;
+  padding: 16px;
+}
 .ptitle {
-  font-size: 14px;
+  font-size: 15px;
 }
 .phint {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .tile {
-  height: 64px;
+  height: 72px;
   font-size: 12px;
 }
 .tile svg {
@@ -145,16 +193,53 @@
   height: 24px;
 }
 
+.tbelt {
+  width: 40px;
+  height: 40px;
+}
+.tchev {
+  height: 40px;
+}
+.flyout button {
+  height: 36px;
+  font-size: 14px;
+}
+
+.field {
+  height: 36px;
+}
+.field label {
+  font-size: 12px;
+}
+.field input,
+select.field {
+  font-size: 14px;
+}
+.seg button {
+  height: 36px;
+}
+.sec > h4 {
+  font-size: 11px;
+}
+
+.thumbitem {
+  width: 56px;
+}
+.thumbitem .num,
+.gridcell .plabel,
+.plabel {
+  font-size: 12px;
+}
+
 .railbtn[data-tab="pages"] {
   display: none !important;
 }
 
 .savestatus {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--faint);
   white-space: nowrap;
-  padding: 0 8px;
+  padding: 0 10px;
 }
 .savestatus[data-state="saving"] { color: var(--muted); }
 .savestatus[data-state="saved"] { color: var(--faint); }
-
