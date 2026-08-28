@@ -141,16 +141,32 @@ function computeGroupShifts(
   return shifts;
 }
 
-function activePage(document: unknown): EditablePage | null {
+/**
+ * A página a renderizar: `pageIndex` quando o chamador pediu uma explicitamente,
+ * senão a `active` que o documento guardou.
+ *
+ * O override existe por causa do carrossel. Sem ele um template de várias páginas
+ * só renderiza a capa pela API — o documento tem 3 slides e a chamada devolve
+ * sempre o mesmo. Índice base 0 aqui dentro; a API expõe base 1, que é como se
+ * fala de "página 2" fora do código.
+ */
+function pageAt(document: unknown, pageIndex?: number): EditablePage | null {
   const candidate = document as EditableTemplateDocument;
   if (!Array.isArray(candidate?.pages) || candidate.pages.length === 0) return null;
-  const active = Math.max(0, Math.min(candidate.pages.length - 1, Math.trunc(finite(candidate.active))));
-  return candidate.pages[active];
+  const requested = pageIndex ?? finite(candidate.active);
+  const index = Math.max(0, Math.min(candidate.pages.length - 1, Math.trunc(finite(requested))));
+  return candidate.pages[index];
+}
+
+/** Quantas páginas o documento tem — o app usa para recusar uma página fora do intervalo com mensagem útil. */
+export function pageCount(document: unknown): number {
+  const candidate = document as EditableTemplateDocument;
+  return Array.isArray(candidate?.pages) ? candidate.pages.length : 0;
 }
 
 /** Every image-type layer a template declares, with whatever `src` it was saved with (if any). */
-export function listImageLayers(document: unknown): Array<{ name: string; src?: string }> {
-  const page = activePage(document);
+export function listImageLayers(document: unknown, pageIndex?: number): Array<{ name: string; src?: string }> {
+  const page = pageAt(document, pageIndex);
   if (!Array.isArray(page?.els)) return [];
   return page.els
     .filter((el): el is EditableElement & { name: string } => Boolean(el && el.type === "image" && el.name))
@@ -168,8 +184,9 @@ export function buildTemplateSvg(
   document: unknown,
   overrides: TemplateOverrides,
   resolvedImages: Record<string, string>,
+  pageIndex?: number,
 ): string {
-  const page = activePage(document);
+  const page = pageAt(document, pageIndex);
   if (!page) throw new Error("template must contain a page");
   const width = boundedDimension(page.w, "width");
   const height = boundedDimension(page.h, "height");

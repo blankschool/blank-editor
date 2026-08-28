@@ -3,27 +3,24 @@ import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Segmented } from "@/components/ui/segmented";
-import { cn } from "@/lib/utils";
 import { navigate } from "../router";
+import { WORKSPACE } from "../console/workspace";
 
 /**
- * Portado de src/pages/login.ts. Todo o cuidado de "não re-renderizar enquanto
- * o usuário digita" que existia lá — patch manual das barras de força, do
- * checkbox e do banner de erro, para o innerHTML não roubar o foco do input —
- * sai inteiro: input controlado do React mantém foco e cursor de graça. É o
- * ganho concreto desta migração nesta tela.
+ * Card central, no formato de tela de entrada de SaaS: marca, título, uma linha
+ * de apoio, campos rotulados, um botão de largura cheia e um link embaixo. A
+ * versão anterior espalhava tudo numa coluna solta de 360px sem moldura, com o
+ * seletor Entrar/Criar conta competindo com o título logo acima.
  *
- * O que NÃO mudou: não existe autenticação real por trás. O submit valida os
- * campos e navega para o console depois de 700ms, igual antes.
+ * O modo entrar é intencionalmente curto — e-mail, senha, Entrar. O que a
+ * criação de conta pede a mais (nome, força da senha, termos) só aparece nesse
+ * modo, dentro do mesmo card, em vez de virar uma segunda tela.
+ *
+ * Continua sem autenticação de verdade por trás: valida os campos e navega para
+ * o console depois de 700ms. Não é a rota de boot justamente por isso.
  */
 
 type Mode = "login" | "signup";
-
-const MODES = [
-  { value: "login" as const, label: "Entrar" },
-  { value: "signup" as const, label: "Criar conta" },
-];
 
 const STRENGTH_LABELS = ["Muito fraca", "Fraca", "Razoável", "Boa", "Forte"];
 
@@ -43,6 +40,17 @@ function barColor(index: number, score: number): string {
   return "var(--success)";
 }
 
+function BrandMark() {
+  return (
+    <div
+      aria-hidden
+      className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent font-display text-[22px] font-bold leading-none text-on-accent"
+    >
+      B
+    </div>
+  );
+}
+
 function GoogleMark() {
   return (
     <svg width="16" height="16" viewBox="0 0 48 48" className="shrink-0" aria-hidden>
@@ -51,6 +59,25 @@ function GoogleMark() {
       <path fill="#4CAF50" d="M24 44c5.4 0 10.4-2.1 14.1-5.5l-6.5-5.5C29.5 34.8 26.9 36 24 36c-5.3 0-9.7-3.1-11.3-7.9l-6.5 5C9.6 39.7 16.3 44 24 44z" />
       <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.5 5.5C40.9 36.4 44 30.9 44 24c0-1.2-.1-2.4-.4-3.5z" />
     </svg>
+  );
+}
+
+function Field({
+  id,
+  label,
+  children,
+}: {
+  id: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className="text-[13px] font-medium leading-none">
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }
 
@@ -70,12 +97,7 @@ export function LoginApp() {
   const login = mode === "login";
   const score = strengthScore(password);
 
-  function switchMode(next: Mode) {
-    setMode(next);
-    setError("");
-  }
-
-  /** Erro some ao primeiro toque em qualquer campo — era o clearErrorLive() do original. */
+  /** Erro some ao primeiro toque em qualquer campo. */
   function edit(setter: (value: string) => void) {
     return (value: string) => {
       setter(value);
@@ -94,167 +116,141 @@ export function LoginApp() {
     submitTimer.current = setTimeout(() => navigate("console"), 700);
   }
 
+  // bg-bg (branco puro, #FFFFFF), não bg-ground (#E3E8ED) — o ground é o chumbo
+  // do stage do editor, feito para dar contraste a artboards que também são
+  // brancos. A tela de login não tem artboard nenhum, então herdar aquele cinza
+  // só deixava tudo com aparência empoeirada em vez de limpa.
   return (
-    <div data-tw-root className="flex min-h-screen bg-ground text-text">
-      <div className="flex flex-1 flex-col justify-center p-10">
+    <div data-tw-root className="flex min-h-screen items-center justify-center bg-bg p-4">
+      <div className="w-full max-w-md rounded-lg border border-line bg-surface shadow-pop">
+        <div className="flex flex-col items-center gap-4 p-6 text-center">
+          <BrandMark />
+          <div className="flex flex-col gap-1.5">
+            <h1 className="font-display text-2xl font-semibold -tracking-[0.02em]">
+              {login ? WORKSPACE.brand : `Criar conta na ${WORKSPACE.brand}`}
+            </h1>
+            <p className="text-[13px] text-muted">
+              {login ? "Entre com sua conta para continuar" : WORKSPACE.tagline}
+            </p>
+          </div>
+        </div>
+
         <form
-          className="mx-auto flex w-full max-w-[360px] flex-col gap-5"
+          className="flex flex-col gap-4 p-6 pt-0"
           onSubmit={(event) => {
             event.preventDefault();
             submit();
           }}
         >
-          <div className="flex flex-col gap-1.5">
-            <span className="font-display text-[22px] font-semibold -tracking-[0.02em]">
-              {login ? "Entrar na sua conta" : "Criar sua conta"}
-            </span>
-            <span className="text-[13px] text-faint">
-              {login ? "Use o e-mail do seu workspace." : "Grátis até 200 renders por mês."}
-            </span>
-          </div>
+          {!login && (
+            <Field id="loginName" label="Nome">
+              <Input
+                id="loginName"
+                value={name}
+                onChange={(e) => edit(setName)(e.target.value)}
+                placeholder="Como devemos te chamar"
+                className="rounded-md bg-bg"
+              />
+            </Field>
+          )}
 
-          <Segmented
-            aria-label="Entrar ou criar conta"
-            value={mode}
-            onValueChange={switchMode}
-            options={MODES}
-            size="tab"
-            variant="solid"
-            className="p-1 [&>*]:flex-1"
-          />
+          <Field id="loginEmail" label="E-mail">
+            <Input
+              id="loginEmail"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => edit(setEmail)(e.target.value)}
+              placeholder="voce@empresa.com"
+              className="rounded-md bg-bg"
+            />
+          </Field>
 
-          <Button type="button" variant="outline" size="lg" className="bg-surface text-text">
+          <Field id="loginPassword" label="Senha">
+            <div className="relative flex">
+              <Input
+                id="loginPassword"
+                type={reveal ? "text" : "password"}
+                autoComplete={login ? "current-password" : "new-password"}
+                value={password}
+                onChange={(e) => edit(setPassword)(e.target.value)}
+                placeholder="••••••••"
+                className="min-w-0 flex-1 rounded-md bg-bg pr-11"
+              />
+              <button
+                type="button"
+                onClick={() => setReveal((v) => !v)}
+                title={reveal ? "Ocultar senha" : "Mostrar senha"}
+                aria-label={reveal ? "Ocultar senha" : "Mostrar senha"}
+                className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
+              >
+                {reveal ? <EyeOff size={15} strokeWidth={1.4} /> : <Eye size={15} strokeWidth={1.4} />}
+              </button>
+            </div>
+
+            {!login && (
+              <div className="flex flex-col gap-1.5 pt-1">
+                <div className="flex gap-1.5" aria-hidden>
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="h-[3px] flex-1 rounded-[2px]" style={{ background: barColor(i, score) }} />
+                  ))}
+                </div>
+                <span className="text-[11px] text-faint" aria-live="polite">
+                  {password ? `Força da senha: ${STRENGTH_LABELS[score]}` : "Use letras, números e um símbolo."}
+                </span>
+              </div>
+            )}
+          </Field>
+
+          {!login && (
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <Checkbox
+                checked={terms}
+                onCheckedChange={(checked) => {
+                  setTerms(checked === true);
+                  setError("");
+                }}
+                className="mt-px"
+              />
+              <span className="text-xs leading-[1.55] text-muted">
+                Aceito os termos de uso e a política de privacidade.
+              </span>
+            </label>
+          )}
+
+          {error && (
+            <div
+              role="alert"
+              className="rounded-md border border-danger-border bg-danger-bg px-3 py-2.5 text-[13px] text-danger"
+            >
+              {error}
+            </div>
+          )}
+
+          <Button type="submit" size="lg" disabled={loading} className="w-full rounded-md text-[13px]">
+            {loading ? "Entrando…" : login ? "Entrar" : "Criar conta"}
+          </Button>
+
+          {/* Abaixo do botão e sem divisor gritante: entrar por e-mail é o caminho
+              principal desta tela, o social é alternativa. */}
+          <Button type="button" variant="outline" size="lg" className="w-full rounded-md bg-bg text-[13px] text-text">
             <GoogleMark />
             Continuar com Google
           </Button>
 
-          <div className="flex items-center gap-3">
-            <div className="h-px flex-1 bg-line" />
-            <span className="text-[11px] uppercase tracking-[0.06em] text-faint">ou</span>
-            <div className="h-px flex-1 bg-line" />
-          </div>
-
-          <div className="flex flex-col gap-3">
-            {!login && (
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="loginName" className="text-xs text-muted">
-                  Nome
-                </label>
-                <Input
-                  id="loginName"
-                  value={name}
-                  onChange={(e) => edit(setName)(e.target.value)}
-                  placeholder="Como devemos te chamar"
-                  className="bg-surface"
-                />
-              </div>
-            )}
-
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="loginEmail" className="text-xs text-muted">
-                E-mail
-              </label>
-              <Input
-                id="loginEmail"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => edit(setEmail)(e.target.value)}
-                placeholder="voce@empresa.com"
-                className="bg-surface"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2.5">
-                <label htmlFor="loginPassword" className="flex-1 text-xs text-muted">
-                  Senha
-                </label>
-                {login && (
-                  <a href="#" className="text-xs text-faint no-underline hover:text-muted">
-                    Esqueci a senha
-                  </a>
-                )}
-              </div>
-              <div className="relative flex">
-                <Input
-                  id="loginPassword"
-                  type={reveal ? "text" : "password"}
-                  autoComplete={login ? "current-password" : "new-password"}
-                  value={password}
-                  onChange={(e) => edit(setPassword)(e.target.value)}
-                  placeholder={login ? "••••••••" : "Mínimo de 8 caracteres"}
-                  className="min-w-0 flex-1 bg-surface pr-11"
-                />
-                <button
-                  type="button"
-                  onClick={() => setReveal((v) => !v)}
-                  title={reveal ? "Ocultar senha" : "Mostrar senha"}
-                  aria-label={reveal ? "Ocultar senha" : "Mostrar senha"}
-                  className="absolute right-1.5 top-1.5 flex h-7.5 w-7.5 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
-                >
-                  {reveal ? <EyeOff size={15} strokeWidth={1.4} /> : <Eye size={15} strokeWidth={1.4} />}
-                </button>
-              </div>
-
-              {!login && (
-                <div className="flex flex-col gap-1.5 pt-0.5">
-                  <div className="flex gap-1.5" aria-hidden>
-                    {[0, 1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className="h-[3px] flex-1 rounded-[2px]"
-                        style={{ background: barColor(i, score) }}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-[11px] text-faint" aria-live="polite">
-                    {password ? `Força da senha: ${STRENGTH_LABELS[score]}` : "Use letras, números e um símbolo."}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {!login && (
-              <label className="flex cursor-pointer items-start gap-2.5 pt-0.5">
-                <Checkbox
-                  checked={terms}
-                  onCheckedChange={(checked) => {
-                    setTerms(checked === true);
-                    setError("");
-                  }}
-                  className="mt-px"
-                />
-                <span className="text-xs leading-[1.55] text-muted">
-                  Aceito os termos de uso e a política de privacidade.
-                </span>
-              </label>
-            )}
-
-            {error && (
-              <div
-                role="alert"
-                className="rounded-sm border border-danger-border bg-danger-bg px-3 py-2.5 text-xs text-danger"
-              >
-                {error}
-              </div>
-            )}
-
-            <Button type="submit" size="lg" disabled={loading} className={cn("mt-0.5 h-10.5 text-[13px]")}>
-              {loading ? "Entrando…" : login ? "Entrar" : "Criar conta"}
-            </Button>
-          </div>
-
-          <span className="text-center text-xs text-faint">
-            {login ? "Ainda não tem conta?" : "Já tem uma conta?"}{" "}
+          <p className="text-center text-[13px] text-muted">
+            {login ? "Não tem conta?" : "Já tem uma conta?"}{" "}
             <button
               type="button"
-              onClick={() => switchMode(login ? "signup" : "login")}
-              className="font-medium text-text no-underline hover:underline"
+              onClick={() => {
+                setMode(login ? "signup" : "login");
+                setError("");
+              }}
+              className="font-medium text-accent hover:underline"
             >
-              {login ? "Criar agora" : "Entrar"}
+              {login ? "Criar conta" : "Entrar"}
             </button>
-          </span>
+          </p>
         </form>
       </div>
     </div>

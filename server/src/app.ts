@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
 import { parseLayers, type Layers } from "./render/layers.ts";
+import { pageCount } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
 
@@ -21,6 +22,15 @@ export interface AppDeps {
 interface RenderBody {
   template?: string;
   layers?: Layers;
+  /**
+   * Qual página renderizar, base 1. Ausente = a página ativa que o documento
+   * guardou, que é o comportamento de sempre para template de página única.
+   *
+   * Existe para o carrossel: o documento tem 3 slides e sem isto toda chamada
+   * devolvia a capa. Base 1 porque é o número que o cliente da API usa ao falar
+   * de "página 2"; o índice base 0 fica dentro do renderer.
+   */
+  page?: number;
 }
 
 const BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -37,15 +47,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const owner = await deps.findApiKeyOwner(hashApiKey(token));
     if (!owner) return reply.code(401).send({ error: "invalid or revoked API key" });
 
-    const { template, layers } = request.body ?? {};
+    const { template, layers, page } = request.body ?? {};
     if (!template) return reply.code(400).send({ error: "missing required field: template" });
 
     const row = await deps.findTemplate(template);
     if (!row) return reply.code(404).send({ error: `template not found: ${template}` });
 
+    // Página fora do intervalo é erro, não silêncio: pedir a 4 num carrossel de 3
+    // e receber a 3 faria o chamador achar que gerou o slide que pediu.
+    let pageIndex: number | undefined;
+    if (page !== undefined) {
+      const total = pageCount(row.document);
+      if (!Number.isInteger(page) || page < 1 || page > total) {
+        return reply.code(400).send({
+          error: `page must be an integer between 1 and ${total} for this template`,
+        });
+      }
+      pageIndex = page - 1;
+    }
+
     let png: Buffer;
     try {
-      png = await deps.renderTemplatePng(row.document, parseLayers(layers ?? {}));
+      png = await deps.renderTemplatePng(row.document, parseLayers(layers ?? {}), pageIndex);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(400).send({ error: message });

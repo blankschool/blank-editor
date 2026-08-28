@@ -47,6 +47,34 @@ test("reports that the local API process is healthy", async () => {
   assert.deepEqual(JSON.parse(res.body), { ok: true });
 });
 
+
+const CARROSSEL: TemplateRow = {
+  id: "tpl-carrossel",
+  kind: "custom",
+  name: "Carrossel",
+  document: {
+    active: 0,
+    pages: [
+      { w: 1080, h: 1350, bg: "#000", els: [] },
+      { w: 1080, h: 1350, bg: "#111", els: [] },
+      { w: 1080, h: 1350, bg: "#222", els: [] },
+    ],
+  },
+};
+
+/** deps que também conhecem o carrossel e registram com que página o render foi chamado. */
+function makeMultiPageDeps() {
+  const calls: Array<number | undefined> = [];
+  const deps = makeDeps({
+    findTemplate: async (id) => (id === TPL.id ? TPL : id === CARROSSEL.id ? CARROSSEL : null),
+    renderTemplatePng: async (_document, _layers, pageIndex) => {
+      calls.push(pageIndex);
+      return PNG_BYTES;
+    },
+  });
+  return { deps, calls };
+}
+
 // --- POST /api/v1/render ----------------------------------------------------
 
 test("rejects a render request with no Authorization header", async () => {
@@ -195,4 +223,86 @@ test("DELETE /api/v1/templates/:id removes it, 404s when missing", async () => {
 
   const missing = await app.inject({ method: "DELETE", url: "/api/v1/templates/nope" });
   assert.equal(missing.statusCode, 404);
+});
+
+// --- POST /api/v1/render, seleção de página ---------------------------------
+
+test("renders the document's own active page when no page is requested", async () => {
+  const { deps, calls } = makeMultiPageDeps();
+  const app = buildApp(deps);
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${VALID_KEY}` },
+    payload: { template: CARROSSEL.id },
+  });
+  assert.equal(res.statusCode, 200);
+  // undefined, não 0: o renderer é quem lê `active` do documento. Mandar 0 daqui
+  // passaria por cima de um documento cuja página ativa é outra.
+  assert.deepEqual(calls, [undefined]);
+});
+
+test("renders the requested page, converting the API's 1-based number to a 0-based index", async () => {
+  const { deps, calls } = makeMultiPageDeps();
+  const app = buildApp(deps);
+  for (const page of [1, 2, 3]) {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/render",
+      headers: { authorization: `Bearer ${VALID_KEY}` },
+      payload: { template: CARROSSEL.id, page },
+    });
+    assert.equal(res.statusCode, 200);
+  }
+  assert.deepEqual(calls, [0, 1, 2]);
+});
+
+test("rejects a page beyond the template's last one instead of clamping to it", async () => {
+  const { deps, calls } = makeMultiPageDeps();
+  const app = buildApp(deps);
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${VALID_KEY}` },
+    payload: { template: CARROSSEL.id, page: 4 },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(JSON.parse(res.body).error, /between 1 and 3/);
+  // Não renderizou nada: silenciosamente devolver a página 3 faria o chamador
+  // acreditar que gerou o slide 4.
+  assert.deepEqual(calls, []);
+});
+
+test("rejects page 0 and non-integer pages", async () => {
+  const { deps } = makeMultiPageDeps();
+  const app = buildApp(deps);
+  for (const page of [0, -1, 1.5]) {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/render",
+      headers: { authorization: `Bearer ${VALID_KEY}` },
+      payload: { template: CARROSSEL.id, page },
+    });
+    assert.equal(res.statusCode, 400, `page ${page} deveria ser recusada`);
+  }
+});
+
+test("rejects any page other than 1 on a single-page template", async () => {
+  const { deps } = makeMultiPageDeps();
+  const app = buildApp(deps);
+  const ok = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${VALID_KEY}` },
+    payload: { template: TPL.id, page: 1 },
+  });
+  assert.equal(ok.statusCode, 200);
+  const bad = await app.inject({
+    method: "POST",
+    url: "/api/v1/render",
+    headers: { authorization: `Bearer ${VALID_KEY}` },
+    payload: { template: TPL.id, page: 2 },
+  });
+  assert.equal(bad.statusCode, 400);
+  assert.match(JSON.parse(bad.body).error, /between 1 and 1/);
 });

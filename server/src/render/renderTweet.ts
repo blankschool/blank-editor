@@ -14,12 +14,18 @@ async function toDataUrl(url: string): Promise<string> {
  * a request override first, then — for any image layer not overridden or hidden — the URL the
  * template itself was saved with, if that's a plain http(s) URL rather than an embedded data URI.
  */
-export async function renderTemplatePng(document: unknown, layers: ParsedLayers): Promise<Buffer> {
+export async function renderTemplatePng(
+  document: unknown,
+  layers: ParsedLayers,
+  pageIndex?: number,
+): Promise<Buffer> {
   const toFetch: Record<string, string> = {};
   for (const [name, url] of Object.entries(layers.images)) {
     if (!layers.hidden.has(name)) toFetch[name] = url;
   }
-  for (const { name, src } of listImageLayers(document)) {
+  // As imagens buscadas têm que ser as DESTA página: um carrossel com foto
+  // diferente por slide baixaria a foto errada se olhássemos sempre a capa.
+  for (const { name, src } of listImageLayers(document, pageIndex)) {
     if (layers.hidden.has(name) || toFetch[name]) continue;
     if (src && /^https?:\/\//i.test(src)) toFetch[name] = src;
   }
@@ -30,6 +36,6 @@ export async function renderTemplatePng(document: unknown, layers: ParsedLayers)
   const resolvedImages = Object.fromEntries(fetched);
 
   const overrides: TemplateOverrides = { texts: layers.texts, hidden: layers.hidden };
-  const svg = buildTemplateSvg(document, overrides, resolvedImages);
+  const svg = buildTemplateSvg(document, overrides, resolvedImages, pageIndex);
   return sharp(Buffer.from(svg)).png().toBuffer();
 }

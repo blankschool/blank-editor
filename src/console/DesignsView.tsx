@@ -1,14 +1,12 @@
 import { CloudOff, Plus, Sparkles, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
-import { goToView, loadTemplates, openNamePrompt, recentTemplates, set, useConsole } from "./store";
+import { goToView, loadTemplates, openNewDesign, recentTemplates, set, useConsole } from "./store";
 import { DesignCard } from "./DesignCard";
 
 const SORTS = [{ value: "Recentes" }, { value: "A-Z" }] as const;
 
-function newDesign() {
-  openNamePrompt("new-template", "Nome do novo design");
-}
+const newDesign = openNewDesign;
 
 /** O card grande. Primeira coisa da home: abrir num grid sem ação é o que fazia a tela parecer listagem de servidor. */
 function NewDesignCard() {
@@ -24,7 +22,7 @@ function NewDesignCard() {
       <div className="flex flex-col gap-1.5">
         <span className="font-display text-[15px] font-semibold text-text">Novo design</span>
         <span className="text-xs leading-relaxed text-muted">
-          Canvas em branco. Nomeie as camadas e ele já vira um endpoint.
+          Escolha um modelo pronto. As camadas já vêm nomeadas para a API.
         </span>
       </div>
     </button>

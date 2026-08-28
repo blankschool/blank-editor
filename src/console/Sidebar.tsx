@@ -3,7 +3,7 @@ import { LayoutGrid, Monitor, Moon, PanelLeft, Plus, Search, Settings, Sun } fro
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { cn } from "@/lib/utils";
 import { Segmented } from "@/components/ui/segmented";
-import { DEV_VIEWS, goToView, openNamePrompt, set, useConsole, type View } from "./store";
+import { DEV_VIEWS, goToView, openNewDesign, set, useConsole, type View } from "./store";
 
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof LayoutGrid }> = [
   { view: "designs", label: "Designs", icon: LayoutGrid },
@@ -81,7 +81,7 @@ export function Sidebar() {
       <div className="px-3 pb-3">
         <button
           type="button"
-          onClick={() => openNamePrompt("new-template", "Nome do novo design")}
+          onClick={openNewDesign}
           title={s.collapsed ? "Novo design" : undefined}
           className={cn(
             "flex h-10 w-full items-center gap-2.5 rounded-md bg-accent px-3 text-sm font-medium text-on-accent hover:opacity-90",
