@@ -2,11 +2,17 @@ import type { Doc } from "./types.ts";
 
 const STORAGE_PREFIX = "blank-editor-template-";
 
-/** Per-template local cache, keyed by `doc.seedId` — an offline-friendly mirror of the server's copy. */
+function emitSaved() {
+  try {
+    window.dispatchEvent(new CustomEvent("blank-editor-saved"));
+  } catch { /* non-browser */ }
+}
+
 export function saveTemplateLocally(doc: Doc): void {
   if (!doc.seedId) return;
   try {
     localStorage.setItem(STORAGE_PREFIX + doc.seedId, JSON.stringify(doc));
+    emitSaved();
   } catch { /* quota or blocked storage */ }
 }
 
@@ -21,14 +27,13 @@ export function loadTemplateLocally(id: string): Doc | null {
   }
 }
 
-/** Best-effort: pushes the edited document to the server so the render API sees what's on the canvas. Never throws — the local cache above is the fallback if this fails or the app is offline. */
 export function syncTemplateToServer(doc: Doc): void {
   if (!doc.seedId) return;
   fetch(`/api/v1/templates/${doc.seedId}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: doc.name, document: doc }),
-  }).catch(() => {});
+  }).then((res) => { if (res.ok) emitSaved(); }).catch(() => {});
 }
 
 export async function fetchTemplateFromServer(id: string): Promise<Doc> {
