@@ -1,4 +1,4 @@
-import { Check, CloudOff, LogOut, RefreshCw, Settings, UserRound } from "lucide-react";
+import { LogOut, Settings, UserRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,10 +7,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 import { navigate } from "../router";
 import { clearSession, initials, useSession } from "../session";
-import { goToView, loadTemplates, useConsole } from "./store";
+import { goToView } from "./store";
 import { WORKSPACE } from "./workspace";
 
 function BrandMark() {
@@ -21,43 +20,6 @@ function BrandMark() {
     >
       B
     </div>
-  );
-}
-
-const SYNC_LABEL = {
-  ok: "Tudo no ar",
-  syncing: "Sincronizando…",
-  failed: "Falhou ao sincronizar",
-} as const;
-
-function SyncStatus() {
-  const s = useConsole();
-  const Icon = s.sync === "failed" ? CloudOff : s.sync === "syncing" ? RefreshCw : Check;
-
-  const content = (
-    <>
-      <Icon size={16} strokeWidth={1.8} className={cn("flex-none", s.sync === "syncing" && "animate-spin")} />
-      <span>{SYNC_LABEL[s.sync]}</span>
-    </>
-  );
-
-  if (s.sync !== "failed") {
-    return (
-      <span className="flex items-center gap-2 text-sm text-faint" aria-live="polite">
-        {content}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => loadTemplates()}
-      title="Tentar sincronizar de novo"
-      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-danger hover:bg-danger-bg"
-      aria-live="polite"
-    >
-      {content}
-    </button>
   );
 }
 
@@ -79,7 +41,6 @@ export function AppHeader() {
       </div>
 
       <div className="flex-1" />
-      <SyncStatus />
 
       <DropdownMenu>
         <DropdownMenuTrigger

@@ -50,8 +50,9 @@ export interface ApiKey { id: string; name: string; createdAt: string; revoked: 
 export interface TemplateSummary { id: string; name: string; updatedAt: string; }
 export interface AppDoc { name: string; meta: string; }
 
-/** Um modelo escolhido na tela Gerar — um dos três starters, ou um design já salvo ("Meus"). */
-export type GerarSource = { kind: "starter"; starter: Starter } | { kind: "template"; templateId: string; name: string };
+/** Um modelo escolhido na tela Gerar — sempre um design já salvo da conta ("Meus"). Gerar só
+ *  escreve em cima de um template que já existe, nunca inventa um layout do zero. */
+export interface GerarSource { templateId: string; name: string }
 /** Uma página já gerada: o texto que a IA escreveu (editável) e o PNG resultante. */
 export interface GerarPage { page: number; layers: Record<string, string>; previewUrl: string }
 
@@ -569,16 +570,16 @@ export type { Starter };
 /* ------------------------------ tela "Gerar" ------------------------------ */
 // Endereço da Edge Function (fase 12 do plano de migração) — origem diferente da do console
 // (não passa pelo proxy do Vite/nginx), por isso a chamada usa Authorization: Bearer em vez
-// de cookie. Sem projeto Supabase hospedado ainda (fases 8-11), o padrão é o stack local.
+// de cookie. Vem de .env.production no build de produção; em dev local, cai no stack local.
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL || "http://127.0.0.1:54321/functions/v1";
 
-/** Escolher um modelo novo zera a geração anterior — trocar de Post pra Story no meio não faz
- *  sentido misturar rascunhos. */
+/** Escolher um modelo novo zera a geração anterior — trocar de design no meio não faz sentido
+ *  misturar rascunhos. */
 export function selectGerarSource(source: GerarSource) {
   state.gerarSource = source;
   state.gerarTheme = "";
   state.gerarDraftId = null;
-  state.gerarDraftName = source.kind === "starter" ? source.starter.label : source.name;
+  state.gerarDraftName = source.name;
   state.gerarPages = [];
   state.gerarActivePage = 1;
   state.gerarError = null;
@@ -601,21 +602,17 @@ async function fetchAccessToken(): Promise<string> {
   return accessToken;
 }
 
-/** Garante que existe um design (sempre uma cópia nova — nunca o modelo/design de origem) pra
- *  gerar em cima, criando na primeira chamada e reaproveitando nas próximas (regenerar com um
- *  tema diferente reescreve o mesmo rascunho, até a pessoa confirmar com uma das duas saídas). */
+/** Garante que existe um design (sempre uma cópia nova — nunca o template de origem) pra gerar
+ *  em cima, criando na primeira chamada e reaproveitando nas próximas (regenerar com um tema
+ *  diferente reescreve o mesmo rascunho, até a pessoa confirmar com uma das duas saídas). */
 async function ensureGerarDraft(): Promise<string> {
   if (state.gerarDraftId) return state.gerarDraftId;
   const source = state.gerarSource;
   if (!source) throw new Error("Escolha um modelo primeiro.");
 
-  const document = source.kind === "starter"
-    ? source.starter.build()
-    : await (async () => {
-        const res = await fetch(`/api/v1/templates/${source.templateId}`);
-        if (!res.ok) throw new Error("Não deu para abrir esse design.");
-        return (await res.json()).document;
-      })();
+  const fetched = await fetch(`/api/v1/templates/${source.templateId}`);
+  if (!fetched.ok) throw new Error("Não deu para abrir esse design.");
+  const { document } = await fetched.json();
 
   const res = await fetch("/api/v1/templates", {
     method: "POST",
