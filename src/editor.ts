@@ -173,10 +173,13 @@ const LS = "blank-editor-doc-v1";
 let persistTimer = null;
 function persist() {
   clearTimeout(persistTimer);
+  const st = document.getElementById("saveStatus");
+  if (st) { st.textContent = "Salvando…"; st.dataset.state = "saving"; }
   persistTimer = setTimeout(() => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
     saveTemplateLocally(doc);
     syncTemplateToServer(doc);
+    if (st) { st.textContent = "Salvo"; st.dataset.state = "saved"; }
   }, 400);
 }
 function loadPersisted() {
@@ -1088,7 +1091,6 @@ const TABS = [
   { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
   { id: "draw", label: "Desenho", icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
   { id: "page", label: "Tela", icon: `<path d="M12 3s6.5 6.8 6.5 10.5A6.5 6.5 0 1 1 5.5 13.5C5.5 9.8 12 3 12 3z"/>` },
-  { id: "pages", label: "Páginas", icon: `<rect x="7" y="3" width="10" height="13" rx="1.3"/><path d="M4.5 19.5h15"/><path d="M4.5 21.5h9"/>` },
   { id: "layers", label: "Camadas", icon: `<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>` },
 ];
 function renderRail() {
@@ -1201,6 +1203,10 @@ window.addEventListener("pointerdown", (ev) => {
 
 function renderPanel() {
   const el = $("panel");
+  // The rail no longer offers a Páginas tab — the bottom bar owns page navigation now. Any
+  // "pages" left over reads as no tab at all, so the panel closes instead of showing an index
+  // the rail can't reach.
+  if (activeTab === "pages") activeTab = null;
   el.classList.toggle("pages-index", activeTab === "pages");
   if (!activeTab) { el.hidden = true; return; }
   if (activeTab === "pages") { el.hidden = false; renderPagesPanel(); return; }
@@ -1464,8 +1470,8 @@ async function buildThumbs() {
     await document.fonts.ready;
     for (const p of doc.pages) {
       if (thumbs.has(p.id)) continue;
-      const c = await renderPageCanvas(p, Math.min(0.2, 150 / p.w));
-      thumbs.set(p.id, c.toDataURL("image/jpeg", 0.72));
+      const c = await renderPageCanvas(p, Math.min(1, 720 / p.w));
+      thumbs.set(p.id, c.toDataURL("image/jpeg", 0.92));
       refreshPagesUI();
     }
   } catch (e) { /* a thumbnail is a nicety, never a blocker */ }
