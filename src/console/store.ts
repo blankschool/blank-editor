@@ -53,8 +53,10 @@ export interface AppDoc { name: string; meta: string; }
 /** Um modelo escolhido na tela Gerar — sempre um design já salvo da conta ("Meus"). Gerar só
  *  escreve em cima de um template que já existe, nunca inventa um layout do zero. */
 export interface GerarSource { templateId: string; name: string }
-/** Uma página já gerada: o texto que a IA escreveu (editável) e o PNG resultante. */
-export interface GerarPage { page: number; layers: Record<string, string>; previewUrl: string }
+/** Uma página já gerada: o texto que a IA escreveu (editável), as camadas de imagem que ela
+ *  nunca toca (preenchidas à mão aqui — URL ou upload, mesmo mecanismo do Playground) e o PNG
+ *  resultante. */
+export interface GerarPage { page: number; layers: Record<string, string>; images: Record<string, string>; previewUrl: string }
 
 export interface State {
   view: View;
@@ -648,10 +650,27 @@ export async function runGerarGenerate() {
     state.gerarPages = (body.pages as Array<{ page: number; layers: Record<string, string>; imageBase64: string }>).map((p) => ({
       page: p.page,
       layers: p.layers,
+      images: {},
       previewUrl: `data:image/png;base64,${p.imageBase64}`,
     }));
     state.gerarActivePage = 1;
     state.gerarSaved = false;
+
+    // A IA só escreveu texto — as camadas de imagem (avatar/media) não vêm na resposta da Edge
+    // Function de propósito. Busca o documento salvo mais uma vez só pra saber quais existem e
+    // com que valor, pra dar pra preencher à mão do lado do preview.
+    const tplRes = await fetch(`/api/v1/templates/${templateId}`);
+    if (tplRes.ok) {
+      const { document } = await tplRes.json();
+      const pages: Array<{ els?: Array<{ name?: string; type?: string; src?: string }> }> = document?.pages ?? [];
+      for (const gp of state.gerarPages) {
+        const els = pages[gp.page - 1]?.els ?? [];
+        gp.images = Object.fromEntries(
+          els.filter((el) => el.type === "image" && el.name).map((el) => [el.name as string, el.src ?? ""]),
+        );
+      }
+      notify();
+    }
   } catch (err) {
     state.gerarError = err instanceof Error ? err.message : "Não deu para gerar agora.";
   } finally {
@@ -671,19 +690,44 @@ export function setGerarLayerValue(page: number, name: string, value: string) {
   notify();
 }
 
-/** Corrigir um campo à mão re-renderiza e já grava aquela página — mesmo mecanismo do Playground
- *  com "Salvar como design" ligado, só que embutido, sem exigir chave de API da pessoa. */
-export async function commitGerarLayerEdit(page: number) {
+export function setGerarImageValue(page: number, name: string, value: string) {
+  const target = state.gerarPages.find((p) => p.page === page);
+  if (target) target.images = { ...target.images, [name]: value };
+  notify();
+}
+
+/** Sobe a foto pro bucket privado (mesma rota do Playground) e já grava a página com ela —
+ *  diferente de texto, não faz sentido "esperar sair do campo" depois de um upload. */
+export async function uploadGerarImage(page: number, name: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch("/api/v1/uploads", { method: "POST", body: form });
+    if (!res.ok) return;
+    const { src } = await res.json();
+    setGerarImageValue(page, name, src);
+    await commitGerarPageEdit(page);
+  } catch { /* upload falhou — o campo continua com o que tinha antes */ }
+}
+
+/** Corrigir um campo à mão (texto ou imagem) re-renderiza e já grava aquela página — mesmo
+ *  mecanismo do Playground com "Salvar como design" ligado, só que embutido, sem exigir chave
+ *  de API da pessoa. */
+export async function commitGerarPageEdit(page: number) {
   const target = state.gerarPages.find((p) => p.page === page);
   if (!target || !state.gerarDraftId) return;
   try {
+    const layers: Record<string, { text?: string } | { image_url?: string }> = {};
+    for (const [name, value] of Object.entries(target.layers)) layers[name] = { text: value };
+    for (const [name, value] of Object.entries(target.images)) if (value) layers[name] = { image_url: value };
+
     const res = await fetch("/api/v1/render", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         template: state.gerarDraftId,
         page: state.gerarPages.length > 1 ? page : undefined,
-        layers: Object.fromEntries(Object.entries(target.layers).map(([k, v]) => [k, { text: v }])),
+        layers,
         save: true,
       }),
     });
@@ -691,7 +735,7 @@ export async function commitGerarLayerEdit(page: number) {
     const png = await res.blob();
     target.previewUrl = URL.createObjectURL(png);
     notify();
-  } catch { /* melhor esforço — o texto editado já está na tela de qualquer forma */ }
+  } catch { /* melhor esforço — o que a pessoa editou já está na tela de qualquer forma */ }
 }
 
 /** "Abrir no editor": a geração confirmada vira o design que se abre pra ajustar à mão. */
