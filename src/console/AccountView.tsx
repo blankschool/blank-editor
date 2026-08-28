@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, FileDown, KeyRound, LogOut, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { navigate } from "../router";
+import { clearSession } from "../session";
 import { goToView, useConsole, type View } from "./store";
 import { WORKSPACE, workspaceInitials } from "./workspace";
 
@@ -115,9 +116,16 @@ export function AccountView() {
 
       <div className="flex items-center gap-3 rounded-lg border border-line px-4 py-3.5">
         <span className="flex-1 text-xs text-faint">
-          Sair devolve à tela de login. Ela ainda não autentica ninguém — nada aqui é privado.
+          Sair encerra a sessão deste navegador e devolve à tela de login.
         </span>
-        <Button variant="dangerGhost" size="md" onClick={() => navigate("login")}>
+        <Button
+          variant="dangerGhost"
+          size="md"
+          onClick={() => {
+            clearSession();
+            navigate("login");
+          }}
+        >
           <LogOut size={14} strokeWidth={1.5} />
           Sair
         </Button>

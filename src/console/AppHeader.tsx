@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { navigate } from "../router";
+import { clearSession } from "../session";
 import { goToView, loadTemplates, useConsole } from "./store";
 import { WORKSPACE, workspaceInitials } from "./workspace";
 
@@ -88,7 +89,13 @@ export function AppHeader() {
             Conta
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem danger onSelect={() => navigate("login")}>
+          <DropdownMenuItem
+            danger
+            onSelect={() => {
+              clearSession();
+              navigate("login");
+            }}
+          >
             <LogOut size={16} strokeWidth={1.5} />
             Sair
           </DropdownMenuItem>
