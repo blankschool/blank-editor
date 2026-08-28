@@ -1,13 +1,12 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/** Mesma caixa que .console-field no styles.css, para o console em React e o editor não divergirem. */
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
     <input
       ref={ref}
       className={cn(
-        "h-10 w-full min-w-0 rounded-sm border border-line bg-surface-2 px-2.5 text-[13px] text-text outline-none appearance-none focus:border-line-strong",
+        "h-10 w-full min-w-0 rounded-md border border-line bg-surface px-3 text-sm text-text outline-none appearance-none focus:border-accent focus:ring-2 focus:ring-accent/20",
         className,
       )}
       {...props}
@@ -21,7 +20,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
     <textarea
       ref={ref}
       className={cn(
-        "w-full rounded-sm border border-line bg-inset p-3 font-mono text-xs leading-relaxed text-text outline-none focus:border-line-strong",
+        "w-full rounded-md border border-line bg-surface p-3 font-mono text-sm leading-relaxed text-text outline-none focus:border-accent",
         className,
       )}
       {...props}
