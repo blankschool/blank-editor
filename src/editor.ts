@@ -94,21 +94,21 @@ function pageIndexAtWorldY(y: number): number {
 }
 
 /** How far past the document's own edges the view may travel. A little air, never a plane. */
-const VIEW_MARGIN = 120;
+const VIEW_MARGIN = 48;
 /** The one rule that makes this a document and not an infinite canvas: the page column always
- * stays in the viewport. Vertically the travel spans the stack (centred while it's shorter than
- * the stage); horizontally it stays near the column's centred position, opening up only far
- * enough to reach both edges once the stack is wider than the stage. Every mutation of
+ * stays in the viewport. On each axis, a stack that fits the stage is pinned to the centre —
+ * it cannot be nudged off it at all; only once the stack outgrows the stage does travel open
+ * up, and then just far enough to reach both edges plus VIEW_MARGIN of air. Every mutation of
  * panX/panY/zoom must end here — without it, a zoom-out strands the pages in the grey. */
 function clampView() {
   const s = $("stage").getBoundingClientRect();
   const docH = stackHeight() * zoom, docW = stackWidth() * zoom;
   const cy = (s.height - docH) / 2, cx = (s.width - docW) / 2;
-  panY = docH + VIEW_MARGIN * 2 <= s.height
-    ? clamp(panY, cy - docH * 0.25, cy + docH * 0.25)
+  panY = docH <= s.height
+    ? cy
     : clamp(panY, s.height - docH - VIEW_MARGIN, VIEW_MARGIN);
-  panX = docW + VIEW_MARGIN * 2 <= s.width
-    ? clamp(panX, cx - docW * 0.25, cx + docW * 0.25)
+  panX = docW <= s.width
+    ? cx
     : clamp(panX, s.width - docW - VIEW_MARGIN, VIEW_MARGIN);
 }
 const page = (): Page => doc.pages[clamp(doc.active, 0, doc.pages.length - 1)];
@@ -946,7 +946,7 @@ $("stage").addEventListener("wheel", (ev) => {
     zoomAt(ev.clientX, ev.clientY, zoom * (1 - ev.deltaY * 0.01));
     return;
   }
-  panX -= ev.shiftKey ? ev.deltaY : ev.deltaX;
+  panX -= ev.shiftKey ? ev.deltaY : 0;
   panY -= ev.shiftKey ? 0 : ev.deltaY;
   clampView(); applyWorld(); updateActivePageFromScroll();
 }, { passive: false });
