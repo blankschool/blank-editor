@@ -1,6 +1,7 @@
 import { Info, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { copyText, openNamePrompt, purgeKey, revokeKey, set, useConsole } from "./store";
+import { DevViewHeader } from "./AccountView";
 
 const COLUMNS = "grid grid-cols-[1.2fr_2fr_1fr_92px] gap-4";
 
@@ -37,20 +38,12 @@ export function KeysView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
-      <div className="flex items-center gap-4">
-        <div className="flex flex-col gap-1.5">
-          <span className="font-display text-[15px] font-semibold">Chaves de API</span>
-          <span className="text-xs text-faint">
-            {s.keys.length}
-            {s.keys.length === 1 ? " chave" : " chaves"}
-          </span>
-        </div>
-        <div className="flex-1" />
+      <DevViewHeader title="Chaves de API">
         <Button onClick={() => openNamePrompt("create-key", "Nome da chave (ex: n8n, produção)")}>
           <Plus size={13} strokeWidth={1.8} />
           Criar chave
         </Button>
-      </div>
+      </DevViewHeader>
 
       <NewKeyBanner />
 

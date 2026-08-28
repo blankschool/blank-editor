@@ -5,16 +5,16 @@ import { Dialog, DialogContent, DialogFooter, DialogTitle } from "@/components/u
 import {
   closeNamePrompt,
   confirmNamePrompt,
-  enterView,
+  openConsole,
   runConfirmDialog,
   set,
-  state,
   setNamePromptValue,
   useConsole,
-  viewFromHash,
 } from "./store";
+import { AppHeader } from "./AppHeader";
 import { Sidebar } from "./Sidebar";
-import { TemplatesView } from "./TemplatesView";
+import { DesignsView } from "./DesignsView";
+import { AccountView } from "./AccountView";
 import { PlaygroundView } from "./PlaygroundView";
 import { ImportView } from "./ImportView";
 import { KeysView } from "./KeysView";
@@ -61,7 +61,7 @@ function ConfirmDialog() {
     <Dialog open={Boolean(d)} onOpenChange={(open) => !open && set("confirmDialog", null)}>
       <DialogContent className="max-w-[380px]" showClose={false}>
         <span className="text-[13px] leading-relaxed">
-          {d ? `Excluir o template "${d.name}"? Isso não pode ser desfeito.` : ""}
+          {d ? `Excluir o design “${d.name}”? Isso não pode ser desfeito.` : ""}
         </span>
         <DialogFooter>
           <Button variant="outline" size="lg" className="flex-1" onClick={() => set("confirmDialog", null)}>
@@ -80,34 +80,27 @@ export function ConsoleApp() {
   const s = useConsole();
 
   useEffect(() => {
-    // Lê `state.view`, não `s.view`: o store é um objeto mutável de identidade
-    // fixa, então esta closure de efeito-único enxerga sempre o valor atual —
-    // mas depender disso via a variável de render seria fácil de ler errado.
-    function sync() {
-      const view = viewFromHash();
-      if (view !== state.view) enterView(view);
-    }
-    // Canonicaliza um "#/console" pelado (ou uma sub-rota velha/desconhecida) para a view
-    // realmente mostrada, para barra de endereço, refresh e voltar/avançar concordarem.
-    const view = viewFromHash();
-    if (location.hash.startsWith("#/console") && location.hash !== `#/console/${view}`) {
-      history.replaceState(null, "", `#/console/${view}`);
-    }
-    enterView(view);
-
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
+    // openConsole canonicaliza a URL e revalida; ele é chamado aqui, a cada
+    // hashchange, e também pelo router em main.tsx quando esta view volta a
+    // aparecer depois de uma ida ao editor.
+    openConsole();
+    window.addEventListener("hashchange", openConsole);
+    return () => window.removeEventListener("hashchange", openConsole);
     // Roda uma vez: o console monta junto com o app e nunca desmonta (o router
     // troca as três views por display), então isto é setup de ciclo de vida.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div data-tw-root className="flex min-h-screen flex-col bg-bg text-text">
+    <div data-tw-root className="flex h-screen flex-col bg-bg text-text">
+      <AppHeader />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
-        <main className="flex min-w-0 flex-1 flex-col">
-          {s.view === "templates" && <TemplatesView />}
+        {/* overflow-y no main, não no body: o body tem overflow:hidden por causa do
+            editor, então sem isso a home com muitos designs não rola. */}
+        <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+          {s.view === "designs" && <DesignsView />}
+          {s.view === "account" && <AccountView />}
           {s.view === "playground" && <PlaygroundView />}
           {s.view === "import" && <ImportView />}
           {s.view === "keys" && <KeysView />}

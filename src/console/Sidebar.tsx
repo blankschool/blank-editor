@@ -1,15 +1,22 @@
 import { useState } from "react";
-import { LayoutGrid, TerminalSquare, Upload, KeyRound, PanelLeft, Search, Monitor, Sun, Moon } from "lucide-react";
+import { LayoutGrid, Monitor, Moon, PanelLeft, Plus, Search, Settings, Sun } from "lucide-react";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { cn } from "@/lib/utils";
 import { Segmented } from "@/components/ui/segmented";
-import { goToView, set, useConsole, type View } from "./store";
+import { DEV_VIEWS, goToView, openNamePrompt, set, useConsole, type View } from "./store";
 
+/**
+ * Três itens, não quatro de peso igual.
+ *
+ * O menu antigo era Templates / Playground / Importar / Chaves: quatro entradas
+ * do mesmo tamanho, sendo três delas ferramentas de integração. Isso descreve a
+ * API, não o produto. Agora é Designs (a única coisa que se faz aqui todo dia),
+ * Novo (ação, não destino — por isso é botão e não link) e Conta, que abriga o
+ * bloco Desenvolvedor com playground, importação e chaves.
+ */
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof LayoutGrid }> = [
-  { view: "templates", label: "Templates", icon: LayoutGrid },
-  { view: "playground", label: "Playground", icon: TerminalSquare },
-  { view: "import", label: "Importar", icon: Upload },
-  { view: "keys", label: "Chaves de API", icon: KeyRound },
+  { view: "designs", label: "Designs", icon: LayoutGrid },
+  { view: "account", label: "Conta", icon: Settings },
 ];
 
 const THEME_OPTIONS = [
@@ -68,12 +75,7 @@ export function Sidebar() {
         s.collapsed ? "w-16" : "w-56",
       )}
     >
-      <div className={cn("flex items-center gap-2.5 px-3 pb-3.5", s.collapsed && "justify-center")}>
-        {expanded && (
-          <span className="flex-1 whitespace-nowrap font-display text-xs font-semibold -tracking-[0.01em]">
-            Blank Editor
-          </span>
-        )}
+      <div className={cn("flex items-center px-3 pb-3", s.collapsed ? "justify-center" : "justify-end")}>
         <button
           type="button"
           title={s.collapsed ? "Expandir menu" : "Recolher menu"}
@@ -86,8 +88,23 @@ export function Sidebar() {
         </button>
       </div>
 
+      <div className="px-2 pb-2">
+        <button
+          type="button"
+          onClick={() => openNamePrompt("new-template", "Nome do novo design")}
+          title={s.collapsed ? "Novo design" : undefined}
+          className={cn(
+            "flex h-9 w-full items-center gap-2.5 rounded-sm bg-accent px-2.5 text-xs font-medium text-on-accent hover:opacity-90",
+            s.collapsed && "justify-center px-0",
+          )}
+        >
+          <Plus size={15} strokeWidth={2} className="flex-none" />
+          {expanded && <span className="whitespace-nowrap">Novo design</span>}
+        </button>
+      </div>
+
       {expanded && (
-        <div className="px-2 pb-3.5">
+        <div className="px-2 pb-3.5 pt-1.5">
           <div className="flex h-8 items-center gap-2 rounded-sm border border-line bg-surface-2 px-2.5">
             <Search size={12} strokeWidth={1.5} className="flex-none text-faint" />
             <input
@@ -101,13 +118,11 @@ export function Sidebar() {
         </div>
       )}
 
-      {expanded && (
-        <div className="px-4 pb-2 text-[10px] uppercase tracking-[0.1em] text-faint">Plataforma</div>
-      )}
-
       <nav className="flex flex-col gap-0.5 px-2">
         {NAV.map(({ view, label, icon: Icon }) => {
-          const active = s.view === view;
+          // Conta fica marcada enquanto qualquer tela de desenvolvedor está aberta:
+          // playground, importação e chaves vivem debaixo dela agora.
+          const active = s.view === view || (view === "account" && DEV_VIEWS.includes(s.view));
           return (
             <button
               key={view}

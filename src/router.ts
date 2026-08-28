@@ -9,8 +9,11 @@
 export type Route = "login" | "console" | "editor";
 
 const ROUTES: Route[] = ["login", "console", "editor"];
-// Login has no real auth behind it yet — disabled for now, so the app boots straight into the
-// console instead of a screen that doesn't actually gate anything.
+// Login has no real auth behind it yet, so it is not the boot route — landing on a screen that
+// doesn't actually gate anything is worse than skipping it. But it is reachable on purpose:
+// "Sair" in the account menu navigates there, and being shown a login you asked for is a
+// different thing from being blocked by one. So only an EMPTY/unknown hash falls through to
+// the console; an explicit #/login is honoured.
 const DEFAULT_ROUTE: Route = "console";
 
 export function navigate(route: Route) {
@@ -22,7 +25,6 @@ export function initRouter(views: Record<Route, HTMLElement>, onShow: Partial<Re
     // Only the first path segment identifies the top-level route — a page can have its own
     // sub-routes after that (e.g. "#/console/keys"), which this router doesn't need to know about.
     const first = location.hash.replace(/^#\/?/, "").split("/")[0] as Route;
-    if (first === "login") return DEFAULT_ROUTE;
     return ROUTES.includes(first) ? first : DEFAULT_ROUTE;
   }
 

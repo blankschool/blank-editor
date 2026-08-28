@@ -17,6 +17,7 @@ import { initRouter, navigate } from "./router";
 import { mountEditor } from "./editor";
 import { initTheme } from "./theme";
 import { ConsoleApp } from "./console/ConsoleApp";
+import { openConsole } from "./console/store";
 import { LoginApp } from "./login/LoginApp";
 
 initTheme();
@@ -38,6 +39,9 @@ document.getElementById("backToConsole")?.addEventListener("click", () => naviga
 
 initRouter(views, {
   editor: mountEditor,
+  // O console revalida ao reaparecer: voltar do editor tem que mostrar o design
+  // que você acabou de criar ou renomear em "Seus designs".
+  console: openConsole,
 });
 
 window.addEventListener("blank-editor-saved", () => {

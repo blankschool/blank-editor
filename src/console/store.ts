@@ -23,9 +23,20 @@ import { openTemplateById } from "../editor";
  * serviria como snapshot.
  */
 
-export type View = "templates" | "playground" | "import" | "keys";
-export const VIEWS: View[] = ["templates", "playground", "import", "keys"];
-const DEFAULT_VIEW: View = "templates";
+export type View = "designs" | "account" | "playground" | "import" | "keys";
+export const VIEWS: View[] = ["designs", "account", "playground", "import", "keys"];
+const DEFAULT_VIEW: View = "designs";
+
+/**
+ * As três telas de desenvolvedor. Deixaram de ser item de menu — o menu antigo
+ * tinha quatro entradas de peso igual (Templates / Playground / Importar /
+ * Chaves), o que descrevia a API e não o produto. Agora vivem sob Conta, e a
+ * navegação marca "Conta" como ativa enquanto qualquer uma delas está aberta.
+ */
+export const DEV_VIEWS: View[] = ["playground", "import", "keys"];
+
+/** Rotas que existiam antes da reorganização, para link antigo e favorito não caírem em 404 silencioso. */
+const VIEW_ALIASES: Record<string, View> = { templates: "designs" };
 
 export type LayerType = "text" | "image";
 export type Lang = "JavaScript" | "Python" | "cURL" | "PHP";
@@ -71,6 +82,14 @@ export interface State {
   layersLoadedForId: string | null;
   search: string;
   confirmDialog: { kind: "delete-template"; id: string; name: string } | null;
+  /**
+   * Saúde da sincronização com a API, mostrada no header como "Tudo no ar" /
+   * "Falhou ao sincronizar". Sai de requisição real — qualquer fetch do console
+   * que falhe ou volte !ok marca "failed" — e não de um indicador decorativo.
+   */
+  sync: "ok" | "syncing" | "failed";
+  /** Id do design cujo nome está sendo editado no próprio card. */
+  renamingId: string | null;
 }
 
 export const state: State = {
@@ -107,6 +126,8 @@ export const state: State = {
   layersLoadedForId: null,
   search: "",
   confirmDialog: null,
+  sync: "ok",
+  renamingId: null,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -173,6 +194,8 @@ export const JSON_PLACEHOLDER =
 export function viewFromHash(): View {
   const match = /^#\/console\/([a-z]+)/.exec(location.hash);
   const candidate = match?.[1];
+  if (!candidate) return DEFAULT_VIEW;
+  if (VIEW_ALIASES[candidate]) return VIEW_ALIASES[candidate];
   return VIEWS.includes(candidate as View) ? (candidate as View) : DEFAULT_VIEW;
 }
 
@@ -180,11 +203,41 @@ export function goToView(view: View) {
   location.hash = `/console/${view}`;
 }
 
+/**
+ * Ponto de entrada do console: ao montar, a cada hashchange e a cada vez que o
+ * router volta a mostrar a view (o `onShow` em main.tsx).
+ *
+ * Faz duas coisas que antes não aconteciam:
+ *
+ *  - Canonicaliza a URL sempre, não só na montagem. `#/console/templates` (rota
+ *    antiga) resolvia para a view Designs mas a barra de endereço continuava
+ *    mostrando a rota velha, e um F5 ali repetia a tradução para sempre.
+ *  - Revalida ao reaparecer. Antes, criar um design ia para o editor e voltar
+ *    não recarregava nada: o hashchange comparava a view (que não tinha mudado)
+ *    e desistia, então o design novo simplesmente não estava em "Seus designs".
+ *    Numa home que promete os últimos editados, isso é defeito, não detalhe.
+ */
+export function openConsole() {
+  const view = viewFromHash();
+  if (location.hash.startsWith("#/console") && location.hash !== `#/console/${view}`) {
+    history.replaceState(null, "", `#/console/${view}`);
+  }
+  if (view !== state.view) {
+    enterView(view);
+    return;
+  }
+  // Mesma view: revalida o que pode ter mudado fora do console (o editor salva,
+  // renomeia e cria). `templatesLoaded` false significa "alguém invalidou".
+  if (!state.templatesLoaded) loadTemplates();
+  else if (view === "designs") loadTemplates();
+  notify();
+}
+
 export function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
-  // O playground escolhe da mesma lista, então também precisa dos templates carregados, não só a aba Templates.
-  if ((view === "templates" || view === "playground") && !state.templatesLoaded) loadTemplates();
+  // O playground escolhe da mesma lista, então também precisa dos designs carregados, não só a home.
+  if ((view === "designs" || view === "playground") && !state.templatesLoaded) loadTemplates();
   if (view === "playground" && state.templateId && state.layersLoadedForId !== state.templateId) {
     loadLayersForTemplate(state.templateId);
   }
@@ -287,12 +340,34 @@ export function setLayerValue(id: number, value: string) {
 
 /* ---------------------------- templates ---------------------------- */
 
-export async function loadTemplates() {
+/**
+ * Guarda de requisição em voo. O openConsole é chamado por dois caminhos no
+ * boot — o onShow do router e o efeito de montagem do ConsoleApp — e sem isto
+ * a lista era buscada duas vezes em toda abertura.
+ */
+let templatesInFlight: Promise<void> | null = null;
+
+export function loadTemplates(): Promise<void> {
+  templatesInFlight ??= fetchTemplates().finally(() => { templatesInFlight = null; });
+  return templatesInFlight;
+}
+
+async function fetchTemplates() {
   state.templatesLoaded = true;
+  state.sync = "syncing";
+  notify();
   try {
     const res = await fetch("/api/v1/templates");
-    if (res.ok) state.templates = await res.json();
-  } catch { /* offline — mantém o que já estava carregado */ }
+    if (res.ok) {
+      state.templates = await res.json();
+      state.sync = "ok";
+    } else {
+      state.sync = "failed";
+    }
+  } catch {
+    // offline — mantém o que já estava carregado, mas diz que está desatualizado
+    state.sync = "failed";
+  }
   // O template selecionado no playground tem que existir de verdade — não há mais um default
   // fixo (um banco novo/de produção começa com zero templates).
   if (!state.templates.some((t) => t.id === state.templateId)) {
@@ -301,6 +376,11 @@ export async function loadTemplates() {
   }
   if (state.templateId && state.view === "playground") await loadLayersForTemplate(state.templateId);
   notify();
+}
+
+/** Os designs mexidos mais recentemente. O servidor já devolve ordenado por updatedAt desc (db.ts e local.ts), então é só cortar. */
+export function recentTemplates(count = 3): TemplateSummary[] {
+  return state.templates.slice(0, count);
 }
 
 /** Remonta os campos do playground a partir dos elementos text/image nomeados que o template realmente tem — template diferente tem campos diferentes, então não pode ser lista fixa. */
@@ -339,7 +419,7 @@ async function createNewTemplate(name: string): Promise<string | null> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, document: blank }),
   });
-  if (!res.ok) return "Não foi possível criar o template.";
+  if (!res.ok) return "Não foi possível criar o design.";
   const { id } = await res.json();
   state.templatesLoaded = false; // força refetch na próxima vez que Templates abrir
   await openTemplateById(id); // também atualiza a URL para #/editor/<id>, que o router casa
@@ -356,7 +436,7 @@ function parseTemplateJson(raw: string): { name: string; document: unknown } | n
   }
   const candidate = parsed as { name?: string; pages?: unknown[] } | null;
   if (!candidate || !Array.isArray(candidate.pages) || candidate.pages.length === 0) return null;
-  return { name: candidate.name || "Template importado", document: candidate };
+  return { name: candidate.name || "Design importado", document: candidate };
 }
 
 export async function importTemplateJson() {
@@ -368,13 +448,46 @@ export async function importTemplateJson() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(parsed),
   });
-  if (!res.ok) { state.jsonError = "O servidor recusou esse template."; notify(); return; }
+  if (!res.ok) { state.jsonError = "O servidor recusou esse documento."; notify(); return; }
   const { id } = await res.json();
   state.templatesLoaded = false;
   state.jsonDraft = "";
   state.jsonModalOpen = false;
-  state.lastAdded = `JSON importado como template "${parsed.name}".`;
+  state.lastAdded = `JSON importado como o design “${parsed.name}”.`;
   await openTemplateById(id); // também atualiza a URL para #/editor/<id>
+}
+
+export function startRenaming(id: string | null) {
+  state.renamingId = id;
+  notify();
+}
+
+/**
+ * Renomear direto no card. Diferente do renameTemplate do modal: atualiza a
+ * lista local na hora em vez de refetchar tudo, porque quem acabou de digitar o
+ * nome não deve ver o card piscar de volta para o antigo antes de virar.
+ */
+export async function renameTemplateInline(id: string, name: string) {
+  state.renamingId = null;
+  const trimmed = name.trim();
+  const current = state.templates.find((t) => t.id === id);
+  if (!trimmed || !current || trimmed === current.name) { notify(); return; }
+  state.templates = state.templates.map((t) => (t.id === id ? { ...t, name: trimmed } : t));
+  notify();
+  try {
+    const res = await fetch(`/api/v1/templates/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    state.sync = "ok";
+  } catch {
+    // Reverte: o card não pode continuar mostrando um nome que o servidor recusou.
+    state.templates = state.templates.map((t) => (t.id === id ? { ...t, name: current.name } : t));
+    state.sync = "failed";
+  }
+  notify();
 }
 
 async function renameTemplate(id: string, name: string): Promise<string | null> {
@@ -427,8 +540,12 @@ export async function loadKeys() {
   state.keysLoaded = true; // antes do await, para um segundo notify durante o load não refetchar
   try {
     const res = await fetch("/api/v1/keys");
-    if (res.ok) state.keys = await res.json();
-  } catch { /* offline — o console segue mostrando o que já carregou */ }
+    if (res.ok) { state.keys = await res.json(); state.sync = "ok"; }
+    else state.sync = "failed";
+  } catch {
+    // offline — o console segue mostrando o que já carregou, sinalizando que está velho
+    state.sync = "failed";
+  }
   notify();
 }
 

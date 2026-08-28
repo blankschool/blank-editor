@@ -2,6 +2,7 @@ import { Copy, Image as ImageIcon, Play, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
+import { DevViewHeader } from "./AccountView";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   copyCode,
@@ -56,7 +57,9 @@ export function PlaygroundView() {
       : "Preencha as camadas e clique em “Gerar render” para ver o resultado aqui.";
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[380px_minmax(0,1fr)] items-start gap-5 p-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
+      <DevViewHeader title="Playground" />
+      <div className="grid min-h-0 flex-1 grid-cols-[380px_minmax(0,1fr)] items-start gap-5">
       <div className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-4.5">
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-medium">Template</span>
@@ -75,16 +78,16 @@ export function PlaygroundView() {
                 </SelectContent>
               </Select>
               <Button variant="ghost" onClick={() => openTemplateById(s.templateId)} className="border border-line">
-                Editar template no canvas
+                Abrir no canvas
               </Button>
             </>
           ) : (
             <button
               type="button"
-              onClick={() => goToView("templates")}
+              onClick={() => goToView("designs")}
               className="rounded-sm border border-dashed border-line p-3 text-center text-xs text-faint hover:text-muted"
             >
-              nenhum template ainda — crie um em Templates
+              nenhum design ainda — crie um em Designs
             </button>
           )}
         </div>
@@ -174,6 +177,7 @@ export function PlaygroundView() {
             {snippetFor(s.lang)}
           </pre>
         </div>
+      </div>
       </div>
     </div>
   );

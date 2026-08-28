@@ -15,6 +15,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Falha em vez de migrar para 5174. Sem isto o Vite muda de porta em
+    // silêncio quando a 5173 está ocupada, e você fica olhando uma instância
+    // antiga achando que é a nova — o pior tipo de bug de ambiente.
+    strictPort: true,
     proxy: {
       "/api": "http://127.0.0.1:8787",
       "/health": "http://127.0.0.1:8787",
