@@ -1,7 +1,8 @@
 /* Chrome único — ícones e hit targets. Sobrescreve width/height dos SVG inline. */
 :root {
-  --icon: 16px;
-  --hit: 32px;
+  --icon: 18px;
+  --hit: 36px;
+  --page-unscale: 1;
 }
 
 .topbar .iconbtn,
@@ -26,14 +27,37 @@
   height: var(--icon);
 }
 
+/* Cabeçalho da página vive DENTRO do world (scale do zoom). Compensamos
+ * com --page-unscale para os botões ficarem em pixels de tela. */
+.pagehead {
+  transform: scale(var(--page-unscale));
+  transform-origin: left bottom;
+  margin-bottom: 14px;
+  min-height: 36px;
+}
+.plabel2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pageminis {
+  gap: 4px;
+}
 .pmini {
-  width: 28px;
-  height: 28px;
+  width: var(--hit);
+  height: var(--hit);
+}
+
+.addpagebtn {
+  transform: scale(var(--page-unscale));
+  transform-origin: center top;
+  height: 44px;
+  font-size: 13px;
 }
 
 .layer .mini {
-  width: 28px;
-  height: 28px;
+  width: var(--hit);
+  height: var(--hit);
 }
 
 .zoomctl button {
@@ -46,18 +70,55 @@
   height: var(--hit);
 }
 
+.bbtn {
+  height: var(--hit);
+  font-size: 13px;
+}
 .bbtn.iconbtn {
   width: var(--hit);
   height: var(--hit);
 }
+.zoomval,
+.fitbtn {
+  font-size: 13px;
+}
 
-/* A aba Páginas no rail duplica o documento + faixa + grade. Some da UI. */
+.rail {
+  width: 72px;
+}
+.railbtn {
+  width: 64px;
+  height: 56px;
+  font-size: 11px;
+  gap: 4px;
+}
+.railbtn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ptitle {
+  font-size: 14px;
+}
+.phint {
+  font-size: 12.5px;
+}
+
+.tile {
+  height: 64px;
+  font-size: 12px;
+}
+.tile svg {
+  width: 24px;
+  height: 24px;
+}
+
 .railbtn[data-tab="pages"] {
   display: none !important;
 }
 
 .savestatus {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
   padding: 0 8px;
