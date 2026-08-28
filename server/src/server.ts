@@ -5,10 +5,12 @@ import {
   createDb,
   createApiKey,
   createTemplate,
+  createWorkspace,
   deleteApiKey,
   deleteTemplate,
   findApiKeyOwner,
   findTemplate,
+  findWorkspaceByEmail,
   listApiKeys,
   listTemplates,
   revokeApiKey,
@@ -44,6 +46,8 @@ if (DATABASE_URL) {
     },
     revokeApiKey: (id) => revokeApiKey(sql, id),
     deleteApiKey: (id) => deleteApiKey(sql, id),
+    findWorkspaceByEmail: (email) => findWorkspaceByEmail(sql, email),
+    createWorkspace: ({ name, email }) => createWorkspace(sql, { id: randomUUID(), name, email }),
     renderTemplatePng,
   };
 } else {

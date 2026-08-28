@@ -27,6 +27,8 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     createApiKey: async (name) => ({ id: "new-key", name, secret: "blk_live_generated", createdAt: "2024-01-01T00:00:00.000Z" }),
     revokeApiKey: async (id) => id === "key-1",
     deleteApiKey: async (id) => id === "revoked-key",
+    findWorkspaceByEmail: async () => null,
+    createWorkspace: async ({ name, email }) => ({ id: "new-workspace", name, email }),
     renderTemplatePng: async () => PNG_BYTES,
     ...overrides,
   };
@@ -305,4 +307,62 @@ test("rejects any page other than 1 on a single-page template", async () => {
   });
   assert.equal(bad.statusCode, 400);
   assert.match(JSON.parse(bad.body).error, /between 1 and 1/);
+});
+
+// --- POST /api/v1/workspace, GET /api/v1/workspace/by-email/:email --------
+
+test("signing up creates a workspace and returns it with a 201", async () => {
+  const app = buildApp(makeDeps({
+    findWorkspaceByEmail: async () => null,
+    createWorkspace: async ({ name, email }) => ({ id: "ws-1", name, email }),
+  }));
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspace",
+    payload: { name: "Studio do Miguel", email: "miguel@blankschool.com.br" },
+  });
+  assert.equal(res.statusCode, 201);
+  assert.deepEqual(JSON.parse(res.body), { id: "ws-1", name: "Studio do Miguel", email: "miguel@blankschool.com.br" });
+});
+
+test("rejects signup with a missing name or email", async () => {
+  const app = buildApp(makeDeps());
+  for (const payload of [{ email: "a@b.com" }, { name: "A" }, {}]) {
+    const res = await app.inject({ method: "POST", url: "/api/v1/workspace", payload });
+    assert.equal(res.statusCode, 400, `payload ${JSON.stringify(payload)} deveria ser recusado`);
+  }
+});
+
+test("rejects signup when the e-mail is already taken, without calling createWorkspace", async () => {
+  let created = false;
+  const app = buildApp(makeDeps({
+    findWorkspaceByEmail: async () => ({ id: "ws-existing", name: "Já existe", email: "miguel@blankschool.com.br" }),
+    createWorkspace: async ({ name, email }) => {
+      created = true;
+      return { id: "should-not-happen", name, email };
+    },
+  }));
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspace",
+    payload: { name: "Outro nome", email: "miguel@blankschool.com.br" },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.equal(created, false);
+});
+
+test("logging in finds the workspace by e-mail", async () => {
+  const app = buildApp(makeDeps({
+    findWorkspaceByEmail: async (email) =>
+      email === "miguel@blankschool.com.br" ? { id: "ws-1", name: "Studio do Miguel", email } : null,
+  }));
+  const res = await app.inject({ method: "GET", url: "/api/v1/workspace/by-email/miguel@blankschool.com.br" });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { id: "ws-1", name: "Studio do Miguel", email: "miguel@blankschool.com.br" });
+});
+
+test("logging in with an unknown e-mail is a 404, not a silent success", async () => {
+  const app = buildApp(makeDeps({ findWorkspaceByEmail: async () => null }));
+  const res = await app.inject({ method: "GET", url: "/api/v1/workspace/by-email/nao-existe@example.com" });
+  assert.equal(res.statusCode, 404);
 });

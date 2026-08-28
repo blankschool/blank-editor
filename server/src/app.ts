@@ -3,7 +3,7 @@ import { extractBearerToken, hashApiKey } from "./auth.ts";
 import { parseLayers, type Layers } from "./render/layers.ts";
 import { pageCount } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
-import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary, Workspace } from "./db.ts";
 
 export interface AppDeps {
   findApiKeyOwner: (keyHash: string) => Promise<ApiKeyOwner | null>;
@@ -16,6 +16,8 @@ export interface AppDeps {
   createApiKey: (name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
   revokeApiKey: (id: string) => Promise<boolean>;
   deleteApiKey: (id: string) => Promise<boolean>;
+  findWorkspaceByEmail: (email: string) => Promise<Workspace | null>;
+  createWorkspace: (input: { name: string; email: string }) => Promise<Workspace>;
   renderTemplatePng: typeof renderTemplatePng;
 }
 
@@ -141,6 +143,30 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const deleted = await deps.deleteApiKey(request.params.id);
     if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
     return reply.code(204).send();
+  });
+
+  // The console's login/signup: real rows in the workspaces table, real 404/409,
+  // no mocked identity in the client anymore. What it is NOT is a password
+  // check — see the comment on the `workspaces` table in schema.sql for why
+  // that's deliberately a separate, later piece of work.
+  app.get<{ Params: { email: string } }>("/api/v1/workspace/by-email/:email", async (request, reply) => {
+    const workspace = await deps.findWorkspaceByEmail(decodeURIComponent(request.params.email));
+    if (!workspace) return reply.code(404).send({ error: "no account with this e-mail" });
+    return workspace;
+  });
+
+  app.post<{ Body: { name?: string; email?: string } }>("/api/v1/workspace", async (request, reply) => {
+    const name = request.body?.name?.trim();
+    const email = request.body?.email?.trim();
+    if (!name || !email) return reply.code(400).send({ error: "missing required field: name, email" });
+    // Check-then-create rather than relying on the table's unique constraint and
+    // catching the error: this app has exactly one writer per environment (no
+    // concurrent signups racing for the same e-mail in practice), so the small
+    // TOCTOU window isn't worth reaching into postgres.js's error shape for.
+    const existing = await deps.findWorkspaceByEmail(email);
+    if (existing) return reply.code(409).send({ error: "an account with this e-mail already exists" });
+    const workspace = await deps.createWorkspace({ name, email });
+    return reply.code(201).send(workspace);
   });
 
   return app;

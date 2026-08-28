@@ -36,6 +36,12 @@ export interface ApiKeySummary {
   revoked: boolean;
 }
 
+export interface Workspace {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export async function findTemplate(sql: Sql, id: string): Promise<TemplateRow | null> {
   const rows = await sql<TemplateRow[]>`
     select id, kind, name, document from templates where id = ${id}
@@ -122,4 +128,24 @@ export async function revokeApiKey(sql: Sql, id: string): Promise<boolean> {
 export async function deleteApiKey(sql: Sql, id: string): Promise<boolean> {
   const rows = await sql`delete from api_keys where id = ${id} and revoked_at is not null returning id`;
   return rows.length > 0;
+}
+
+/** Case-insensitive: the same address typed with a different case is the same account. */
+export async function findWorkspaceByEmail(sql: Sql, email: string): Promise<Workspace | null> {
+  const rows = await sql<Workspace[]>`
+    select id, name, email from workspaces where email = ${email.toLowerCase()}
+  `;
+  return rows[0] ?? null;
+}
+
+export async function createWorkspace(
+  sql: Sql,
+  input: { id: string; name: string; email: string },
+): Promise<Workspace> {
+  const rows = await sql<Workspace[]>`
+    insert into workspaces (id, name, email)
+    values (${input.id}, ${input.name}, ${input.email.toLowerCase()})
+    returning id, name, email
+  `;
+  return rows[0];
 }
