@@ -113,6 +113,32 @@ export function useSessionStatus(): SessionStatus {
   return useSyncExternalStore(subscribe, () => status, () => status);
 }
 
+const DEFAULT_KEY_PREFIX = "blank-editor-default-key:";
+
+/**
+ * A "Chave padrão" criada automaticamente no signup (server/src/app.ts) só existe em texto puro
+ * uma vez — o servidor guarda só o hash, nunca o segredo. Pra ela continuar pré-preenchida no
+ * Playground depois (o pedido original: "toda conta já vem com API key pronta e definida no
+ * playground"), o segredo fica cacheado aqui, por conta (ownerId), neste navegador — decisão
+ * tomada no planejamento: some se limpar os dados ou trocar de navegador/dispositivo, e nesse
+ * caso a pessoa gera uma chave nova, não tem como recuperar a antiga.
+ */
+export function saveDefaultApiKey(ownerId: string, secret: string): void {
+  try {
+    localStorage.setItem(DEFAULT_KEY_PREFIX + ownerId, secret);
+  } catch {
+    /* armazenamento bloqueado — só não pré-preenche da próxima vez */
+  }
+}
+
+export function getDefaultApiKey(ownerId: string): string | null {
+  try {
+    return localStorage.getItem(DEFAULT_KEY_PREFIX + ownerId);
+  } catch {
+    return null;
+  }
+}
+
 /** Initials for the avatar — first letter of up to two words, skipping short connectors ("do", "de", "da"). */
 export function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter((word) => word.length > 2);

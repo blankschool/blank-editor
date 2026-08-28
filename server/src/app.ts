@@ -9,6 +9,7 @@ import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
 import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary, Workspace } from "./db.ts";
 import {
   clearSessionCookies,
+  getAccessCookie,
   getRefreshCookie,
   refreshSession,
   resolveSessionFromCookies,
@@ -374,6 +375,20 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null): FastifyIn
     const user = await resolveSessionFromCookies(request, a.client);
     if (!user) return reply.code(401).send({ error: "not signed in" });
     return user;
+  });
+
+  // Só existe pra tela "Gerar": o navegador não consegue ler o cookie httpOnly sozinho, mas
+  // precisa de um jeito de anexar "quem está logado" na chamada à Edge Function (que é uma
+  // origem diferente — cookie nenhum atravessa isso). Devolve o mesmo JWT que já está no
+  // cookie, só que como o corpo de uma resposta same-origin, pra virar Authorization: Bearer
+  // na chamada seguinte. Só funciona por já haver uma sessão de cookie válida — não é um jeito
+  // novo de logar, é a mesma sessão vista de outro ângulo.
+  app.get("/api/v1/auth/token", async (request, reply) => {
+    const a = requireAuthConfigured(reply);
+    if (!a) return;
+    const user = await resolveSessionFromCookies(request, a.client);
+    if (!user) return reply.code(401).send({ error: "not signed in" });
+    return { accessToken: getAccessCookie(request) };
   });
 
   return app;
