@@ -9,6 +9,7 @@ import {
   filledLayers,
   goToView,
   openTemplateById,
+  selectPage,
   selectTemplate,
   set,
   setLayerValue,
@@ -91,6 +92,23 @@ export function PlaygroundView() {
             </button>
           )}
         </div>
+
+        {/* Só para template de mais de uma página. É o que torna um carrossel
+            utilizável pela API: mesma chamada, `page` diferente por slide. */}
+        {s.templatePages > 1 && (
+          <div className="flex flex-col gap-2">
+            <span className="text-[13px] font-medium">Página</span>
+            <Segmented
+              aria-label="Página do template"
+              value={String(s.page)}
+              onValueChange={(v) => selectPage(Number(v))}
+              options={Array.from({ length: s.templatePages }, (_, i) => ({ value: String(i + 1) }))}
+            />
+            <span className="text-xs text-faint">
+              Cada página é um render. Os campos abaixo são os desta.
+            </span>
+          </div>
+        )}
 
         <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor="apiKey" className="text-xs text-muted">

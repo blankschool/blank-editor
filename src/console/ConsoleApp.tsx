@@ -12,6 +12,7 @@ import {
   useConsole,
 } from "./store";
 import { AppHeader } from "./AppHeader";
+import { NewDesignDialog } from "./NewDesignDialog";
 import { Sidebar } from "./Sidebar";
 import { DesignsView } from "./DesignsView";
 import { AccountView } from "./AccountView";
@@ -106,6 +107,7 @@ export function ConsoleApp() {
           {s.view === "keys" && <KeysView />}
         </main>
       </div>
+      <NewDesignDialog />
       <NamePromptDialog />
       <ConfirmDialog />
     </div>

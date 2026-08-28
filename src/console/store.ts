@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { openTemplateById } from "../editor";
+import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
 
 /**
  * O estado e as ações do console, portados de src/pages/console.ts sem mudança
@@ -78,8 +79,17 @@ export interface State {
   templatesLoaded: boolean;
   jsonDraft: string;
   jsonError: string | null;
-  namePrompt: { kind: "new-template" | "create-key" | "rename-template"; title: string; value: string; error: string | null; id?: string } | null;
+  namePrompt: { kind: "create-key" | "rename-template"; title: string; value: string; error: string | null; id?: string } | null;
+  /** O seletor de modelo — o que "Novo design" abre agora, em vez de um canvas em branco. */
+  newDesignOpen: boolean;
+  /** Id do modelo sendo criado, para o cartão clicado mostrar que está trabalhando. */
+  creating: Starter["id"] | "blank" | null;
+  createError: string | null;
   layersLoadedForId: string | null;
+  /** Quantas páginas o template escolhido tem — o seletor de página só aparece acima de uma. */
+  templatePages: number;
+  /** Página do playground, base 1, igual ao parâmetro `page` da API. */
+  page: number;
   search: string;
   confirmDialog: { kind: "delete-template"; id: string; name: string } | null;
   /**
@@ -124,10 +134,15 @@ export const state: State = {
   jsonError: null,
   namePrompt: null,
   layersLoadedForId: null,
+  templatePages: 1,
+  page: 1,
   search: "",
   confirmDialog: null,
   sync: "ok",
   renamingId: null,
+  newDesignOpen: false,
+  creating: null,
+  createError: null,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -259,23 +274,33 @@ function requestLayers(): Record<string, { text?: string; image_url?: string }> 
   );
 }
 
+/** Só manda `page` quando faz diferença: num template de página única o campo seria ruído no exemplo. */
+function requestBody(): Record<string, unknown> {
+  const body: Record<string, unknown> = { template: state.templateId };
+  if (state.templatePages > 1) body.page = state.page;
+  body.layers = requestLayers();
+  return body;
+}
+
 export function snippetFor(lang: Lang): string {
   const s = state;
   const jsonLayers = JSON.stringify(requestLayers());
+  const pageArg = s.templatePages > 1 ? `"page": ${s.page}, ` : "";
+  const pagePy = s.templatePages > 1 ? `"page": ${s.page}, ` : "";
   const key = s.apiKey || "SUA_API_KEY";
   const url = `${location.origin}/api/v1/render`;
   const tid = s.templateId;
 
   if (lang === "Python") {
-    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", "layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
+    return `import requests\n\nr = requests.post(\n    "${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json={"template": "${tid}", ${pagePy}"layers": ${jsonLayers}},\n)\nr.raise_for_status()\nopen("twitter.png", "wb").write(r.content)`;
   }
   if (lang === "cURL") {
-    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}","layers":${jsonLayers}}' \\\n  --output twitter.png`;
+    return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"template":"${tid}",${s.templatePages > 1 ? `"page":${s.page},` : ""}"layers":${jsonLayers}}' \\\n  --output twitter.png`;
   }
   if (lang === "PHP") {
-    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n        "layers"   => $layers,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
+    return `$png = Http::withToken("${key}")\n    ->post("${url}", [\n        "template" => "${tid}",\n${s.templatePages > 1 ? `        "page"     => ${s.page},\n` : ""}        "layers"   => $layers,\n    ])->throw()->body();\n\nfile_put_contents("twitter.png", $png);`;
   }
-  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template: "${tid}", layers: ${jsonLayers} }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
+  return `const response = await fetch("${url}", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json",\n    Authorization: "Bearer ${key}",\n  },\n  body: JSON.stringify({ template: "${tid}", ${pageArg}layers: ${jsonLayers} }),\n});\n\nif (!response.ok) throw new Error(await response.text());\nconst png = await response.blob();`;
 }
 
 export async function startRender() {
@@ -302,10 +327,7 @@ export async function startRender() {
         "content-type": "application/json",
         authorization: `Bearer ${state.apiKey}`,
       },
-      body: JSON.stringify({
-        template: state.templateId,
-        layers: requestLayers(),
-      }),
+      body: JSON.stringify(requestBody()),
     });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
 
@@ -390,7 +412,12 @@ export async function loadLayersForTemplate(id: string) {
     const res = await fetch(`/api/v1/templates/${id}`);
     if (!res.ok) return;
     const { document } = await res.json();
-    const page = document?.pages?.[document?.active || 0];
+    const pages: unknown[] = Array.isArray(document?.pages) ? document.pages : [];
+    state.templatePages = Math.max(1, pages.length);
+    if (state.page > state.templatePages) state.page = 1;
+    // Os campos são os DA PÁGINA escolhida: num carrossel cada slide pode declarar
+    // camadas diferentes, e mostrar sempre as da capa daria um formulário errado.
+    const page = pages[state.page - 1] as { els?: unknown[] } | undefined;
     const els: Array<{ name?: string; type?: string; text?: string; src?: string }> = Array.isArray(page?.els) ? page.els : [];
     state.layers = els
       .filter((el): el is { name: string; type: string; text?: string; src?: string } => Boolean(el?.name) && (el?.type === "text" || el?.type === "image"))
@@ -408,23 +435,70 @@ export function selectTemplate(id: string) {
   state.templateId = id;
   state.rendered = false;
   state.response = null;
+  state.page = 1;
+  state.templatePages = 1;
   loadLayersForTemplate(id);
   notify();
 }
 
-async function createNewTemplate(name: string): Promise<string | null> {
-  const blank = { name, active: 0, pages: [{ id: "page-1", w: 1080, h: 1350, bg: "#000000", els: [] }] };
-  const res = await fetch("/api/v1/templates", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, document: blank }),
-  });
-  if (!res.ok) return "Não foi possível criar o design.";
-  const { id } = await res.json();
-  state.templatesLoaded = false; // força refetch na próxima vez que Templates abrir
-  await openTemplateById(id); // também atualiza a URL para #/editor/<id>, que o router casa
-  return null;
+export function selectPage(page: number) {
+  state.page = page;
+  state.layersLoadedForId = null; // força reler os campos: outra página, outros campos
+  if (state.templateId) loadLayersForTemplate(state.templateId);
+  notify();
 }
+
+export function openNewDesign() {
+  state.newDesignOpen = true;
+  state.createError = null;
+  notify();
+}
+
+export function closeNewDesign() {
+  if (state.creating) return; // não fecha no meio de uma criação
+  state.newDesignOpen = false;
+  notify();
+}
+
+/**
+ * Cria a partir de um modelo e vai direto para o editor. `starter` nulo é o
+ * documento em branco.
+ *
+ * Sem pedir nome no caminho: a promessa é "primeiro design em 30 segundos", e um
+ * campo obrigatório antes de ver qualquer coisa é justamente o passo que sobra.
+ * O nome vem do modelo e pode ser trocado no card ou no topo do editor depois.
+ */
+export async function createFromStarter(starter: Starter | null) {
+  if (state.creating) return;
+  state.creating = starter?.id ?? "blank";
+  state.createError = null;
+  notify();
+
+  const document = starter ? starter.build() : blankDocument();
+  try {
+    const res = await fetch("/api/v1/templates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: document.name, document }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const { id } = await res.json();
+    state.templatesLoaded = false; // força refetch quando o console reaparecer
+    state.newDesignOpen = false;
+    state.sync = "ok";
+    state.creating = null;
+    notify();
+    await openTemplateById(id); // também atualiza a URL para #/editor/<id>, que o router casa
+  } catch {
+    state.creating = null;
+    state.sync = "failed";
+    state.createError = "Não deu para criar agora. O servidor não respondeu.";
+    notify();
+  }
+}
+
+export { STARTERS };
+export type { Starter };
 
 /** Valida um JSON colado/enviado o suficiente para tentar abrir — o editor é o juiz real de usabilidade. */
 function parseTemplateJson(raw: string): { name: string; document: unknown } | null {
@@ -609,10 +683,7 @@ export async function confirmNamePrompt() {
   const p = state.namePrompt;
   if (!p || !p.value.trim()) return;
   const name = p.value.trim();
-  let error: string | null;
-  if (p.kind === "new-template") error = await createNewTemplate(name);
-  else if (p.kind === "create-key") error = await createKey(name);
-  else error = await renameTemplate(p.id!, name);
+  const error = p.kind === "create-key" ? await createKey(name) : await renameTemplate(p.id!, name);
   if (error) { if (state.namePrompt) state.namePrompt.error = error; notify(); return; }
   state.namePrompt = null;
   notify();

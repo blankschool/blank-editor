@@ -22,7 +22,8 @@ ocupada o comando recusa subir e diz qual processo está na frente, em vez de
 migrar de porta em silêncio.
 
 Depois acesse `http://localhost:5173`. Em **Designs**, clique num card para
-editar no canvas, ou use **Novo design**. Para testar a API, vá em **Conta →
+editar no canvas, ou use **Novo design** e escolha um dos três modelos (post,
+story, carrossel) — todos já vêm com as camadas nomeadas que a API preenche. Para testar a API, vá em **Conta →
 Desenvolvedor → Playground**, escolha o design, preencha os campos e clique em
 **Gerar render**. A chave local é `blk_local_dev`; esse modo não precisa de
 banco de dados.
@@ -46,6 +47,7 @@ src/
 │
 │   ── React + Tailwind + shadcn/ui ──
 ├── console/          store.ts (estado + ações), AppHeader, Sidebar e as views
+│                     starterTemplates.ts: os 3 modelos de partida
 ├── login/            LoginApp.tsx
 ├── components/ui/    componentes shadcn (button, input, dialog, select…)
 ├── lib/utils.ts      cn()
@@ -97,6 +99,28 @@ O endpoint `POST http://localhost:8787/api/v1/render` exige
 `Authorization: Bearer blk_local_dev` e devolve o PNG diretamente. O Vite faz
 proxy de `/api` para esse servidor, por isso o playground funciona em
 `localhost:5173`.
+
+```jsonc
+{
+  "template": "<id do design>",
+  "page": 2,            // opcional; base 1, só faz sentido em design de várias páginas
+  "layers": {
+    "titulo": { "text": "Primeiro ponto" },
+    "imagem": { "image_url": "https://exemplo.com/foto.jpg" },
+    "rodape": { "hide": true }
+  }
+}
+```
+
+As chaves de `layers` são os **nomes das camadas** do design — um elemento sem
+nome é decoração, não campo. Omitir uma camada mantém o que o editor salvou.
+
+`page` existe por causa do carrossel. Sem ele o render devolvia sempre a página
+ativa, então um design de três slides gerava três vezes a mesma capa. Os modelos
+de carrossel usam os mesmos nomes de camada nas três páginas de propósito: é uma
+chamada só, variando `page` de 1 a 3. Página fora do intervalo é recusada com
+400 em vez de cair na mais próxima — devolver a página 3 para quem pediu a 4
+faria o chamador acreditar que gerou o slide que pediu.
 
 O servidor de produção continua aceitando `DATABASE_URL`; `dev:local` usa
 somente a chave e os templates em memória.
