@@ -27,13 +27,27 @@
   height: var(--icon);
 }
 
-/* Cabeçalho da página vive DENTRO do world (scale do zoom). Compensamos
- * com --page-unscale para os botões ficarem em pixels de tela. */
-.pagehead {
+/* O cabeçalho da página e o botão de adicionar vivem DENTRO do world, então o
+ * zoom os encolhe junto com a página; --page-unscale os devolve a pixels de
+ * tela. A compensação NÃO pode ir no container: os dois são caixas da largura
+ * da página (.pagehead é left:0/right:0, .addpagebtn recebe width=stackW), e
+ * escalar a caixa escala a largura — o que jogava os ícones, alinhados à
+ * direita, para fora da página. Quem escala é o conteúdo, cada parte ancorada
+ * no seu próprio lado; a caixa continua do tamanho da página. */
+/* .pagewrap .pagehead, não só .pagehead: este arquivo é importado ANTES do
+ * styles.css, então em empate de especificidade ele perde — e styles.css
+ * declara `margin-bottom: 12px` no mesmo seletor. */
+.pagewrap .pagehead {
+  margin-bottom: calc(12px * var(--page-unscale));
+  min-height: calc(22px * var(--page-unscale));
+}
+.pagehead .plabel2 {
   transform: scale(var(--page-unscale));
-  transform-origin: left bottom;
-  margin-bottom: 14px;
-  min-height: 36px;
+  transform-origin: left center;
+}
+.pagehead .pageminis {
+  transform: scale(var(--page-unscale));
+  transform-origin: right center;
 }
 .plabel2 {
   font-size: 14px;
@@ -48,11 +62,29 @@
   height: var(--hit);
 }
 
+/* Largura vem da página (inline, em world px) e fica intacta — só o peso
+ * visual é devolvido a pixels de tela. O topo é o centro do vão entre as
+ * páginas, então o translateY(-50%) mantém o botão centrado com qualquer altura. */
 .addpagebtn {
-  transform: scale(var(--page-unscale));
-  transform-origin: center top;
-  height: 44px;
-  font-size: 13px;
+  transform: translateY(-50%);
+  height: calc(44px * var(--page-unscale));
+  font-size: calc(13px * var(--page-unscale));
+  border-radius: calc(8px * var(--page-unscale));
+  border-width: calc(1.5px * var(--page-unscale));
+  gap: calc(7px * var(--page-unscale));
+}
+.addpagebtn svg {
+  width: calc(var(--icon) * var(--page-unscale));
+  height: calc(var(--icon) * var(--page-unscale));
+}
+/* O botão do painel de páginas não vive no world: sem zoom, sem compensação. */
+#addPagePanel {
+  transform: none;
+  height: 40px;
+  font-size: 12px;
+  border-radius: 8px;
+  border-width: 1.5px;
+  gap: 7px;
 }
 
 .layer .mini {
@@ -126,16 +158,3 @@
 .savestatus[data-state="saving"] { color: var(--muted); }
 .savestatus[data-state="saved"] { color: var(--faint); }
 
-.tplcard-thumb {
-  padding: 0;
-  overflow: hidden;
-}
-.tplcard-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.tplcard-thumb img[data-broken] {
-  display: none;
-}

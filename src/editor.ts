@@ -73,7 +73,11 @@ const imgCache = new Map<string, HTMLImageElement>();
 
 // Pages stack vertically in one continuous canvas (Canva-style), separated by this gap —
 // wide enough to fit each page's floating header (label + move/hide/duplicate/delete).
-const PAGE_GAP = 64;
+// Also the vertical budget for the page chrome: the header sits in the gap ABOVE each page
+// and the add-page button in the gap below the stack, both sized in screen px (see
+// --page-unscale in chrome.css). 64 was too tight for that once the chrome stopped
+// shrinking with the zoom — the label and icons spilled onto the pages.
+const PAGE_GAP = 96;
 function pageTop(i: number): number {
   let y = 0;
   for (let k = 0; k < i; k++) y += doc.pages[k].h + PAGE_GAP;
@@ -357,7 +361,9 @@ function renderCanvas() {
         .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
         .join("")}</div>
     </div>`).join("") +
-    `<div class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + PAGE_GAP / 2 - 20}px; width:${stackW}px;">
+    // top is the CENTRE of the gap below the stack — the button centres itself on it with
+    // translateY(-50%), so its height can track the zoom without drifting off centre.
+    `<div class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + PAGE_GAP / 2}px; width:${stackW}px;">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Adicionar página
     </div>`;
@@ -1361,7 +1367,7 @@ function renderProps() {
   const shows = { fill: ["rect", "ellipse", "triangle", "star", "line", "text", "icon"].includes(t), stroke: ["rect", "ellipse", "image", "draw"].includes(t), radius: ["rect", "image"].includes(t) };
 
   box.innerHTML = `
-    ${one ? `<div class="sec"><h4>Camada</h4><div class="field"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
+    ${one ? `<div class="sec"><h4>Camada</h4><div class="field" title="Nome desta camada — é o que aparece na lista Camadas"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
 
     <div class="sec"><h4>Organizar</h4>
       <div class="seg" style="margin-bottom:6px">
@@ -1387,40 +1393,40 @@ function renderProps() {
 
     ${one ? `<div class="sec"><h4>Posição e tamanho</h4>
       <div class="grid2" style="gap:6px">
-        <div class="field"><label>X</label><input id="pX" value="${Math.round(e.x)}"></div>
-        <div class="field"><label>Y</label><input id="pY" value="${Math.round(e.y)}"></div>
-        <div class="field"><label>L</label><input id="pW" value="${Math.round(e.w)}"></div>
-        <div class="field"><label>A</label><input id="pH" value="${Math.round(e.h)}" ${t === "text" ? "disabled" : ""}></div>
-        <div class="field"><label>∠</label><input id="pR" value="${Math.round(e.rot)}"></div>
+        <div class="field" title="X — distância da borda esquerda da página, em px"><label>X</label><input id="pX" value="${Math.round(e.x)}"></div>
+        <div class="field" title="Y — distância do topo da página, em px"><label>Y</label><input id="pY" value="${Math.round(e.y)}"></div>
+        <div class="field" title="Largura, em px"><label>L</label><input id="pW" value="${Math.round(e.w)}"></div>
+        <div class="field" title="${t === "text" ? "Altura — automática no texto, definida pelo conteúdo" : "Altura, em px"}"><label>A</label><input id="pH" value="${Math.round(e.h)}" ${t === "text" ? "disabled" : ""}></div>
+        <div class="field" title="Rotação, em graus"><label>∠</label><input id="pR" value="${Math.round(e.rot)}"></div>
       </div></div>` : ""}
 
     ${shows.fill ? `<div class="sec"><h4>${t === "text" ? "Cor do texto" : "Preenchimento"}</h4>
-      <div class="grid4" style="margin-bottom:7px">${PALETTE.map((c) => `<button class="swatch" style="height:26px;background:${c}" data-fill="${c}" aria-pressed="${(e.fill || "").toLowerCase() === c}"></button>`).join("")}</div>
-      <div class="field"><input type="color" id="pFill" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}"></div></div>` : ""}
+      <div class="grid4" style="margin-bottom:7px">${PALETTE.map((c) => `<button class="swatch" style="height:26px;background:${c}" data-fill="${c}" aria-pressed="${(e.fill || "").toLowerCase() === c}" title="${t === "text" ? "Cor do texto" : "Preenchimento"} ${c}"></button>`).join("")}</div>
+      <div class="field" title="${t === "text" ? "Cor do texto — escolha livre" : "Preenchimento — cor livre"}"><input type="color" id="pFill" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}"></div></div>` : ""}
 
     ${t === "text" ? `<div class="sec"><h4>Tipografia</h4>
-      <select class="field" id="pFont" style="width:100%;margin-bottom:6px">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>
+      <select class="field" id="pFont" title="Fonte" style="width:100%;margin-bottom:6px">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>
       <div class="row" style="margin-bottom:6px">
-        <div class="field" style="flex:1"><label>Corpo</label><input id="pSize" value="${e.size}"></div>
-        <div class="field" style="flex:1"><label>Entrelinha</label><input id="pLh" value="${e.lh}"></div>
+        <div class="field" style="flex:1" title="Corpo — tamanho da fonte, em px"><label>Corpo</label><input id="pSize" value="${e.size}"></div>
+        <div class="field" style="flex:1" title="Entrelinha — altura da linha como múltiplo do corpo (1,2 = 120%)"><label>Entrelinha</label><input id="pLh" value="${e.lh}"></div>
       </div>
-      <div class="field" style="margin-bottom:6px"><label>Espaçamento</label><input id="pLs" value="${e.ls}"></div>
+      <div class="field" style="margin-bottom:6px" title="Espaçamento entre letras, em px"><label>Espaçamento</label><input id="pLs" value="${e.ls}"></div>
       <div class="seg" style="margin-bottom:6px">
-        <button data-tw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800">B</button>
-        <button data-tw="italic" aria-pressed="${!!e.italic}" style="font-style:italic;font-family:Lora,serif">I</button>
-        <button data-tw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline">U</button>
+        <button data-tw="bold" aria-pressed="${e.weight >= 700}" title="Negrito" style="font-weight:800">B</button>
+        <button data-tw="italic" aria-pressed="${!!e.italic}" title="Itálico" style="font-style:italic;font-family:Lora,serif">I</button>
+        <button data-tw="underline" aria-pressed="${!!e.underline}" title="Sublinhado" style="text-decoration:underline">U</button>
       </div>
-      <div class="seg">${["left", "center", "right"].map((a) => `<button data-ta="${a}" aria-pressed="${e.align === a}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="${a === "left" ? "M4 12h10" : a === "center" ? "M7 12h10" : "M10 12h10"}"/><path d="${a === "left" ? "M4 18h13" : a === "center" ? "M5.5 18h13" : "M7 18h13"}"/></svg></button>`).join("")}</div>
+      <div class="seg">${["left", "center", "right"].map((a) => `<button data-ta="${a}" aria-pressed="${e.align === a}" title="Alinhar texto ${PT_ALIGN[a === "center" ? "cx" : a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="${a === "left" ? "M4 12h10" : a === "center" ? "M7 12h10" : "M10 12h10"}"/><path d="${a === "left" ? "M4 18h13" : a === "center" ? "M5.5 18h13" : "M7 18h13"}"/></svg></button>`).join("")}</div>
     </div>` : ""}
 
     ${shows.stroke ? `<div class="sec"><h4>${t === "draw" ? "Traço" : "Borda"}</h4>
-      <div class="row"><div class="field" style="flex:0 0 54px"><input type="color" id="pStroke" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}"></div>
-      <div class="field" style="flex:1"><label>Espessura</label><input id="pSW" value="${e.strokeWidth || 0}"></div></div></div>` : ""}
+      <div class="row"><div class="field" style="flex:0 0 54px" title="${t === "draw" ? "Cor do traço" : "Cor da borda"}"><input type="color" id="pStroke" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}"></div>
+      <div class="field" style="flex:1" title="${t === "draw" ? "Espessura do traço, em px" : "Espessura da borda, em px — 0 esconde a borda"}"><label>Espessura</label><input id="pSW" value="${e.strokeWidth || 0}"></div></div></div>` : ""}
 
-    ${shows.radius ? `<div class="sec"><h4>Raio dos cantos</h4><div class="field" style="width:96px"><input id="pRad" value="${e.radius || 0}"></div></div>` : ""}
+    ${shows.radius ? `<div class="sec"><h4>Raio dos cantos</h4><div class="field" style="width:96px" title="Raio dos cantos, em px — 0 deixa os cantos retos"><input id="pRad" value="${e.radius || 0}"></div></div>` : ""}
 
     <div class="sec"><h4>Opacidade</h4>
-      <div class="row"><input type="range" id="pOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}">
+      <div class="row" title="Opacidade — 0% invisível, 100% opaco"><input type="range" id="pOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}">
       <span class="num" style="width:38px;text-align:right;color:var(--muted)">${Math.round((e.opacity ?? 1) * 100)}%</span></div>
     </div>`;
 }

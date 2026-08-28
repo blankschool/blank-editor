@@ -66,6 +66,22 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
   ]);
   const apiKeys = new Map<string, StoredApiKey>();
 
+  /**
+   * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
+   * updated_at é do Postgres, não do documento; aqui é só o equivalente em
+   * memória. Antes listTemplates devolvia `new Date(0)` para todo mundo, o que
+   * fazia o console mostrar "editado há 56 anos" em dev — e sem data confiável
+   * não há como julgar a home nem ordenar os recentes.
+   */
+  const touchedAt = new Map<string, string>();
+  const touch = (id: string) => touchedAt.set(id, new Date().toISOString());
+  // Escalona os seeds em minutos distintos para "os últimos editados" ter uma
+  // ordem estável em vez de empatar no mesmo instante de boot.
+  const bootedAt = Date.now();
+  [SEED_TEMPLATE_WITH_PHOTO.id, SEED_TEMPLATE.id].forEach((id, i) => {
+    touchedAt.set(id, new Date(bootedAt - (i + 1) * 60_000).toISOString());
+  });
+
   return {
     findApiKeyOwner: async (keyHash) => {
       if (keyHash === configuredHash) return { id: "local", name: "local development" };
@@ -75,14 +91,18 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
 
     findTemplate: async (id) => templates.get(id) ?? null,
 
+    // Mais recente primeiro, igual ao `order by updated_at desc` do Postgres em
+    // db.ts — a home mostra os últimos editados e as duas pontas têm que
+    // concordar na ordem.
     listTemplates: async () =>
       [...templates.values()]
-        .map((t) => ({ id: t.id, name: t.name, updatedAt: new Date(0).toISOString() }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .map((t) => ({ id: t.id, name: t.name, updatedAt: touchedAt.get(t.id) ?? new Date(bootedAt).toISOString() }))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
 
     createTemplate: async ({ name, document }) => {
       const row: TemplateRow = { id: randomUUID(), kind: "custom", name, document };
       templates.set(row.id, row);
+      touch(row.id);
       return row;
     },
 
@@ -95,10 +115,14 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
         document: document !== undefined ? document : existing.document,
       };
       templates.set(id, updated);
+      touch(id);
       return updated;
     },
 
-    deleteTemplate: async (id) => templates.delete(id),
+    deleteTemplate: async (id) => {
+      touchedAt.delete(id);
+      return templates.delete(id);
+    },
 
     listApiKeys: async () => [...apiKeys.values()].map(({ keyHash: _keyHash, ...summary }) => summary),
 

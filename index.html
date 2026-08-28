@@ -13,8 +13,11 @@
 <div id="view-editor" style="display:none; height:100%">
 <div class="app">
   <header class="topbar" id="topbar">
-    <button class="tbtn ghost iconbtn" id="backToConsole" title="Voltar para o console" aria-label="Voltar">
+    <!-- Com rótulo, sem a classe iconbtn: um chevron sozinho não diz para onde volta,
+         e "voltar" no topo esquerdo de um editor pode ser lido como desfazer. -->
+    <button class="tbtn ghost" id="backToConsole" title="Voltar para os seus designs">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+      Meus designs
     </button>
     <div class="menuwrap">
       <button class="tbtn ghost" id="fileMenuBtn" aria-haspopup="menu" aria-expanded="false">Arquivo</button>
@@ -118,6 +121,6 @@
 <input type="file" id="fileImgReplace" accept="image/*" hidden>
 <input type="file" id="fileJson" accept="application/json,.json" hidden>
 </div>
-<script type="module" src="/src/main.ts"></script>
+<script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

@@ -8,50 +8,88 @@ API que o n8n (ou qualquer cliente HTTP) pode chamar.
 ## Rodar
 
 ```bash
-npm install     # uma vez
-npm run dev     # localhost com recarga instantânea
-npm run build   # gera dist/ (build normal, servido por qualquer host estático)
+npm install              # uma vez
+cd server && npm install # uma vez, as deps da API
+cd ..
+
+npm run dev              # front + API juntos, Ctrl+C encerra os dois
 ```
 
-Para usar o playground e renderizar templates localmente, abra outro terminal:
+`npm run dev` sobe as duas metades porque separadas elas não formam um app: o
+Vite faz proxy de `/api` para `127.0.0.1:8787`, e sem a API o console abre sem
+nenhum design e o playground não renderiza. Se alguma das portas já estiver
+ocupada o comando recusa subir e diz qual processo está na frente, em vez de
+migrar de porta em silêncio.
 
-```bash
-cd server
-npm install     # uma vez
-npm run dev:local
-```
-
-Depois acesse `http://localhost:5173`. Em **Templates**, clique num card para
-editar no canvas, ou **Novo template** / **Importar → JSON** para criar um.
-Volte ao console, escolha o template no **Playground**, preencha os campos e
-clique em **Gerar render**. A chave local é `blk_local_dev`; esse modo não
-precisa de banco de dados.
+Depois acesse `http://localhost:5173`. Em **Designs**, clique num card para
+editar no canvas, ou use **Novo design**. Para testar a API, vá em **Conta →
+Desenvolvedor → Playground**, escolha o design, preencha os campos e clique em
+**Gerar render**. A chave local é `blk_local_dev`; esse modo não precisa de
+banco de dados.
 
 | Comando | O que faz |
 | --- | --- |
-| `npm run dev` | servidor de desenvolvimento com hot reload |
+| `npm run dev` | front (5173) + API de render (8787), com encerramento conjunto |
+| `npm run dev:web` | só o Vite, para quando a API já está rodando por fora |
 | `npm run build` | checa tipos e gera `dist/` |
 | `npm run check` | só a checagem de tipos |
 | `npm test` | testa o documento editável do Twitter |
 
 ## Estrutura
 
+O app tem duas metades com tecnologias diferentes, e isso é intencional:
+
 ```
 src/
-├── editor.ts        núcleo do canvas: estado, render, entrada, painéis, exportação
-├── templateStore.ts fetch/create/save de templates no servidor, com cache local
-├── types.ts         modelo do documento (El, Page, Doc)
-├── pdf.ts           escritor de PDF — módulo folha, sem estado do editor
+├── main.tsx          entry: monta as raízes React e chama mountEditor()
 ├── router.ts         roteamento por hash (login/console/editor)
-├── pages/            console.ts, login.ts
-└── styles.css
+│
+│   ── React + Tailwind + shadcn/ui ──
+├── console/          store.ts (estado + ações), AppHeader, Sidebar e as views
+├── login/            LoginApp.tsx
+├── components/ui/    componentes shadcn (button, input, dialog, select…)
+├── lib/utils.ts      cn()
+├── app.css           tema Tailwind: tokens do shadcn como ALIAS do styles.css
+│
+│   ── DOM imperativo ──
+├── editor.ts         núcleo do canvas: estado, render, entrada, painéis, exportação
+├── styles.css        design system + todo o chrome do editor
+├── chrome.css        ícones e hit targets do editor
+│
+│   ── compartilhado ──
+├── templateStore.ts  fetch/create/save de templates no servidor, com cache local
+├── types.ts          modelo do documento (El, Page, Doc)
+├── theme.ts          claro/escuro/sistema
+└── pdf.ts            escritor de PDF — módulo folha, sem estado do editor
 
+scripts/dev.mjs       sobe front + API juntos (o `npm run dev`)
 server/               API de render (Fastify) — ver server/README/Dockerfile
 ```
 
+O console tem três destinos, não quatro: **Designs** (a home), **Novo design**
+(ação) e **Conta**. Playground, importação de JSON e chaves de API vivem em
+Conta → Desenvolvedor — são ferramentas de integração, e no menu principal
+faziam a navegação descrever a API em vez do produto.
+
 `editor.ts` continua sendo um módulo só, de propósito: `doc`, `sel`, `tool` e
 `zoom` são lidos e escritos por quase toda função ali. Fatiar isso é refatoração
-para fazer **atrás dos testes**, não antes deles.
+para fazer **atrás dos testes**, não antes deles. Por isso o editor **não** foi
+migrado para React: `main.tsx` monta o markup fixo do `index.html` e chama
+`mountEditor()` uma vez. Todo o chrome do editor (rail, painéis, toolbelt,
+bottombar, modais) nasce de `innerHTML` dentro do `editor.ts`, amarrado a ~50
+IDs do `index.html` — Tailwind não alcança nada disso, e é por isso que
+`styles.css` continua existindo em vez de ser absorvido.
+
+As duas metades compartilham **uma** fonte de verdade de cor. `app.css` não copia
+valores: declara os tokens do Tailwind/shadcn como alias dos tokens semânticos do
+`styles.css` (`--color-surface: var(--surface)`), que já resolvem claro/escuro em
+três formas. Consequência prática: o console não tem uma única classe `dark:`, e
+mudar uma cor no `styles.css` muda as duas metades juntas.
+
+Duas armadilhas de cascata resolvidas em `app.css`, documentadas lá em detalhe:
+o Tailwind entra **sem preflight** (um reset global zeraria o chrome do editor) e
+**sem `@layer`** (estilo fora de layer vence estilo dentro de layer, então
+`button { background: none }` do `styles.css` apagaria todo `bg-*` do console).
 
 ## API local
 
