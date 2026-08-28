@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { openTemplateById } from "../editor";
+import { getDefaultApiKey, getSession } from "../session";
 import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
 
 /**
@@ -24,8 +25,8 @@ import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
  * serviria como snapshot.
  */
 
-export type View = "designs" | "account" | "playground" | "import" | "keys";
-export const VIEWS: View[] = ["designs", "account", "playground", "import", "keys"];
+export type View = "designs" | "gerar" | "account" | "playground" | "import" | "keys";
+export const VIEWS: View[] = ["designs", "gerar", "account", "playground", "import", "keys"];
 const DEFAULT_VIEW: View = "designs";
 
 /**
@@ -48,6 +49,11 @@ export interface Layer { id: number; type: LayerType; name: string; value: strin
 export interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
 export interface TemplateSummary { id: string; name: string; updatedAt: string; }
 export interface AppDoc { name: string; meta: string; }
+
+/** Um modelo escolhido na tela Gerar — um dos três starters, ou um design já salvo ("Meus"). */
+export type GerarSource = { kind: "starter"; starter: Starter } | { kind: "template"; templateId: string; name: string };
+/** Uma página já gerada: o texto que a IA escreveu (editável) e o PNG resultante. */
+export interface GerarPage { page: number; layers: Record<string, string>; previewUrl: string }
 
 export interface State {
   view: View;
@@ -102,6 +108,25 @@ export interface State {
   sync: "ok" | "syncing" | "failed";
   /** Id do design cujo nome está sendo editado no próprio card. */
   renamingId: string | null;
+
+  /* ------------------------- tela "Gerar" (IA) ------------------------- */
+  /** O modelo escolhido pra gerar em cima — um starter ou um design salvo. */
+  gerarSource: GerarSource | null;
+  gerarTheme: string;
+  /**
+   * O design (sempre novo, nunca o modelo/design de origem) que a geração escreve. Criado na
+   * hora do primeiro "Gerar" pra esse `gerarSource`; `null` significa "ainda não gerou nada
+   * pra esse modelo". Vira `null` de novo depois de "Abrir no editor"/"Salvar como design novo"
+   * — confirmar aquela geração começa a próxima do zero, em vez de continuar reescrevendo o
+   * mesmo rascunho.
+   */
+  gerarDraftId: string | null;
+  gerarDraftName: string;
+  gerarGenerating: boolean;
+  gerarError: string | null;
+  gerarPages: GerarPage[];
+  gerarActivePage: number;
+  gerarSaved: boolean;
 }
 
 export const state: State = {
@@ -146,6 +171,16 @@ export const state: State = {
   newDesignOpen: false,
   creating: null,
   createError: null,
+
+  gerarSource: null,
+  gerarTheme: "",
+  gerarDraftId: null,
+  gerarDraftName: "",
+  gerarGenerating: false,
+  gerarError: null,
+  gerarPages: [],
+  gerarActivePage: 1,
+  gerarSaved: false,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -255,9 +290,16 @@ export function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
   // O playground escolhe da mesma lista, então também precisa dos designs carregados, não só a home.
-  if ((view === "designs" || view === "playground") && !state.templatesLoaded) loadTemplates();
+  if ((view === "designs" || view === "playground" || view === "gerar") && !state.templatesLoaded) loadTemplates();
   if (view === "playground" && state.templateId && state.layersLoadedForId !== state.templateId) {
     loadLayersForTemplate(state.templateId);
+  }
+  // A "Chave padrão" de cada conta fica cacheada no navegador (session.ts) — sem isso, a pessoa
+  // precisaria copiar a chave em "Chaves de API" e colar aqui toda vez que abrisse o Playground.
+  if (view === "playground" && !state.apiKey) {
+    const session = getSession();
+    const cached = session ? getDefaultApiKey(session.id) : null;
+    if (cached) state.apiKey = cached;
   }
   notify();
 }
@@ -507,6 +549,155 @@ export async function createFromStarter(starter: Starter | null) {
 
 export { STARTERS };
 export type { Starter };
+
+/* ------------------------------ tela "Gerar" ------------------------------ */
+// Endereço da Edge Function (fase 12 do plano de migração) — origem diferente da do console
+// (não passa pelo proxy do Vite/nginx), por isso a chamada usa Authorization: Bearer em vez
+// de cookie. Sem projeto Supabase hospedado ainda (fases 8-11), o padrão é o stack local.
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL || "http://127.0.0.1:54321/functions/v1";
+
+/** Escolher um modelo novo zera a geração anterior — trocar de Post pra Story no meio não faz
+ *  sentido misturar rascunhos. */
+export function selectGerarSource(source: GerarSource) {
+  state.gerarSource = source;
+  state.gerarTheme = "";
+  state.gerarDraftId = null;
+  state.gerarDraftName = source.kind === "starter" ? source.starter.label : source.name;
+  state.gerarPages = [];
+  state.gerarActivePage = 1;
+  state.gerarError = null;
+  state.gerarSaved = false;
+  notify();
+}
+
+export function setGerarTheme(value: string) {
+  state.gerarTheme = value;
+  notify();
+}
+
+/** O JWT que a Edge Function precisa como Bearer — o navegador não lê o cookie httpOnly sozinho,
+ *  então o servidor devolve o mesmo token de volta pra essa única finalidade (ver server/src/app.ts). */
+async function fetchAccessToken(): Promise<string> {
+  const res = await fetch("/api/v1/auth/token");
+  if (!res.ok) throw new Error("Sessão expirada — entre de novo.");
+  const { accessToken } = await res.json();
+  if (!accessToken) throw new Error("Sessão expirada — entre de novo.");
+  return accessToken;
+}
+
+/** Garante que existe um design (sempre uma cópia nova — nunca o modelo/design de origem) pra
+ *  gerar em cima, criando na primeira chamada e reaproveitando nas próximas (regenerar com um
+ *  tema diferente reescreve o mesmo rascunho, até a pessoa confirmar com uma das duas saídas). */
+async function ensureGerarDraft(): Promise<string> {
+  if (state.gerarDraftId) return state.gerarDraftId;
+  const source = state.gerarSource;
+  if (!source) throw new Error("Escolha um modelo primeiro.");
+
+  const document = source.kind === "starter"
+    ? source.starter.build()
+    : await (async () => {
+        const res = await fetch(`/api/v1/templates/${source.templateId}`);
+        if (!res.ok) throw new Error("Não deu para abrir esse design.");
+        return (await res.json()).document;
+      })();
+
+  const res = await fetch("/api/v1/templates", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: state.gerarDraftName, document }),
+  });
+  if (!res.ok) throw new Error("Não deu para criar o rascunho agora.");
+  const { id } = await res.json();
+  state.gerarDraftId = id;
+  return id;
+}
+
+/** Tema → IA → render salvo, uma página de cada vez (a Edge Function faz as três coisas — ver
+ *  supabase/functions/generate-design). Chamar de novo com um tema diferente reescreve o mesmo
+ *  rascunho, não cria outro. */
+export async function runGerarGenerate() {
+  if (state.gerarGenerating || !state.gerarSource || !state.gerarTheme.trim()) return;
+  state.gerarGenerating = true;
+  state.gerarError = null;
+  notify();
+
+  try {
+    const templateId = await ensureGerarDraft();
+    const accessToken = await fetchAccessToken();
+    const res = await fetch(`${FUNCTIONS_URL}/generate-design`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ templateId, theme: state.gerarTheme.trim() }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Não deu para gerar agora.");
+
+    state.gerarPages = (body.pages as Array<{ page: number; layers: Record<string, string>; imageBase64: string }>).map((p) => ({
+      page: p.page,
+      layers: p.layers,
+      previewUrl: `data:image/png;base64,${p.imageBase64}`,
+    }));
+    state.gerarActivePage = 1;
+    state.gerarSaved = false;
+  } catch (err) {
+    state.gerarError = err instanceof Error ? err.message : "Não deu para gerar agora.";
+  } finally {
+    state.gerarGenerating = false;
+    notify();
+  }
+}
+
+export function setGerarActivePage(page: number) {
+  state.gerarActivePage = page;
+  notify();
+}
+
+export function setGerarLayerValue(page: number, name: string, value: string) {
+  const target = state.gerarPages.find((p) => p.page === page);
+  if (target) target.layers = { ...target.layers, [name]: value };
+  notify();
+}
+
+/** Corrigir um campo à mão re-renderiza e já grava aquela página — mesmo mecanismo do Playground
+ *  com "Salvar como design" ligado, só que embutido, sem exigir chave de API da pessoa. */
+export async function commitGerarLayerEdit(page: number) {
+  const target = state.gerarPages.find((p) => p.page === page);
+  if (!target || !state.gerarDraftId) return;
+  try {
+    const res = await fetch("/api/v1/render", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        template: state.gerarDraftId,
+        page: state.gerarPages.length > 1 ? page : undefined,
+        layers: Object.fromEntries(Object.entries(target.layers).map(([k, v]) => [k, { text: v }])),
+        save: true,
+      }),
+    });
+    if (!res.ok) return;
+    const png = await res.blob();
+    target.previewUrl = URL.createObjectURL(png);
+    notify();
+  } catch { /* melhor esforço — o texto editado já está na tela de qualquer forma */ }
+}
+
+/** "Abrir no editor": a geração confirmada vira o design que se abre pra ajustar à mão. */
+export async function openGeneratedInEditor() {
+  if (!state.gerarDraftId) return;
+  const id = state.gerarDraftId;
+  state.gerarDraftId = null; // confirmado — a próxima geração começa um rascunho novo
+  state.templatesLoaded = false;
+  await openTemplateById(id);
+}
+
+/** "Salvar como design novo": confirma sem sair da tela — aparece em Seus designs. */
+export function saveGeneratedAsNewDesign() {
+  if (!state.gerarDraftId) return;
+  state.gerarDraftId = null; // confirmado — idem
+  state.templatesLoaded = false;
+  state.gerarSaved = true;
+  notify();
+}
 
 /** Valida um JSON colado/enviado o suficiente para tentar abrir — o editor é o juiz real de usabilidade. */
 function parseTemplateJson(raw: string): { name: string; document: unknown } | null {

@@ -15,6 +15,7 @@ import { AppHeader } from "./AppHeader";
 import { NewDesignDialog } from "./NewDesignDialog";
 import { Sidebar } from "./Sidebar";
 import { DesignsView } from "./DesignsView";
+import { GerarView } from "./GerarView";
 import { AccountView } from "./AccountView";
 import { PlaygroundView } from "./PlaygroundView";
 import { ImportView } from "./ImportView";
@@ -101,6 +102,7 @@ export function ConsoleApp() {
             editor, então sem isso a home com muitos designs não rola. */}
         <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
           {s.view === "designs" && <DesignsView />}
+          {s.view === "gerar" && <GerarView />}
           {s.view === "account" && <AccountView />}
           {s.view === "playground" && <PlaygroundView />}
           {s.view === "import" && <ImportView />}

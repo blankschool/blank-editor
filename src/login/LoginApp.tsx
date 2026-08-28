@@ -3,7 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { navigate } from "../router";
-import { setSession, useSession, type Session } from "../session";
+import { saveDefaultApiKey, setSession, useSession, type Session } from "../session";
 import { WORKSPACE } from "../console/workspace";
 import { set } from "../console/store";
 import "./login-grid.css";
@@ -171,8 +171,14 @@ export function LoginApp() {
     const body = await res.json();
     // A chave "Chave padrão" só é mostrada em texto puro agora, no momento da criação — não tem
     // como recuperar depois. Guardar aqui faz ela aparecer já revelada na primeira vez que a
-    // pessoa abrir "Chaves de API" (mesmo banner de "copie agora" que uma chave criada à mão usa).
-    if (body.apiKey) set("newKeySecret", { id: body.apiKey.id, secret: body.apiKey.secret });
+    // pessoa abrir "Chaves de API" (mesmo banner de "copie agora" que uma chave criada à mão usa),
+    // E fica cacheada por conta (session.ts) pra já vir preenchida no Playground dali pra frente —
+    // sem isso a pessoa teria que copiar a chave e colar lá na mão.
+    if (body.apiKey) {
+      set("newKeySecret", { id: body.apiKey.id, secret: body.apiKey.secret });
+      saveDefaultApiKey(body.id, body.apiKey.secret);
+      set("apiKey", body.apiKey.secret);
+    }
     return { id: body.id, name: body.name, email: body.email };
   }
 
