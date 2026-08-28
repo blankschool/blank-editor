@@ -58,35 +58,38 @@
       </div>
       <div class="seltoolbar" id="seltoolbar" hidden></div>
       <div class="proppop" id="proppop" hidden><div class="props" id="props"></div></div>
-      <div class="toolbelt" id="toolbelt" role="toolbar" aria-label="Ferramentas"></div>
+      <div class="floatingbar" id="floatingbar">
+        <div class="toolbelt" id="toolbelt" role="toolbar" aria-label="Ferramentas"></div>
+        <div class="bbsep"></div>
+        <div class="bottombar" id="bottombar">
+          <div class="zoomctl">
+            <button id="zoomout" title="Reduzir zoom (⌘−)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <span class="zoomval num" id="zoomval">100%</span>
+            <button id="zoomin" title="Ampliar zoom (⌘+)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button id="zoomfit" title="Ajustar à tela (⌘0)" class="fitbtn">Ajustar</button>
+          </div>
+          <div class="bbsep"></div>
+          <button class="bbtn" id="pageCountBtn" title="Páginas"><span id="pagecount" class="num">1 / 1</span></button>
+          <div class="bbsep"></div>
+          <div class="pagemodeseg" id="pageModeSeg">
+            <button class="bbtn iconbtn" id="docViewBtn" title="Documento (rolar entre as páginas)" aria-pressed="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="13" rx="1.3"/><path d="M4.5 19.5h15"/><path d="M4.5 21.5h9"/></svg>
+            </button>
+            <button class="bbtn iconbtn" id="thumbViewBtn" title="Faixa de miniaturas" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.5" y="8" width="5.5" height="8" rx="1"/><rect x="9.5" y="8" width="5.5" height="8" rx="1"/><rect x="16.5" y="8" width="5" height="8" rx="1"/></svg>
+            </button>
+            <button class="bbtn iconbtn" id="gridViewBtn" title="Ver todas as páginas em grade" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.2"/></svg>
+            </button>
+          </div>
+          <div class="bbsep"></div>
+          <button class="bbtn iconbtn" id="presentBtn" title="Apresentar em tela cheia">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H4v4"/><path d="M16 3h4v4"/><path d="M8 21H4v-4"/><path d="M16 21h4v-4"/></svg>
+          </button>
+        </div>
+      </div>
       <div class="flyout" id="flyout" hidden></div>
       <div class="thumbstrip" id="thumbstrip" hidden></div>
-      <div class="bottombar" id="bottombar">
-        <div class="zoomctl">
-          <button id="zoomout" title="Reduzir zoom (⌘−)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
-          <span class="zoomval num" id="zoomval">100%</span>
-          <button id="zoomin" title="Ampliar zoom (⌘+)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-          <button id="zoomfit" title="Ajustar à tela (⌘0)" class="fitbtn">Ajustar</button>
-        </div>
-        <div class="bbsep"></div>
-        <button class="bbtn" id="pageCountBtn" title="Páginas"><span id="pagecount" class="num">1 / 1</span></button>
-        <div class="bbsep"></div>
-        <div class="pagemodeseg" id="pageModeSeg">
-          <button class="bbtn iconbtn" id="docViewBtn" title="Documento (rolar entre as páginas)" aria-pressed="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="13" rx="1.3"/><path d="M4.5 19.5h15"/><path d="M4.5 21.5h9"/></svg>
-          </button>
-          <button class="bbtn iconbtn" id="thumbViewBtn" title="Faixa de miniaturas" aria-pressed="false">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.5" y="8" width="5.5" height="8" rx="1"/><rect x="9.5" y="8" width="5.5" height="8" rx="1"/><rect x="16.5" y="8" width="5" height="8" rx="1"/></svg>
-          </button>
-          <button class="bbtn iconbtn" id="gridViewBtn" title="Ver todas as páginas em grade" aria-pressed="false">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.2"/></svg>
-          </button>
-        </div>
-        <div class="bbsep"></div>
-        <button class="bbtn iconbtn" id="presentBtn" title="Apresentar em tela cheia">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H4v4"/><path d="M16 3h4v4"/><path d="M8 21H4v-4"/><path d="M16 21h4v-4"/></svg>
-        </button>
-      </div>
       <div class="gridview" id="gridview" hidden></div>
       <div class="present" id="present" hidden>
         <img id="presentImg" alt="">

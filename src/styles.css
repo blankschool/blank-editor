@@ -375,13 +375,7 @@ button { cursor: pointer; background: none; border: none; }
 }
 
 /* ---------- bottom bar: zoom, pages, grid, present ---------- */
-.bottombar {
-  /* Above .gridview (25) so its own mode buttons stay clickable — including to close the
-   * grid — while the grid overlay is showing. */
-  position: absolute; right: 16px; bottom: 16px; z-index: 26;
-  display: flex; align-items: center; gap: 2px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 5px; box-shadow: var(--shadow-lg);
-}
+.bottombar { display: flex; align-items: center; gap: 2px; }
 .bbsep { width: 1px; height: 22px; background: var(--border); margin: 0 3px; }
 .bbtn {
   height: 32px; padding: 0 9px; border-radius: 8px; color: var(--muted); display: grid; place-items: center;
@@ -444,13 +438,22 @@ button { cursor: pointer; background: none; border: none; }
 }
 .presentexit:hover { background: rgba(255,255,255,.16); }
 
-/* Figma-style floating toolbelt, centred at the bottom of the canvas */
-.toolbelt {
+/*
+ * Ferramentas e zoom/visualização viviam em duas barras flutuantes posicionadas de forma
+ * independente (uma centralizada, outra grudada no canto direito) — nenhuma sabia da largura
+ * da outra, então em janela estreita (ou com o painel de propriedades aberto encolhendo o
+ * canvas) elas colidiam. .floatingbar agora é o único contêiner posicionado, com as duas
+ * dentro dele lado a lado — nunca mais se sobrepõem, porque são uma barra só.
+ */
+.floatingbar {
   position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 2px; z-index: 8;
+  z-index: 26; /* acima de .gridview (25) — os botões de modo continuam clicáveis com a grade aberta */
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 2px;
+  max-width: calc(100% - 32px);
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 5px; box-shadow: var(--shadow-lg);
 }
+.toolbelt { display: flex; align-items: center; gap: 2px; }
 .tgroup { display: flex; align-items: center; }
 .tbelt {
   width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center;

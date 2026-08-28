@@ -1,16 +1,18 @@
-import { Check, FileEdit, Loader2, Save, Sparkles } from "lucide-react";
+import { Check, FileEdit, Image as ImageIcon, Loader2, Save, Sparkles, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import {
-  commitGerarLayerEdit,
+  commitGerarPageEdit,
   goToView,
   openGeneratedInEditor,
   runGerarGenerate,
   saveGeneratedAsNewDesign,
   selectGerarSource,
   setGerarActivePage,
+  setGerarImageValue,
   setGerarLayerValue,
   setGerarTheme,
+  uploadGerarImage,
   useConsole,
 } from "./store";
 
@@ -66,10 +68,48 @@ function LayerField({ page, name, value }: { page: number; name: string; value: 
       <textarea
         value={value}
         onChange={(e) => setGerarLayerValue(page, name, e.target.value)}
-        onBlur={() => commitGerarLayerEdit(page)}
+        onBlur={() => commitGerarPageEdit(page)}
         rows={value.length > 60 ? 3 : 1}
         className="min-w-0 resize-none rounded-sm border border-line bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-accent"
       />
+    </div>
+  );
+}
+
+/** A IA nunca escreve nas camadas de imagem (avatar/media) — ficam pra preencher à mão aqui,
+ *  URL ou upload, mesmo mecanismo do Playground. Upload já grava sozinho; URL grava ao sair do campo. */
+function ImageLayerField({ page, name, value }: { page: number; name: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-line bg-inset p-2.5">
+      <div className="flex items-center gap-2">
+        <ImageIcon size={13} strokeWidth={1.5} className="flex-none text-muted" />
+        <label className="font-mono text-[11px] text-muted">{name}</label>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          value={value}
+          onChange={(e) => setGerarImageValue(page, name, e.target.value)}
+          onBlur={() => commitGerarPageEdit(page)}
+          placeholder="URL da imagem"
+          className="h-9 min-w-0 flex-1 rounded-sm border border-line bg-surface px-2 text-sm text-text outline-none focus:border-accent"
+        />
+        <label
+          title="Subir uma foto"
+          className="flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-sm border border-line text-muted hover:border-line-strong hover:text-text"
+        >
+          <Upload size={13} strokeWidth={1.5} />
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadGerarImage(page, name, file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
     </div>
   );
 }
@@ -128,6 +168,9 @@ export function GerarView() {
             <div className="flex flex-col gap-2.5 overflow-y-auto">
               {active && Object.entries(active.layers).map(([name, value]) => (
                 <LayerField key={name} page={active.page} name={name} value={value} />
+              ))}
+              {active && Object.entries(active.images).map(([name, value]) => (
+                <ImageLayerField key={name} page={active.page} name={name} value={value} />
               ))}
             </div>
 
