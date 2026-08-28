@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Canva Pages Nav — exemplo</title>
+  <style>
+    :root {
+      --bg: #f2f3f5;
+      --panel: #f7f8fa;
+      --card: #ffffff;
+      --text: #1e1f24;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --purple: #8b5cf6;
+      --purple-soft: rgba(139, 92, 246, 0.18);
+      --danger: #ef4444;
+      --radius: 10px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      min-height: 100vh;
+    }
+
+    .nav {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 28px 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      overflow: auto;
+    }
+
+    .page {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 2px;
+    }
+
+    .page-title {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      background: transparent;
+      color: #374151;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .icon-btn:hover { background: #eceef2; }
+    .icon-btn.danger:hover { background: #fee2e2; color: var(--danger); }
+    .icon-btn.active { color: var(--purple); background: var(--purple-soft); }
+    .icon-btn:disabled { opacity: 0.35; cursor: default; }
+
+    .preview-wrap {
+      position: relative;
+      padding: 3px;
+      border-radius: 8px;
+    }
+
+    .page.selected .preview-wrap {
+      outline: 3px solid var(--purple);
+      outline-offset: 0;
+    }
+
+    .preview {
+      width: 100%;
+      aspect-ratio: 4 / 5;
+      border-radius: 6px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+      position: relative;
+      cursor: pointer;
+    }
+
+    .preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .preview.empty {
+      background: #fff;
+      border: 1px solid #eef0f3;
+    }
+
+    .preview.hidden-page {
+      filter: grayscale(0.4);
+      opacity: 0.55;
+    }
+
+    .overlay {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 22px;
+      color: #fff;
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 500;
+      text-shadow: 0 1px 8px rgba(0,0,0,.45);
+    }
+
+    .watermark {
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      color: rgba(255,255,255,.92);
+      font-family: "Times New Roman", Times, serif;
+      font-size: 22px;
+      letter-spacing: 0.5px;
+    }
+
+    .add-row {
+      display: flex;
+      margin-top: 6px;
+    }
+
+    .add-btn {
+      flex: 1;
+      height: 44px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      border-radius: 999px;
+      font-size: 15px;
+      font-weight: 500;
+      color: #111827;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .add-btn:hover { background: #f9fafb; }
+
+    .split {
+      width: 36px;
+      border: 1px solid #d1d5db;
+      border-left: 0;
+      background: #fff;
+      border-radius: 0 999px 999px 0;
+      cursor: pointer;
+      color: #4b5563;
+    }
+
+    .add-btn { border-radius: 999px 0 0 999px; }
+
+    .canvas {
+      display: grid;
+      place-items: center;
+      padding: 40px;
+      background:
+        radial-gradient(circle at top left, #fafafa, #eef0f3 55%);
+    }
+
+    .hint {
+      max-width: 520px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .hint h1 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-size: 28px;
+      letter-spacing: -0.03em;
+    }
+
+    .hint code {
+      background: #fff;
+      border: 1px solid var(--line);
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="nav" id="nav">
+      <!-- pages injected -->
+      <div class="add-row">
+        <button class="add-btn" id="addPage">+ Add page</button>
+        <button class="split" title="Mais opções" id="addMenu">▾</button>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <div class="hint">
+        <h1>Pages nav — estilo Canva</h1>
+        <p>Exemplo do painel vertical (scrolling view): título da página, controles, miniatura e seleção roxa.</p>
+        <p>Clique numa miniatura para selecionar. Use as setas, o olho, o cadeado, duplicar e a lixeira. <code>+ Add page</code> cria uma página em branco.</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const ICONS = {
+      up: `<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>`,
+      down: `<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>`,
+      eye: `<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
+      eyeOff: `<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 10.6A3 3 0 0013.4 13.4"/><path d="M9.9 5.1A11 11 0 0112 5c6.5 0 10 7 10 7a16.7 16.7 0 01-3.2 3.8"/><path d="M6.1 6.1A16.6 16.6 0 002 12s3.5 7 10 7c1.6 0 3-.3 4.3-.8"/></svg>`,
+      lock: `<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>`,
+      unlock: `<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 017.5-2"/></svg>`,
+      copy: `<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>`,
+      trash: `<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 14h10l1-14"/></svg>`,
+      expand: `<svg viewBox="0 0 24 24"><path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M16 21h5v-5"/><path d="M8 21H3v-5"/></svg>`
+    };
+
+    const FIRST_IMG = "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=900&q=80";
+
+    const state = {
+      pages: [
+        {
+          id: 1,
+          title: "Page 1 - Ad",
+          hidden: false,
+          locked: false,
+          kind: "hero",
+          caption: "O que a casa onde Winston Churchill nasceu tem a ver com os maiores hipercarros do mundo?"
+        },
+        { id: 2, title: "Page 2 - Ad", hidden: false, locked: false, kind: "empty" }
+      ],
+      selected: 1,
+      nextId: 3
+    };
+
+    const nav = document.getElementById("nav");
+    const addBtn = document.getElementById("addPage");
+
+    function render() {
+      nav.querySelectorAll(".page").forEach(el => el.remove());
+
+      state.pages.forEach((page, index) => {
+        const el = document.createElement("section");
+        el.className = "page" + (page.id === state.selected ? " selected" : "");
+        el.dataset.id = page.id;
+
+        const previewInner = page.kind === "hero"
+          ? `<img src="${FIRST_IMG}" alt="">
+             <div class="watermark">Lord</div>
+             <div class="overlay">${page.caption}</div>`
+          : "";
+
+        el.innerHTML = `
+          <div class="page-head">
+            <div class="page-title">${page.title}</div>
+            <div class="controls">
+              <button class="icon-btn" data-act="up" title="Mover para cima" ${index === 0 ? "disabled" : ""}>${ICONS.up}</button>
+              <button class="icon-btn" data-act="down" title="Mover para baixo" ${index === state.pages.length - 1 ? "disabled" : ""}>${ICONS.down}</button>
+              <button class="icon-btn ${page.hidden ? "active" : ""}" data-act="hide" title="Ocultar">${page.hidden ? ICONS.eyeOff : ICONS.eye}</button>
+              <button class="icon-btn ${page.locked ? "active" : ""}" data-act="lock" title="Bloquear">${page.locked ? ICONS.lock : ICONS.unlock}</button>
+              <button class="icon-btn" data-act="dup" title="Duplicar">${ICONS.copy}</button>
+              <button class="icon-btn danger" data-act="del" title="Excluir">${ICONS.trash}</button>
+              <button class="icon-btn" data-act="expand" title="Expandir">${ICONS.expand}</button>
+            </div>
+          </div>
+          <div class="preview-wrap">
+            <div class="preview ${page.kind === "empty" ? "empty" : ""} ${page.hidden ? "hidden-page" : ""}">
+              ${previewInner}
+            </div>
+          </div>
+        `;
+
+        el.querySelector(".preview").addEventListener("click", () => {
+          state.selected = page.id;
+          render();
+        });
+
+        el.querySelectorAll("[data-act]").forEach(btn => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            handle(page.id, btn.dataset.act);
+          });
+        });
+
+        nav.insertBefore(el, nav.querySelector(".add-row"));
+      });
+    }
+
+    function handle(id, act) {
+      const i = state.pages.findIndex(p => p.id === id);
+      const page = state.pages[i];
+      if (!page) return;
+
+      if (act === "up" && i > 0) {
+        [state.pages[i - 1], state.pages[i]] = [state.pages[i], state.pages[i - 1]];
+      }
+      if (act === "down" && i < state.pages.length - 1) {
+        [state.pages[i + 1], state.pages[i]] = [state.pages[i], state.pages[i + 1]];
+      }
+      if (act === "hide") page.hidden = !page.hidden;
+      if (act === "lock") page.locked = !page.locked;
+      if (act === "dup") {
+        const copy = { ...page, id: state.nextId++, title: `Page ${state.nextId - 1} - Ad` };
+        state.pages.splice(i + 1, 0, copy);
+        state.selected = copy.id;
+        renumber();
+      }
+      if (act === "del") {
+        if (state.pages.length === 1) return;
+        state.pages.splice(i, 1);
+        if (state.selected === id) state.selected = state.pages[Math.max(0, i - 1)].id;
+        renumber();
+      }
+      render();
+    }
+
+    function renumber() {
+      state.pages.forEach((p, idx) => {
+        p.title = `Page ${idx + 1} - Ad`;
+      });
+    }
+
+    addBtn.addEventListener("click", () => {
+      const page = {
+        id: state.nextId++,
+        title: `Page ${state.pages.length + 1} - Ad`,
+        hidden: false,
+        locked: false,
+        kind: "empty"
+      };
+      state.pages.push(page);
+      state.selected = page.id;
+      renumber();
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

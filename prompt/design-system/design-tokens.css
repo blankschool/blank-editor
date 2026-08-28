@@ -1,0 +1,135 @@
+/* =========================================================
+   Design Tokens — x-creator-buddy
+   Formato obrigatório: HSL sem vírgulas (consumido por hsl(var(--token)))
+   Hex ao lado apenas como referência de leitura.
+   ========================================================= */
+
+:root {
+  /* ---- Superfícies ---- */
+  --background: 0 0% 100%;        /* #FFFFFF  fundo da aplicação */
+  --foreground: 210 34% 11%;      /* #131C26  texto principal */
+  --card: 0 0% 100%;              /* #FFFFFF  surface elevada */
+  --card-foreground: 210 34% 11%; /* #131C26 */
+  --popover: 0 0% 100%;           /* #FFFFFF */
+  --popover-foreground: 210 34% 11%;
+
+  /* ---- Marca / ação ---- */
+  --primary: 203 89% 53%;         /* #1CA0F2  azul X */
+  --primary-foreground: 0 0% 100%;/* #FFFFFF */
+
+  /* ---- Neutros de apoio ---- */
+  --secondary: 210 20% 96%;             /* #F3F5F7 */
+  --secondary-foreground: 210 34% 11%;  /* #131C26 */
+  --muted: 210 20% 96%;                 /* #F3F5F7 */
+  --muted-foreground: 201 17% 37%;      /* #4E636E  texto secundário */
+  --accent: 210 20% 96%;                /* #F3F5F7  hover */
+  --accent-foreground: 210 34% 11%;
+
+  /* ---- Feedback ---- */
+  --destructive: 0 84% 60%;             /* #EF4343  erro / ação destrutiva */
+  --destructive-foreground: 0 0% 100%;
+  /* PROPOSTOS — ainda não existem em src/index.css */
+  --success: 142 71% 40%;               /* #1CAE55 */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;                /* #F59F0B */
+  --warning-foreground: 210 34% 11%;
+
+  /* ---- Linhas e foco ---- */
+  --border: 210 20% 91%;   /* #E3E8ED */
+  --input: 210 20% 91%;    /* #E3E8ED */
+  --ring: 203 89% 53%;     /* #1CA0F2 */
+
+  /* ---- Raio ---- */
+  --radius: 0.75rem;       /* lg = 12px | md = 10px | sm = 8px */
+
+  /* ---- Paleta X (preview do post) ---- */
+  --x-blue: 203 89% 53%;        /* #1CA0F2 */
+  --x-dark: 210 34% 8%;         /* #0D141B */
+  --x-gray: 201 17% 37%;        /* #4E636E */
+  --x-light-gray: 210 20% 91%;  /* #E3E8ED */
+  --x-hover: 210 20% 96%;       /* #F3F5F7 */
+
+  /* ---- Sidebar ---- */
+  --sidebar-background: 0 0% 98%;
+  --sidebar-foreground: 240 5.3% 26.1%;
+  --sidebar-primary: 240 5.9% 10%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 240 4.8% 95.9%;
+  --sidebar-accent-foreground: 240 5.9% 10%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
+}
+
+.dark {
+  --background: 0 0% 0%;          /* #000000  preto puro (padrão X) */
+  --foreground: 0 0% 85%;         /* #D9D9D9  nunca branco puro */
+  --card: 210 20% 6%;             /* #0C0F12 */
+  --card-foreground: 0 0% 85%;
+  --popover: 210 20% 6%;
+  --popover-foreground: 0 0% 85%;
+
+  --primary: 203 89% 53%;         /* #1CA0F2  igual no light */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 210 20% 12%;       /* #181F25 */
+  --secondary-foreground: 0 0% 85%;
+  --muted: 210 20% 12%;           /* #181F25 */
+  --muted-foreground: 206 5% 47%; /* #72797E */
+  --accent: 210 20% 12%;
+  --accent-foreground: 0 0% 85%;
+
+  --destructive: 0 62.8% 30.6%;   /* #7F1D1D */
+  --destructive-foreground: 0 0% 100%;
+  /* PROPOSTOS */
+  --success: 142 60% 38%;         /* #279B53 */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 80% 48%;          /* #DC8F19 */
+  --warning-foreground: 0 0% 10%;
+
+  --border: 200 10% 20%;          /* #2E3538 */
+  --input: 200 10% 20%;
+  --ring: 203 89% 53%;
+
+  --x-blue: 203 89% 53%;
+  --x-dark: 0 0% 85%;             /* invertido: vira o texto do post */
+  --x-gray: 206 5% 47%;
+  --x-light-gray: 200 10% 20%;
+  --x-hover: 210 20% 12%;
+
+  --sidebar-background: 240 5.9% 10%;
+  --sidebar-foreground: 240 4.8% 95.9%;
+  --sidebar-primary: 224.3 76.3% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 3.7% 15.9%;
+  --sidebar-accent-foreground: 240 4.8% 95.9%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
+}
+
+/* =========================================================
+   Tokens não-cor (referência — hoje vivem no tailwind.config.ts)
+   ========================================================= */
+:root {
+  /* Tipografia */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-twitter: 'TwitterChirp', -apple-system, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Espaçamento (escala base 4px) */
+  --space-1: 0.25rem;  /*  4px */
+  --space-2: 0.5rem;   /*  8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-12: 3rem;    /* 48px */
+
+  /* Sombras (equivalentes Tailwind usados no app) */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Movimento */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --easing: cubic-bezier(0.4, 0, 0.2, 1);
+}
