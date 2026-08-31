@@ -1,229 +1,288 @@
-/* Régua visível — mesma do x-creator-buddy (botão 40px, ícone 16–20px, texto 14px).
- * Importado DEPOIS de styles.css para vencer o empate de especificidade. */
-:root {
-  --icon: 20px;
-  --hit: 40px;
-  --page-unscale: 1;
-}
-
-body {
-  font-size: 14px;
-}
-
-.topbar {
-  height: 56px;
-  gap: 8px;
-  padding: 0 12px;
-}
-.topbar .docname {
-  font-size: 15px;
-  max-width: 320px;
-  padding: 6px 8px;
-}
-.tbtn {
-  height: var(--hit);
-  min-width: var(--hit);
-  padding: 0 12px;
-  font-size: 14px;
-}
-.tbtn.primary {
-  padding: 0 16px;
-}
-.dropmenu button {
-  height: 40px;
-  font-size: 14px;
-}
-.sep {
-  height: 24px;
-}
-
-.topbar .iconbtn,
-.tbtn.iconbtn {
-  width: var(--hit);
-  height: var(--hit);
-  padding: 0;
-}
-
-.topbar .iconbtn svg,
-.tbtn.iconbtn svg,
-.bbtn svg,
-.zoomctl svg,
-.addpagebtn svg,
-.pagehead svg,
-.pmini svg,
-.layer .mini svg,
-.qbtn svg,
-.thumbitem.thumbadd svg,
-.seg button svg {
-  width: var(--icon);
-  height: var(--icon);
-}
-
-.pagewrap .pagehead {
-  margin-bottom: calc(12px * var(--page-unscale));
-  min-height: calc(28px * var(--page-unscale));
-}
-.pagehead .plabel2 {
-  transform: scale(var(--page-unscale));
-  transform-origin: left center;
-}
-.pagehead .pageminis {
-  transform: scale(var(--page-unscale));
-  transform-origin: right center;
-}
-.plabel2 {
-  font-size: 15px;
-  font-weight: 600;
+/* Editor chrome is measured in screen pixels; only the artwork scales.
+ * Keep this sheet scoped to the editor so the console retains its own theme. */
+#view-editor {
+  --bg: #fff;
+  --surface: #fff;
+  --surface-2: #f1f3f6;
+  --inset: #f1f3f6;
+  --ground: #f2f3f7;
+  --text: #20232b;
+  --muted: #5b606c;
+  --faint: #747985;
+  --border: #e4e6ec;
+  --border-strong: #cdd1da;
+  --accent: #168ddd;
+  --accent-soft: #e8f4fd;
+  --on-accent: #fff;
+  --shadow: 0 8px 28px #20232b14;
+  --shadow-lg: 0 12px 40px #20232b20;
+  --shadow-page: 0 2px 14px #20232b12;
   color: var(--text);
+  color-scheme: light;
+  font-size: 13px;
+  container-type: inline-size;
 }
-.pageminis {
+/* An explicit dark-theme choice is respected; system theme does not darken
+ * the editing desk by default. This keeps artwork on a neutral, predictable surface. */
+:root[data-theme="dark"] #view-editor {
+  --bg: #202127;
+  --surface: #25262d;
+  --surface-2: #32343d;
+  --inset: #202127;
+  --ground: #191a20;
+  --text: #f0f1f5;
+  --muted: #b8bbc6;
+  --faint: #969baa;
+  --border: #3b3e49;
+  --border-strong: #525766;
+  --accent-soft: #163d58;
+  color-scheme: dark;
+}
+#view-editor .app { min-width: 0; }
+#view-editor button { flex-shrink: 0; }
+#view-editor button svg { flex-shrink: 0; }
+#view-editor .topbar {
+  height: 56px;
+  padding: 0 16px;
+  gap: 8px;
+  background: linear-gradient(110deg, #087fba, #1676cd 55%, #5352bf);
+  border: 0;
+  color: white;
+}
+#view-editor .topbar .tbtn {
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  color: white;
+  font-size: 13px;
+  border-radius: 8px;
+}
+#view-editor .topbar .tbtn:hover:not(:disabled) { background: #ffffff20; }
+#view-editor .topbar .iconbtn { width: 36px; padding: 0; }
+#view-editor .topbar .primary { background: white; color: #242838; font-weight: 600; }
+#view-editor .topbar .primary:hover { background: #edf4ff; }
+#view-editor .topbar .docname {
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 72px;
+  max-width: none;
+  flex: 1 1 200px;
+  text-overflow: ellipsis;
+  margin-left: 12px;
+}
+#view-editor .topbar .docname:hover { border-color: #ffffff50; }
+#view-editor .topbar .docname:focus { background: #ffffff15; border-color: white; }
+#view-editor .topbar > .spacer { display: none; }
+#view-editor .savestatus { font-size: 11px; color: #ffffffc7; white-space: nowrap; padding: 0 6px; }
+#view-editor .savestatus[data-state="error"] { color: #fff; font-weight: 600; }
+#view-editor .dropmenu { color: var(--text); }
+#view-editor .body { position: relative; min-width: 0; }
+#view-editor .rail {
+  width: 76px;
+  padding: 12px 6px;
+  gap: 7px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--ground);
+  border-right: 1px solid var(--border);
+}
+#view-editor .railbtn { width: 64px; min-height: 66px; height: 66px; font-size: 11px; gap: 7px; border-radius: 10px; }
+#view-editor .railbtn svg { width: 23px; height: 23px; }
+#view-editor .railbtn[aria-pressed="true"] { background: var(--accent-soft); color: #087abc; }
+#view-editor .panel {
+  position: relative;
+  width: 272px;
+  padding: 20px 16px;
+  box-shadow: 3px 0 12px #20232b04;
+}
+#view-editor .panel-close { position: absolute; top: 12px; right: 10px; width: 30px; height: 30px; font-size: 22px; color: var(--muted); border-radius: 6px; }
+#view-editor .panel-close:hover { background: var(--surface-2); }
+#view-editor .ptitle { font-size: 17px; margin-bottom: 10px; padding-right: 26px; }
+#view-editor .phint { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 20px; }
+#view-editor .grid2 { gap: 10px; }
+#view-editor .tile { height: 88px; gap: 10px; font-size: 12px; background: var(--surface-2); border-color: transparent; border-radius: 10px; color: var(--text); }
+#view-editor .tile svg { width: 28px; height: 28px; }
+#view-editor .tile:hover { border-color: var(--accent); background: var(--accent-soft); }
+#view-editor .texttile { padding: 16px; margin-bottom: 10px; background: var(--surface-2); border-color: transparent; }
+#view-editor .texttile:hover { border-color: var(--accent); }
+#view-editor .dropzone { background: var(--accent); color: white; border: 0; padding: 13px; font-weight: 600; }
+#view-editor .editor-workspace { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
+#view-editor .toolbar {
+  height: 48px;
+  min-height: 48px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: 6px 14px;
   gap: 4px;
 }
-.pmini {
-  width: var(--hit);
-  height: var(--hit);
-  border-radius: 8px;
-}
-
-.addpagebtn {
-  transform: translateY(-50%);
-  height: calc(44px * var(--page-unscale));
-  font-size: calc(14px * var(--page-unscale));
-  border-radius: calc(8px * var(--page-unscale));
-  border-width: calc(1.5px * var(--page-unscale));
-  gap: calc(8px * var(--page-unscale));
-}
-.addpagebtn svg {
-  width: calc(var(--icon) * var(--page-unscale));
-  height: calc(var(--icon) * var(--page-unscale));
-}
-#addPagePanel {
-  transform: none;
-  height: 44px;
-  font-size: 14px;
-  border-radius: 8px;
-  border-width: 1.5px;
-  gap: 8px;
-}
-
-.layer {
-  padding: 8px 8px;
-  gap: 8px;
-}
-.layer .lname {
-  font-size: 14px;
-}
-.layer .mini {
-  width: var(--hit);
-  height: var(--hit);
-  border-radius: 8px;
-}
-
-.zoomctl button {
-  height: var(--hit);
-  min-width: var(--hit);
-}
-.qbtn {
-  min-width: var(--hit);
-  height: var(--hit);
-  font-size: 14px;
-}
-.qselect,
-.qsizeval {
-  height: var(--hit);
-  font-size: 13px;
-}
-.qcolor {
-  width: 32px;
+#view-editor .toolbar > * { flex-shrink: 0; }
+#view-editor .toolbar .toolbar-hint { color: var(--faint); font-size: 12px; margin-left: auto; white-space: nowrap; }
+#view-editor .toolbar .qsep { margin: 0 7px; }
+#view-editor .qbtn { height: 32px; min-width: 32px; font-size: 12px; padding: 0 8px; }
+#view-editor .qbtn svg { width: 17px; height: 17px; }
+#view-editor .qselect { height: 32px; max-width: 160px; font-size: 12px; }
+#view-editor .qcolor { width: 28px; height: 28px; }
+#view-editor .qsizeval { font-size: 12px; }
+#view-editor input.qsizeval { width: 48px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; appearance: textfield; }
+#view-editor input.qsizeval::-webkit-inner-spin-button { appearance: none; }
+#view-editor .stage { min-height: 0; }
+#view-editor .document-scroll { position: absolute; right: 0; top: 0; bottom: 0; width: 14px; overflow-y: scroll; overflow-x: hidden; overflow-anchor: none; z-index: 9; scrollbar-width: thin; scrollbar-color: #aeb3be transparent; }
+#view-editor .document-scroll[hidden] { display: none; }
+#view-editor .document-scroll > div { width: 1px; pointer-events: none; }
+#view-editor .pagehead {
+  bottom: 100%;
+  right: auto;
+  width: calc(100% / var(--page-unscale, 1));
   height: 32px;
+  min-height: 32px;
+  margin-bottom: calc(8px * var(--page-unscale, 1));
+  transform: scale(var(--page-unscale, 1));
+  transform-origin: left bottom;
+  gap: 8px;
+  color: var(--muted);
+}
+#view-editor .plabel2 { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#view-editor .plabel2 small { font-size: 12px; font-weight: 400; color: var(--faint); }
+#view-editor .pageminis { gap: 2px; }
+#view-editor .pmini { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--muted); }
+#view-editor .pmini svg { width: 17px; height: 17px; }
+#view-editor .pmini:hover:not(:disabled) { background: var(--border); color: var(--text); }
+#view-editor .pmini:disabled { opacity: .3; cursor: default; }
+#view-editor .pagehead.compact .page-secondary { display: none; }
+#view-editor .pagehead.compact .plabel2 small { display: none; }
+#view-editor .addpagebtn {
+  height: calc(40px * var(--page-unscale, 1));
+  font-size: calc(13px * var(--page-unscale, 1));
+  border-radius: calc(8px * var(--page-unscale, 1));
+  gap: calc(8px * var(--page-unscale, 1));
+  border-style: solid;
+}
+#view-editor .addpagebtn svg { width: calc(18px * var(--page-unscale, 1)); height: calc(18px * var(--page-unscale, 1)); }
+#view-editor .seltoolbar { transform: none; border-radius: 10px; }
+#view-editor .proppop { transform: none; max-width: calc(100% - 24px); max-height: calc(100% - 24px); }
+#view-editor .ptabs { align-items: center; }
+#view-editor .bottombar {
+  position: relative;
+  inset: auto;
+  flex: none;
+  min-width: 0;
+  height: 48px;
+  padding: 6px 12px;
+  gap: 8px;
+  background: var(--surface);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  z-index: 26;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+#view-editor .canvas-tools { display: flex; gap: 2px; }
+#view-editor .canvas-hint { font-size: 11px; color: var(--faint); white-space: nowrap; }
+#view-editor .bbtn { height: 32px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
+#view-editor .bbtn.iconbtn { width: 32px; padding: 0; }
+#view-editor .bbtn svg { width: 19px; height: 19px; }
+#view-editor #thumbViewBtn { width: auto; padding: 0 8px; }
+#view-editor #docViewBtn { display: none; }
+#view-editor .zoomctl { gap: 3px; }
+#view-editor .zoomctl button { height: 30px; min-width: 28px; flex-shrink: 0; }
+#view-editor .zoomctl .zoomval { min-width: 45px; font-size: 12px; color: var(--text); }
+#view-editor #zoomSlider { width: 100px; height: 20px; margin: 0 5px; cursor: pointer; }
+#view-editor .thumbstrip {
+  position: relative;
+  inset: auto;
+  flex: none;
+  min-height: 110px;
+  max-height: 136px;
+  padding: 10px 20px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  gap: 14px;
+}
+#view-editor .thumbitem { width: 58px; }
+#view-editor .thumbitempic { max-height: 88px; }
+#view-editor .thumbitem[aria-pressed="true"] .thumbitempic, #view-editor .gridcell[aria-pressed="true"] .pt { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+#view-editor .thumbitem[aria-pressed="true"] .num { color: var(--accent); font-weight: 600; }
+#view-editor .thumbitem .num { font-size: 11px; }
+#view-editor .gridview { top: 48px; bottom: 48px; background: var(--ground); padding: 32px; gap: 24px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+#view-editor .gridcell { color: var(--text); padding: 6px; border-radius: 10px; }
+#view-editor .gridcell:hover { background: var(--border); }
+#view-editor .gridcell .plabel { font-size: 12px; color: var(--muted); }
+#view-editor .layer { padding: 8px 4px; }
+#view-editor .layer .mini { width: 28px; height: 28px; }
+#view-editor .field { height: 34px; }
+#view-editor .field input { font-size: 12px; }
+
+/* Container queries also cover editors embedded in a narrow app/browser panel. */
+@container (max-width: 1200px) {
+  #view-editor .canvas-hint { display: none; }
+}
+@container (max-width: 960px) {
+  #view-editor .panel { width: 240px; }
+  #view-editor .savestatus { display: none; }
+  #view-editor #zoomSlider { width: 70px; }
+  #view-editor .toolbar-hint { display: none; }
+}
+@container (max-width: 760px) {
+  #view-editor .topbar { padding: 0 8px; gap: 4px; }
+  #view-editor #backToConsole span { display: none; }
+  #view-editor #resizeBtn { display: none; }
+  #view-editor .topbar .docname { margin-left: 0; }
+  #view-editor .rail { width: 64px; padding-inline: 4px; }
+  #view-editor .railbtn { width: 56px; min-height: 60px; height: 60px; font-size: 10px; }
+  #view-editor .panel { position: absolute; top: 0; bottom: 0; left: 64px; width: min(272px, calc(100% - 80px)); z-index: 29; box-shadow: 8px 0 24px #20232b20; }
+  #view-editor .bottombar { padding-inline: 6px; gap: 3px; }
+  #view-editor #zoomSlider { display: none; }
+  #view-editor #thumbViewBtn span { display: none; }
+}
+@container (max-width: 480px) {
+  #view-editor .topbar .docname { min-width: 40px; }
+  #view-editor #undoBtn, #view-editor #redoBtn { width: 28px; min-width: 28px; }
+  #view-editor .canvas-tools { display: none; }
+  #view-editor #zoomfit { padding: 0 4px; }
+  #view-editor .zoomctl { gap: 0; }
+  #view-editor .zoomctl button { min-width: 24px; }
+  #view-editor .zoomctl .zoomval { min-width: 40px; }
+  #view-editor .bbtn { padding: 0 5px; }
 }
 
-.bbtn {
-  height: var(--hit);
-  font-size: 13px;
-  padding: 0 10px;
-}
-.bbtn.iconbtn {
-  width: var(--hit);
-  height: var(--hit);
-}
-.zoomval,
-.fitbtn {
-  font-size: 13px;
-}
-.zoomctl .fitbtn {
-  font-size: 13px;
-}
-
-.rail {
-  width: 80px;
-}
-.railbtn {
-  width: 68px;
-  height: 60px;
-  font-size: 11px;
-  gap: 5px;
-}
-.railbtn svg {
-  width: 22px;
-  height: 22px;
-}
-
-.panel {
-  width: 260px;
-  padding: 16px;
-}
-.ptitle {
-  font-size: 15px;
-}
-.phint {
-  font-size: 13px;
-}
-
-.tile {
-  height: 72px;
-  font-size: 12px;
-}
-.tile svg {
-  width: 24px;
-  height: 24px;
-}
-
-.field {
-  height: 36px;
-}
-.field label {
-  font-size: 12px;
-}
-.field input,
-select.field {
-  font-size: 14px;
-}
-.seg button {
-  height: 36px;
-}
-.sec > h4 {
-  font-size: 11px;
-}
-
-.thumbitem {
-  width: 56px;
-}
-.thumbitem .num,
-.gridcell .plabel,
-.plabel {
-  font-size: 12px;
-}
-
-.railbtn[data-tab="pages"] {
-  display: none !important;
-}
-
-.savestatus {
-  font-size: 13px;
-  color: var(--faint);
-  white-space: nowrap;
-  padding: 0 10px;
-}
-.savestatus[data-state="saving"] { color: var(--muted); }
-.savestatus[data-state="saved"] { color: var(--faint); }
+/* Position inspector, following canva/painel-posicao.html. */
+#view-editor .proppop { width: 320px; }
+#view-editor .ptabs { padding: 8px 12px 0; gap: 14px; }
+#view-editor .ptab { flex: none; height: 38px; padding: 0 4px; border-radius: 0; border-bottom: 2px solid transparent; font-size: 13px; }
+#view-editor .ptab[aria-pressed="true"] { background: transparent; color: var(--text); border-bottom-color: var(--accent); }
+#view-editor #closeProps { margin-left: auto; }
+#view-editor .props { position: relative; padding: 16px 12px; overscroll-behavior: contain; }
+#view-editor .props > .phint { margin: 0 4px 12px; font-size: 11px; line-height: 1.6; }
+#view-editor .layer-list { display: flex; flex-direction: column; gap: 4px; }
+#view-editor .layer { position: relative; min-height: 56px; padding: 4px 2px; gap: 2px; border: 1px solid transparent; user-select: none; }
+#view-editor .layer[data-selected="true"] { background: var(--accent-soft); border-color: var(--accent); }
+#view-editor .layer-select { display: flex; align-items: center; gap: 9px; flex: 1 1 auto; min-width: 0; padding: 0; text-align: left; background: transparent; }
+#view-editor .layer .lname { font-size: 12px; font-weight: 500; color: var(--text); }
+#view-editor .layer .lname small { display: block; font-size: 10px; color: var(--faint); font-weight: 400; margin-top: 3px; }
+#view-editor .layer-preview { position: relative; width: 40px; height: 40px; flex: none; overflow: hidden; border-radius: 5px; background: #e8ebef; box-shadow: inset 0 0 0 1px #0000000a; pointer-events: none; }
+#view-editor .layer-preview-art { position: absolute; transform-origin: 0 0; display: block; }
+#view-editor .layer-preview .txt { white-space: pre-wrap; }
+#view-editor .layer-grip { display: grid; place-items: center; width: 16px; padding: 0; height: 40px; color: var(--faint); cursor: grab; touch-action: none; border-radius: 3px; }
+#view-editor .layer-grip[aria-disabled="true"] { opacity: .3; cursor: not-allowed; }
+#view-editor .layer .mini { width: 24px; height: 28px; padding: 3px; opacity: 0; }
+#view-editor .layer .mini svg { width: 15px; height: 15px; }
+#view-editor .layer:hover .mini, #view-editor .layer:focus-within .mini, #view-editor .layer[data-selected="true"] .mini { opacity: 1; }
+#view-editor .layer.is-hidden .layer-select { opacity: .45; }
+#view-editor .layer.is-dragging { opacity: .4; background: var(--accent-soft); }
+#view-editor .layer-dragging, #view-editor .layer-dragging * { cursor: grabbing !important; }
+#view-editor .layer-drop-indicator { position: absolute; left: 12px; right: 12px; height: 3px; background: var(--accent); z-index: 3; pointer-events: none; border-radius: 3px; transform: translateY(-2px); }
+#view-editor .layer-drop-indicator::before { content: ''; position: absolute; left: -3px; top: -2px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+#view-editor .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (hover: none) { #view-editor .layer .mini { opacity: 1; } }
+#view-editor .order-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#view-editor .order-actions button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 10px; height: 40px; font-size: 12px; border: 0; background: var(--surface-2); color: var(--text); }
+#view-editor .align-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+#view-editor .align-actions button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; padding: 10px 8px; height: 60px; font-size: 11px; border: 0; background: var(--surface-2); color: var(--text); }
+#view-editor .order-actions button:hover, #view-editor .align-actions button:hover { background: var(--accent-soft); }
+#view-editor .props .align-label { margin: 16px 0 8px; font-size: 12px; font-weight: 600; }

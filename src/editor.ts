@@ -3,6 +3,10 @@ import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import { fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer } from "./templateStore";
+import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
+import { draggedLayerIds, reorderLayers, type LayerDropSide } from "./layerOrder";
+import { attachLayerDrag } from "./layerDrag";
+import { canGroupElements, canUngroupElements, groupElements, ungroupElements } from "./elementGroups";
 
 declare global {
   interface Window {
@@ -30,7 +34,7 @@ const PAGE_SIZES = [
   { n: "Capa", w: 1200, h: 630 }, { n: "Cartão", w: 1050, h: 600 },
 ];
 const TYPE_PT = { rect: "Retângulo", ellipse: "Elipse", triangle: "Triângulo", star: "Estrela", line: "Linha", text: "Texto", image: "Imagem", icon: "Ícone", draw: "Desenho" };
-const PT_ALIGN = { left: "à esquerda", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
+const PT_ALIGN = { left: "à esquerda", center: "ao centro", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
 const PALETTE = ["#FFFFFF", "#F3F5F7", "#E3E8ED", "#CBD5DD", "#8296A1", "#4E636E", "#2A3A45", "#131C26"];
 const STAGE_BG_PRESETS = ["#000000", "#181F25", "#2A3A45", "#4E636E", "#8296A1", "#CBD5DD", "#E3E8ED", "#F3F5F7"];
 
@@ -48,7 +52,7 @@ let zoom = 1, panX = 0, panY = 0;
 const STAGE_BG_KEY = "blank-editor-stage-bg";
 let stageBg: string | null = (() => { try { return localStorage.getItem(STAGE_BG_KEY); } catch { return null; } })();
 function stageGroundHex() {
-  const v = getComputedStyle(document.documentElement).getPropertyValue("--ground").trim();
+  const v = getComputedStyle($("view-editor")).getPropertyValue("--ground").trim();
   return /^#[0-9a-f]{6}$/i.test(v) ? v : "#E3E8ED";
 }
 function applyStageBg() {
@@ -63,27 +67,17 @@ let clipboard = null;
 let editingId = null;
 let lastClickId: string | null = null;
 let lastClickTime = 0;
-// Whether the "⋯ Mais opções" popover (the old full properties panel) is open —
-// reset to closed whenever the selection itself changes, but left alone across
-// property edits on the same selection so it doesn't snap shut mid-adjustment.
+// Keep the position/layers inspector open across selection and history changes.
 let propPopOpen = false;
-let propPopKey = "";
 let panelTab: "organize" | "layers" = "organize";
 let ctxMenuOpen = false;
-let activeTab = "elements";
+let activeTab: string | null = null;
+let fitView = true;
 const imgCache = new Map<string, HTMLImageElement>();
 
-// Pages stack vertically in one continuous canvas (Canva-style), separated by this gap —
-// wide enough to fit each page's floating header (label + move/hide/duplicate/delete).
-// Also the vertical budget for the page chrome: the header sits in the gap ABOVE each page
-// and the add-page button in the gap below the stack, both sized in screen px (see
-// --page-unscale in chrome.css). 64 was too tight for that once the chrome stopped
-// shrinking with the zoom — the label and icons spilled onto the pages.
-const PAGE_GAP = 96;
+// Keep enough screen space for page controls even when the artwork is zoomed out.
 function pageTop(i: number): number {
-  let y = 0;
-  for (let k = 0; k < i; k++) y += doc.pages[k].h + PAGE_GAP;
-  return y;
+  return pageOffset(doc.pages, i, zoom);
 }
 function stackHeight(): number {
   return doc.pages.length ? pageTop(doc.pages.length - 1) + doc.pages[doc.pages.length - 1].h : 0;
@@ -93,14 +87,11 @@ function stackWidth(): number {
 }
 /** Which page a world Y falls into — the gap between pages splits down the middle. */
 function pageIndexAtWorldY(y: number): number {
-  for (let i = 0; i < doc.pages.length; i++) {
-    if (y < pageTop(i) + doc.pages[i].h + PAGE_GAP / 2) return i;
-  }
-  return doc.pages.length - 1;
+  return pageAtY(doc.pages, y, zoom);
 }
 
 /** How far past the document's own edges the view may travel. A little air, never a plane. */
-const VIEW_MARGIN = 48;
+const VIEW_MARGIN = 56;
 /** The one rule that makes this a document and not an infinite canvas: the page column always
  * stays in the viewport. On each axis, a stack that fits the stage is pinned to the centre —
  * it cannot be nudged off it at all; only once the stack outgrows the stage does travel open
@@ -109,10 +100,9 @@ const VIEW_MARGIN = 48;
 function clampView() {
   const s = $("stage").getBoundingClientRect();
   const docH = stackHeight() * zoom, docW = stackWidth() * zoom;
-  const cy = (s.height - docH) / 2, cx = (s.width - docW) / 2;
-  panY = docH <= s.height
-    ? cy
-    : clamp(panY, s.height - docH - VIEW_MARGIN, VIEW_MARGIN);
+  const cx = (s.width - docW) / 2;
+  const bounds = verticalBounds(docH, s.height, VIEW_MARGIN);
+  panY = clamp(panY, bounds.min, bounds.max);
   panX = docW <= s.width
     ? cx
     : clamp(panX, s.width - docW - VIEW_MARGIN, VIEW_MARGIN);
@@ -139,16 +129,18 @@ const rawSrcOf = (e) => (e.src && e.src[0] === "@" ? (doc.assets && doc.assets[e
 // to a short-lived signed URL first; while that's in flight, srcOf returns "" (the existing
 // "no src yet" placeholder box), and renderCanvas() re-runs once the real URL lands.
 const PRIVATE_UPLOAD_PREFIX = "supabase://uploads/";
-const resolvedPrivateSrc = new Map<string, string>();
+const PRIVATE_SRC_TTL_MS = 4 * 60 * 1000;
+const resolvedPrivateSrc = new Map<string, { url: string; expiresAt: number }>();
 const resolvingPrivateSrc = new Set<string>();
 function resolvePrivateSrc(ref: string): string {
   const cached = resolvedPrivateSrc.get(ref);
-  if (cached) return cached;
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  if (cached) resolvedPrivateSrc.delete(ref);
   if (!resolvingPrivateSrc.has(ref)) {
     resolvingPrivateSrc.add(ref);
     fetch(`/api/v1/uploads/resolve?ref=${encodeURIComponent(ref)}`, { credentials: "include" })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then(({ url }) => { resolvedPrivateSrc.set(ref, url); resolvingPrivateSrc.delete(ref); renderCanvas(); })
+      .then(({ url }) => { resolvedPrivateSrc.set(ref, { url, expiresAt: Date.now() + PRIVATE_SRC_TTL_MS }); resolvingPrivateSrc.delete(ref); renderCanvas(); })
       .catch(() => { resolvingPrivateSrc.delete(ref); });
   }
   return "";
@@ -174,11 +166,14 @@ function commit() {
   dirtyThumb();
 }
 function restore(json) {
+  const previousPageId = page().id;
   const o = JSON.parse(json);
   doc = o.d; sel = o.s.filter((id) => o.d.pages.some((p) => p.els.some((e) => e.id === id)));
   editingId = null;
   $("docname").value = doc.name;
   renderAll();
+  if (page().id !== previousPageId) { scrollToPage(doc.active); applyWorld(); }
+  refreshPagesUI();
 }
 function undo() {
   if (!past.length) return;
@@ -201,15 +196,21 @@ function syncHistory() {
 
 const LS = "blank-editor-doc-v1";
 let persistTimer = null;
+let persistSeq = 0;
 function persist() {
   clearTimeout(persistTimer);
+  const seq = ++persistSeq;
   const st = document.getElementById("saveStatus");
   if (st) { st.textContent = "Salvando…"; st.dataset.state = "saving"; }
-  persistTimer = setTimeout(() => {
+  persistTimer = setTimeout(async () => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
     saveTemplateLocally(doc);
-    syncTemplateToServer(doc);
-    if (st) { st.textContent = "Salvo"; st.dataset.state = "saved"; }
+    const synced = await syncTemplateToServer(doc);
+    if (seq !== persistSeq) return;
+    if (st) {
+      st.textContent = synced ? "Salvo" : "Erro ao salvar";
+      st.dataset.state = synced ? "saved" : "error";
+    }
   }, 400);
 }
 function loadPersisted() {
@@ -364,7 +365,7 @@ function elInner(e: any) {
 
 function pageHeaderHtml(i: number, p: Page): string {
   return `<div class="pagehead" data-pageidx="${i}">
-    <span class="plabel2">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
+    <span class="plabel2">Página ${i + 1}<small>${p.hidden ? " · oculta" : ` · ${p.w} × ${p.h}`}</small></span>
     <div class="pageminis">
       ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover para cima", i === 0)}
       ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover para baixo", i === doc.pages.length - 1)}
@@ -387,12 +388,10 @@ function renderCanvas() {
         .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
         .join("")}</div>
     </div>`).join("") +
-    // top is the CENTRE of the gap below the stack — the button centres itself on it with
-    // translateY(-50%), so its height can track the zoom without drifting off centre.
-    `<div class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + PAGE_GAP / 2}px; width:${stackW}px;">
+    `<button class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + 20 / zoom}px; width:${stackW}px;">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Adicionar página
-    </div>`;
+    </button>`;
   // text auto-height, across every page
   for (const p of doc.pages) {
     for (const e of p.els) {
@@ -404,7 +403,7 @@ function renderCanvas() {
       }
     }
   }
-  applyWorld();
+  clampView(); applyWorld();
   renderOverlay();
 }
 
@@ -423,15 +422,39 @@ function updateActivePageFromScroll() {
 }
 
 function applyWorld() {
+  const stack = $("pagestack");
+  stack.style.height = stackHeight() + "px";
+  stack.querySelectorAll(".pagewrap").forEach((wrap, i) => {
+    wrap.style.top = pageTop(i) + "px";
+    wrap.querySelector(".pagehead")?.classList.toggle("compact", doc.pages[i].w * zoom < 360);
+  });
+  const add = $("addPageCanvas");
+  if (add) add.style.top = (stackHeight() + 20 / zoom) + "px";
+  $("world").style.setProperty("--page-unscale", String(1 / zoom));
   $("world").style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
   $("ovl").style.setProperty("--inv", 1 / zoom);
   $("zoomval").textContent = Math.round(zoom * 100) + "%";
+  $("zoomSlider").value = Math.round(zoom * 100);
   $("pagecount").textContent = `${doc.active + 1} / ${doc.pages.length}`;
   const o = $("ovl");
   o.style.width = stackWidth() + "px";
   o.style.height = stackHeight() + "px";
+  const bounds = verticalBounds(stackHeight() * zoom, $("stage").clientHeight, VIEW_MARGIN);
+  const scroll = $("documentScroll");
+  scroll.hidden = bounds.min === bounds.max;
+  $("documentScrollSize").style.height = ($("stage").clientHeight + bounds.max - bounds.min) + "px";
+  const nextScroll = bounds.max - panY;
+  if (Math.abs(scroll.scrollTop - nextScroll) > 1) scroll.scrollTop = nextScroll;
   positionFloatingUI();
 }
+
+$("documentScroll").addEventListener("scroll", () => {
+  const bounds = verticalBounds(stackHeight() * zoom, $("stage").clientHeight, VIEW_MARGIN);
+  const nextPan = bounds.max - $("documentScroll").scrollTop;
+  if (Math.abs(nextPan - panY) <= 1) return;
+  panY = nextPan;
+  clampView(); applyWorld(); updateActivePageFromScroll();
+});
 
 const HANDLES: Array<[string, number, number]> = [["nw", 0, 0], ["n", .5, 0], ["ne", 1, 0], ["e", 1, .5], ["se", 1, 1], ["s", .5, 1], ["sw", 0, 1], ["w", 0, .5]];
 const CURSORS = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
@@ -477,17 +500,21 @@ function renderOverlay() {
 function positionFloatingUI() {
   const bar = $("seltoolbar"), pop = $("proppop");
   const els = worldSelEls();
-  const key = sel.join(",");
-  if (key !== propPopKey) { propPopKey = key; propPopOpen = false; }
-  if (!els.length || editingId) { bar.hidden = true; pop.hidden = true; return; }
+  const stage = $("stage");
+  bar.hidden = !els.length || !!editingId;
   const b = els.length === 1 ? els[0] : bbox(els);
-  bar.hidden = false;
-  bar.style.left = (panX + (b.x + b.w / 2) * zoom) + "px";
-  bar.style.top = (panY + b.y * zoom) + "px";
+  if (!bar.hidden && b) {
+    const top = panY + b.y * zoom;
+    const bottom = top + b.h * zoom;
+    bar.hidden = bottom < 0 || top > stage.clientHeight;
+    const left = panX + (b.x + b.w / 2) * zoom - bar.offsetWidth / 2;
+    bar.style.left = clamp(left, 8, Math.max(8, stage.clientWidth - bar.offsetWidth - 20)) + "px";
+    bar.style.top = clamp(top - bar.offsetHeight - 34, 8, Math.max(8, stage.clientHeight - bar.offsetHeight - 8)) + "px";
+  }
   if (propPopOpen) {
     pop.hidden = false;
-    pop.style.left = (panX + (b.x + b.w) * zoom) + "px";
-    pop.style.top = (panY + (b.y + b.h / 2) * zoom) + "px";
+    pop.style.left = Math.max(12, stage.clientWidth - pop.offsetWidth - 20) + "px";
+    pop.style.top = "12px";
   } else {
     pop.hidden = true;
   }
@@ -514,7 +541,12 @@ function renderToolbar() {
   const els = selEls().filter((e) => !e.hidden);
   // Stays in flow (never [hidden]) even with nothing selected — .toolbar's min-height
   // reserves the same space either way, so selecting/deselecting never shifts the stage.
-  if (!els.length || editingId) { bar.innerHTML = ""; return; }
+  if (!els.length || editingId) {
+    bar.innerHTML = `<button class="qbtn" data-open-panel="page" title="Fundo e tamanho da página">Fundo da página</button>
+      <div class="qsep"></div><button class="qbtn" id="tLayers">Camadas</button>
+      <span class="toolbar-hint">${editingId ? "Editando texto" : "Selecione um elemento para editar"}</span>`;
+    return;
+  }
   const e = els[0];
   const one = els.length === 1;
   const t = e.type;
@@ -523,7 +555,7 @@ function renderToolbar() {
   if (one && t === "text") {
     html += `<select id="tFont" class="qselect" title="Fonte">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
     html += `<div class="qsep"></div>`;
-    html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><span class="qsizeval num">${Math.round(e.size)}</span><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
+    html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" value="${Math.round(e.size)}" aria-label="Tamanho da fonte"><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
     html += `<div class="qsep"></div>`;
     html += `<input type="color" id="tFill" class="qcolor" title="Cor do texto" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
     html += `<div class="qsep"></div>`;
@@ -536,12 +568,9 @@ function renderToolbar() {
     html += `<div class="field" style="width:52px" title="Entrelinha"><input id="tLh" value="${e.lh}"></div>`;
     html += `<div class="field" style="width:52px" title="Espaçamento entre letras"><input id="tLs" value="${e.ls}"></div>`;
   } else if (one && t === "image") {
-    html += `<button class="qbtn" disabled title="Sem suporte ainda">Removedor de Fundo</button>`;
-    html += `<div class="qsep"></div>`;
     html += `<button class="qbtn" id="tReplace" title="Substituir imagem">${REPLACE_ICON}</button>`;
     html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
     html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
-    html += `<button class="qbtn" disabled title="Sem suporte ainda">Cortar</button>`;
     html += `<button class="qbtn" data-tflip="h" title="Inverter na horizontal">${FLIP_H_ICON}</button>`;
     html += `<button class="qbtn" data-tflip="v" title="Inverter na vertical">${FLIP_V_ICON}</button>`;
   } else if (one) {
@@ -559,13 +588,14 @@ function renderToolbar() {
   html += `<div class="field" style="width:74px" title="Transparência"><input type="range" id="tOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}"></div>`;
   html += `<div class="qsep"></div>`;
   html += `<button class="qbtn" id="tPosition" aria-pressed="${propPopOpen && panelTab === "organize"}" title="Posição">Posição</button>`;
-  html += `<div class="qsep"></div>`;
-  html += `<button class="qbtn" disabled title="Sem suporte ainda">Copiar estilo</button>`;
+  html += `<button class="qbtn" id="tLayers" title="Camadas">Camadas</button>`;
 
   bar.innerHTML = html;
 }
 $("toolbar").addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
+  if (t.closest("[data-open-panel]")) { setPanel("page"); return; }
+  if (t.closest("#tLayers")) { panelTab = "layers"; propPopOpen = true; renderProps(); positionFloatingUI(); return; }
   const tw = t.closest<HTMLElement>("[data-ttw]");
   if (tw) {
     const k = tw.dataset.ttw, e = selEls()[0];
@@ -589,6 +619,7 @@ $("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
   if (t.id === "tFill") patch({ fill: t.value });
   if (t.id === "tFont") patch({ font: t.value }, true);
+  if (t.id === "tSize" && Number(t.value) >= 6) patch({ size: clamp(Number(t.value), 6, 512) });
   if (t.id === "tStroke") patch({ stroke: t.value });
   if (t.id === "tOp") patch({ opacity: clamp(parseFloat(t.value) / 100, 0, 1) });
   if (t.id === "tLh") { const n = parseFloat(t.value); if (n > 0) patch({ lh: n }); }
@@ -596,7 +627,21 @@ $("toolbar").addEventListener("input", (ev) => {
 });
 $("toolbar").addEventListener("change", (ev) => {
   const id = (ev.target as HTMLElement).id;
-  if (["tFill", "tStroke", "tOp", "tLh", "tLs"].includes(id)) commit();
+  if (id === "tSize") {
+    const input = ev.target as HTMLInputElement;
+    const size = Number(input.value);
+    if (!Number.isFinite(size) || size < 6) { input.value = String(selEls()[0]?.size ?? 16); return; }
+    input.value = String(clamp(size, 6, 512));
+  }
+  if (["tFill", "tStroke", "tOp", "tLh", "tLs", "tSize"].includes(id)) commit();
+});
+$("toolbar").addEventListener("keydown", (ev) => {
+  if (ev.target.id === "tSize" && ev.key === "Enter") { ev.preventDefault(); ev.target.blur(); }
+});
+$("toolbar").addEventListener("focusout", (ev) => {
+  if (ev.target.id !== "tSize") return;
+  ev.target.value = String(selEls()[0]?.size ?? 16);
+  if (snap() !== baseline) commit();
 });
 
 /* The slim always-visible bar above the selection — Canva's own "floating toolbar" only ever
@@ -660,6 +705,8 @@ function renderContextMenu() {
   const els = selEls();
   const hasSel = els.length > 0;
   const locked = hasSel && els.every((e) => e.locked);
+  const canGroup = canGroupElements(page().els, sel);
+  const canUngroup = canUngroupElements(page().els, sel);
   const dis = (ok: boolean) => (ok ? "" : "disabled");
   $("ctxmenu").innerHTML = `
     <button class="ctxitem" data-ctx="copy" ${dis(hasSel)}>Copiar<span class="ctxkey">⌘C</span></button>
@@ -667,6 +714,9 @@ function renderContextMenu() {
     <button class="ctxitem" data-ctx="paste" ${dis(!!clipboard?.length)}>Colar<span class="ctxkey">⌘V</span></button>
     <button class="ctxitem" data-ctx="duplicate" ${dis(hasSel)}>Duplicar<span class="ctxkey">⌘D</span></button>
     <button class="ctxitem danger" data-ctx="delete" ${dis(hasSel)}>Excluir<span class="ctxkey">DELETE</span></button>
+    <div class="ctxsep"></div>
+    <button class="ctxitem" data-ctx="group" ${dis(canGroup)}>Agrupar<span class="ctxkey">⌘G</span></button>
+    <button class="ctxitem" data-ctx="ungroup" ${dis(canUngroup)}>Desagrupar<span class="ctxkey">⇧⌘G</span></button>
     <div class="ctxsep"></div>
     <div class="ctxitem has-sub">Camada<span class="ctxarrow">›</span>
       <div class="ctxsub">
@@ -690,6 +740,8 @@ $("ctxmenu").addEventListener("click", (ev) => {
   else if (b.dataset.ctx === "paste") paste();
   else if (b.dataset.ctx === "duplicate") duplicateSel();
   else if (b.dataset.ctx === "delete") deleteSel();
+  else if (b.dataset.ctx === "group") groupSel();
+  else if (b.dataset.ctx === "ungroup") ungroupSel();
   else if (b.dataset.ctx === "lock") { const locked = selEls().every((e) => e.locked); for (const e of selEls()) e.locked = !locked; commit(); renderAll(); }
   else if (b.dataset.ctxorder) order(b.dataset.ctxorder);
   else if (b.dataset.ctxalign) align(b.dataset.ctxalign);
@@ -698,7 +750,8 @@ $("ctxmenu").addEventListener("click", (ev) => {
 });
 window.addEventListener("pointerdown", (ev) => {
   const t = ev.target as HTMLElement | null;
-  if (propPopOpen && t && !t.closest("#proppop") && !t.closest("#tPosition")) { propPopOpen = false; positionFloatingUI(); }
+  // The inspector stays open while selecting artwork or using undo/redo.
+  // Its close button and Escape dismiss it; only context menus close outside.
   if (ctxMenuOpen && t && !t.closest("#ctxmenu")) closeContextMenu();
 }, true);
 
@@ -717,7 +770,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
   // through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #bottombar, #ctxmenu, #thumbstrip, #gridview, .pagehead, #addPageCanvas")) return;
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas")) return;
   // Right-click only pans when it actually drags — a plain right-click (no movement) opens
   // the Context Menu instead, matching how canvas tools commonly split the two.
   if (ev.button === 2) { startRightClickPanOrMenu(ev); return; }
@@ -740,6 +793,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   const id = node.dataset.id;
   const el = byId(id);
   if (!el || el.hidden) return;
+  doc.active = pageIdxOf(id);
   if (editingId && editingId !== id) stopEditing();
 
   // Selecting an element re-renders the canvas (see capture()'s unconditional
@@ -759,7 +813,10 @@ $("stage").addEventListener("pointerdown", (ev) => {
   if (el.locked) { sel = [id]; renderAll(); return; }
 
   if (ev.shiftKey) sel = sel.includes(id) ? sel.filter((s) => s !== id) : [...sel, id];
-  else if (!sel.includes(id)) sel = el.group ? page().els.filter((x) => x.group === el.group).map((x) => x.id) : [id];
+  else if (!sel.includes(id)) {
+    const ownerPage = doc.pages[pageIdxOf(id)];
+    sel = el.group && ownerPage ? ownerPage.els.filter((x) => x.group === el.group).map((x) => x.id) : [id];
+  }
   renderOverlay(); renderLayers(); renderProps();
   if (editingId === id) return;
   startMove(ev);
@@ -1110,6 +1167,7 @@ function stopEditing() {
 
 /* scroll + zoom wheel */
 $("stage").addEventListener("wheel", (ev) => {
+  if ((ev.target as HTMLElement).closest("#proppop, #seltoolbar, #ctxmenu, #documentScroll")) return;
   ev.preventDefault();
   // Ctrl/Cmd+wheel zooms the document — and so does a trackpad pinch, which the browser
   // reports as exactly that. A bare wheel ALWAYS scrolls the document and must never touch
@@ -1118,8 +1176,9 @@ $("stage").addEventListener("wheel", (ev) => {
     zoomAt(ev.clientX, ev.clientY, zoom * (1 - ev.deltaY * 0.01));
     return;
   }
-  panX -= ev.shiftKey ? ev.deltaY : 0;
-  panY -= ev.shiftKey ? 0 : ev.deltaY;
+  const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? $("stage").clientHeight : 1;
+  panX -= (ev.shiftKey ? ev.deltaY : ev.deltaX) * unit;
+  panY -= ev.shiftKey ? 0 : ev.deltaY * unit;
   clampView(); applyWorld(); updateActivePageFromScroll();
 }, { passive: false });
 
@@ -1129,9 +1188,12 @@ const ZOOM_MIN = 0.1, ZOOM_MAX = 3;
 function zoomAt(cx, cy, nz) {
   const r = $("stage").getBoundingClientRect();
   const sx = cx - r.left, sy = cy - r.top;
-  const wx = (sx - panX) / zoom, wy = (sy - panY) / zoom;
-  zoom = clamp(nz, ZOOM_MIN, ZOOM_MAX);
-  panX = sx - wx * zoom; panY = sy - wy * zoom;
+  const wx = (sx - panX) / zoom;
+  const nextZoom = clamp(nz, ZOOM_MIN, ZOOM_MAX);
+  panY = zoomedPanY(doc.pages, panY, sy, zoom, nextZoom);
+  zoom = nextZoom;
+  fitView = false;
+  panX = sx - wx * zoom;
   clampView(); applyWorld(); updateActivePageFromScroll(); renderOverlay();
 }
 /** Scrolls the document so page `i` is what updateActivePageFromScroll() will also call
@@ -1141,14 +1203,16 @@ function scrollToPage(i: number) {
   const p = doc.pages[i];
   panY = p.h * zoom <= s.height - 80
     ? s.height / 2 - (pageTop(i) + p.h / 2) * zoom
-    : -pageTop(i) * zoom + 40;
+    : -pageTop(i) * zoom + VIEW_MARGIN;
   clampView();
 }
 /** "Ajustar": zooms so the whole active page fits the viewport with padding, then scrolls to it. */
 function zoomFit() {
   const s = $("stage").getBoundingClientRect();
   const p = page();
-  zoom = clamp(Math.min((s.width - 90) / p.w, (s.height - 90) / p.h), ZOOM_MIN, ZOOM_MAX);
+  if (!s.width || !s.height) return;
+  fitView = true;
+  zoom = clamp(Math.min((s.width - 64) / p.w, (s.height - 112) / p.h), ZOOM_MIN, ZOOM_MAX);
   panX = (s.width - stackWidth() * zoom) / 2;
   scrollToPage(doc.active);
   applyWorld(); renderOverlay();
@@ -1164,16 +1228,11 @@ function deleteSel() {
   commit(); renderAll();
 }
 function groupSel() {
-  const els = selEls().filter((e) => !e.locked);
-  if (els.length < 2) return;
-  const gid = uid();
-  for (const e of els) e.group = gid;
+  if (!groupElements(page().els, sel, uid())) return;
   commit(); renderAll();
 }
 function ungroupSel() {
-  const els = selEls().filter((e) => e.group);
-  if (!els.length) return;
-  for (const e of els) delete e.group;
+  if (!ungroupElements(page().els, sel)) return;
   commit(); renderAll();
 }
 // Copies keep grouping *among themselves* but never rejoin the original group they came from —
@@ -1271,20 +1330,21 @@ function renderRail() {
 $("rail").addEventListener("click", (e) => {
   const b = e.target.closest("[data-tab]");
   if (!b) return;
-  activeTab = activeTab === b.dataset.tab ? null : b.dataset.tab;
-  renderRail(); renderPanel();
+  setPanel(activeTab === b.dataset.tab ? null : b.dataset.tab);
 });
 
+function setPanel(tab: string | null) {
+  if (editingId) stopEditing();
+  activeTab = tab;
+  renderRail(); renderPanel();
+  if (fitView) zoomFit();
+  else { clampView(); applyWorld(); renderOverlay(); }
+}
 
 function renderPanel() {
   const el = $("panel");
-  // The rail no longer offers a Páginas tab — the bottom bar owns page navigation now. Any
-  // "pages" left over reads as no tab at all, so the panel closes instead of showing an index
-  // the rail can't reach.
-  if (activeTab === "pages") activeTab = null;
-  el.classList.toggle("pages-index", activeTab === "pages");
+  el.classList.remove("pages-index");
   if (!activeTab) { el.hidden = true; return; }
-  if (activeTab === "pages") { el.hidden = false; renderPagesPanel(); return; }
   el.hidden = false;
   const P = page();
   if (activeTab === "text") {
@@ -1332,38 +1392,75 @@ function renderPanel() {
         <div class="row"><div class="field"><label>L</label><input class="num" id="pgW" value="${P.w}"></div><div class="field"><label>A</label><input class="num" id="pgH" value="${P.h}"></div></div>
       </div>`;
   }
+  el.insertAdjacentHTML("afterbegin", `<button class="panel-close" data-close-panel title="Fechar painel" aria-label="Fechar painel">×</button>`);
 }
 
-/* Lives inside the Panel/Inspector's "Camadas" tab (#props, when panelTab === "layers") —
- * matches painel-posicao.html: thumbnail + name + a "…" menu button that opens the Context
- * Menu for that row (select it, then act on it — lock/order/delete etc. all live there now). */
+/* Reference: /Users/it4mi/Downloads/canva/painel-posicao.html.
+ * This list reflects paint order: the first visible row is the frontmost element. */
 function renderLayers() {
   if (panelTab !== "layers") return;
+  const box = $("props");
+  if (box.classList.contains("layer-dragging")) return;
+  const scrollTop = box.scrollTop;
   const P = page();
-  const icons = {
-    rect: `<rect x="4" y="6" width="16" height="12" rx="1.5"/>`, ellipse: `<circle cx="12" cy="12" r="8"/>`,
-    triangle: `<polygon points="12,4 20,19 4,19"/>`, star: `<polygon points="12,4 14,9.6 20,10 15.5,13.8 17,19.6 12,16.4 7,19.6 8.5,13.8 4,10 10,9.6"/>`,
-    line: `<rect x="4" y="11" width="16" height="2" rx="1"/>`, text: `<path d="M4 6h16"/><path d="M12 6v14"/>`,
-    image: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/>`,
-    draw: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/>`,
-    icon: `<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.4 2.4 4.6-5"/>`,
-  };
-  $("props").innerHTML = `<p class="phint">O topo da lista é a frente da tela.</p>` +
-    (P.els.length ? [...P.els].reverse().map((e) => `
-      <div class="layer" data-layer="${e.id}" aria-selected="${sel.includes(e.id)}">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.65">${icons[e.type] || ""}</svg>
-        <span class="lname">${esc(e.name)}</span>
-        <button class="mini" data-hide="${e.id}" title="${e.hidden ? "Mostrar" : "Ocultar"}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${e.hidden ? `<path d="M3 3l18 18"/><path d="M10.6 5.2A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.4 4.2M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7c1.3 0 2.5-.3 3.6-.7"/>` : `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.6"/>`}</svg>
+  box.innerHTML = `<p class="phint" id="layerDragHint">Arraste para reordenar. O topo da lista fica na frente.<br>Ou use Alt + ↑ / ↓ na alça da camada.</p>` +
+    `<div class="layer-list" role="list" aria-label="Camadas da página ${doc.active + 1}">` +
+    (P.els.length ? [...P.els].reverse().map((e) => {
+      const scale = Math.min(32 / Math.max(1, e.w), 32 / Math.max(1, e.h));
+      return `<div class="layer${e.hidden ? " is-hidden" : ""}" data-layer="${esc(e.id)}" data-selected="${sel.includes(e.id)}" role="listitem">
+        <button class="layer-grip" data-layer-grip="${esc(e.id)}" aria-label="Arrastar camada ${esc(e.name)}" aria-describedby="layerDragHint" title="${e.locked ? "Desbloqueie para reordenar" : "Arrastar para reordenar · Alt + ↑ / ↓"}" aria-disabled="${e.locked}">
+          <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor"><circle cx="3" cy="5" r="1.2"/><circle cx="9" cy="5" r="1.2"/><circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/><circle cx="3" cy="15" r="1.2"/><circle cx="9" cy="15" r="1.2"/></svg>
         </button>
-        <button class="mini" data-layermenu="${e.id}" title="Menu">${MORE_ICON}</button>
-      </div>`).join("") : `<p class="empty">Esta página está vazia. Adicione texto ou uma forma pela barra lateral.</p>`);
+        <button class="layer-select" aria-label="Selecionar camada ${esc(e.name)}" aria-pressed="${sel.includes(e.id)}">
+          <span class="layer-preview" aria-hidden="true"><span class="layer-preview-art" style="width:${e.w}px;height:${e.h}px;left:${(40 - e.w * scale) / 2}px;top:${(40 - e.h * scale) / 2}px;transform:scale(${scale})">${elInner(e)}</span></span>
+          <span class="lname" title="${esc(e.name)}">${esc(e.name)}<small>${TYPE_PT[e.type] || "Elemento"}${e.group ? " · grupo" : ""}${e.locked ? " · bloqueada" : ""}</small></span>
+        </button>
+        <button class="mini" data-layer-lock="${esc(e.id)}" title="${e.locked ? "Desbloquear" : "Bloquear"}" aria-label="${e.locked ? "Desbloquear" : "Bloquear"} camada ${esc(e.name)}">${LOCK_ICON(e.locked)}</button>
+        <button class="mini" data-hide="${esc(e.id)}" title="${e.hidden ? "Mostrar" : "Ocultar"}" aria-label="${e.hidden ? "Mostrar" : "Ocultar"} camada ${esc(e.name)}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">${e.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn}</svg>
+        </button>
+        <button class="mini" data-layermenu="${esc(e.id)}" title="Menu da camada" aria-label="Menu da camada ${esc(e.name)}">${MORE_ICON}</button>
+      </div>`;
+    }).join("") : `<p class="empty">Esta página está vazia. Adicione texto ou uma forma pela barra lateral.</p>`) + `</div>`;
+  box.scrollTop = scrollTop;
 }
 
+function commitLayerDrop(ids: string[], targetId: string, side: LayerDropSide) {
+  const P = page();
+  const reordered = reorderLayers(P.els, ids, targetId, side);
+  if (reordered === P.els) return;
+  P.els = reordered;
+  sel = ids;
+  commit(); renderAll();
+  const handle = [...(document.getElementById("props")!).querySelectorAll<HTMLButtonElement>("[data-layer-grip]")].find(node => node.dataset.layerGrip === ids[ids.length - 1]);
+  handle?.focus({ preventScroll: true });
+  $("layerAnnouncement").textContent = ids.length === 1 ? "Camada reordenada." : `${ids.length} camadas reordenadas.`;
+}
+attachLayerDrag($("props"), {
+  getMovingIds: id => draggedLayerIds(page().els, id, sel),
+  drop: commitLayerDrop,
+});
+$("props").addEventListener("keydown", (ev: KeyboardEvent) => {
+  const row = (ev.target as HTMLElement).closest<HTMLElement>("[data-layer]");
+  if (!row) return;
+  // Arrows inside this list must never nudge the artwork on the canvas.
+  if (ev.key.startsWith("Arrow")) ev.stopPropagation();
+  if (!ev.altKey || !["ArrowUp", "ArrowDown"].includes(ev.key)) return;
+  ev.preventDefault();
+  const ids = draggedLayerIds(page().els, row.dataset.layer, sel);
+  if (!ids.length) return;
+  const list = [...page().els].reverse();
+  const source = list.findIndex(el => el.id === row.dataset.layer);
+  const direction = ev.key === "ArrowUp" ? -1 : 1;
+  for (let i = source + direction; i >= 0 && i < list.length; i += direction) {
+    if (ids.includes(list[i].id)) continue;
+    commitLayerDrop(ids, list[i].id, direction < 0 ? "before" : "after");
+    break;
+  }
+});
+
 $("panel").addEventListener("click", (ev) => {
-  if (ev.target.closest("#addPagePanel")) { addPage(); return; }
-  const goPage = ev.target.closest("[data-gopage]");
-  if (goPage) { goToPage(+goPage.dataset.gopage); return; }
+  if (ev.target.closest("[data-close-panel]")) { setPanel(null); return; }
   const dupPage = ev.target.closest("[data-duppage]");
   if (dupPage) { duplicatePage(+dupPage.dataset.duppage); return; }
   const delPage = ev.target.closest("[data-delpage]");
@@ -1382,6 +1479,8 @@ $("panel").addEventListener("click", (ev) => {
     if (add.dataset.weight) over.weight = +add.dataset.weight;
     if (t === "text") over.text = add.textContent.trim();
     addEl(t, over);
+    // Narrow screens use an overlay library; reveal the object after inserting it.
+    if ($("view-editor").clientWidth <= 760) setPanel(null);
     return;
   }
   const bg = ev.target.closest("[data-bg]");
@@ -1435,22 +1534,22 @@ function renderProps() {
     ${one ? `<div class="sec"><h4>Camada</h4><div class="field" title="Nome desta camada — é o que aparece na lista Camadas"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
 
     <div class="sec"><h4>Organizar</h4>
-      <div class="seg" style="margin-bottom:6px">
-        ${[["front", "Trazer para a frente", `<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>`],
-           ["up", "Avançar", `<path d="m18 15-6-6-6 6"/>`],
-           ["down", "Recuar", `<path d="m6 9 6 6 6-6"/>`],
-           ["back", "Enviar para trás", `<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>`]]
-          .map(([k, tip, ic]) => `<button data-order="${k}" title="${tip}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></button>`).join("")}
+      <div class="seg order-actions" style="margin-bottom:12px">
+        ${[["front", "Para o topo", `<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>`],
+           ["up", "Para frente", `<path d="m18 15-6-6-6 6"/>`],
+           ["down", "Para trás", `<path d="m6 9 6 6 6-6"/>`],
+           ["back", "Para o fundo", `<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>`]]
+          .map(([k, tip, ic]) => `<button data-order="${k}" title="${tip}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${tip}</span></button>`).join("")}
       </div>
-      <div class="seg" style="margin-bottom:6px">
+      <h4 class="align-label">${els.length > 1 ? "Alinhar seleção" : "Alinhar à página"}</h4><div class="seg align-actions" style="margin-bottom:12px">
         ${[["left", `<rect width="6" height="14" x="6" y="5" rx="2"/><rect width="6" height="10" x="16" y="7" rx="2"/><path d="M2 2v20"/>`],
            ["cx", `<rect width="6" height="14" x="2" y="5" rx="2"/><rect width="6" height="10" x="16" y="7" rx="2"/><path d="M12 2v20"/>`],
            ["right", `<rect width="6" height="14" x="2" y="5" rx="2"/><rect width="6" height="10" x="12" y="7" rx="2"/><path d="M22 2v20"/>`]]
-          .map(([k, ic]) => `<button data-align="${k}" title="Alinhar ${PT_ALIGN[k]}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></button>`).join("")}
+          .map(([k, ic]) => `<button data-align="${k}" title="Alinhar ${PT_ALIGN[k]}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${({left:"À esquerda",cx:"Ao centro",right:"À direita",top:"Em cima",cy:"No meio",bottom:"Embaixo"})[k]}</span></button>`).join("")}
         ${[["top", `<rect width="14" height="6" x="5" y="16" rx="2"/><rect width="10" height="6" x="7" y="6" rx="2"/><path d="M2 2h20"/>`],
            ["cy", `<rect width="14" height="6" x="5" y="16" rx="2"/><rect width="10" height="6" x="7" y="2" rx="2"/><path d="M2 12h20"/>`],
            ["bottom", `<rect width="14" height="6" x="5" y="12" rx="2"/><rect width="10" height="6" x="7" y="2" rx="2"/><path d="M2 22h20"/>`]]
-          .map(([k, ic]) => `<button data-align="${k}" title="Alinhar ${PT_ALIGN[k]}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></button>`).join("")}
+          .map(([k, ic]) => `<button data-align="${k}" title="Alinhar ${PT_ALIGN[k]}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${({left:"À esquerda",cx:"Ao centro",right:"À direita",top:"Em cima",cy:"No meio",bottom:"Embaixo"})[k]}</span></button>`).join("")}
       </div>
       <div class="seg">
         <button data-flip="h" title="Espelhar na horizontal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/></svg></button>
@@ -1476,15 +1575,18 @@ $("ptabs")?.addEventListener("click", (ev) => {
   panelTab = b.dataset.ptab as "organize" | "layers";
   renderProps();
 });
+$("closeProps").addEventListener("click", () => { propPopOpen = false; positionFloatingUI(); });
 $("props").addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
+  const lockBtn = t.closest<HTMLElement>("[data-layer-lock]");
+  if (lockBtn) { const el = byId(lockBtn.dataset.layerLock); if (el) { el.locked = !el.locked; commit(); renderAll(); } return; }
   const hideBtn = t.closest<HTMLElement>("[data-hide]");
   if (hideBtn) { const el = byId(hideBtn.dataset.hide); el.hidden = !el.hidden; commit(); renderAll(); return; }
   const menuBtn = t.closest<HTMLElement>("[data-layermenu]");
   if (menuBtn) {
     const id = menuBtn.dataset.layermenu;
-    if (!sel.includes(id)) { sel = [id]; renderAll(); }
     const r = menuBtn.getBoundingClientRect();
+    if (!sel.includes(id)) { sel = [id]; renderAll(); }
     openContextMenu(r.right - 240, r.bottom + 4);
     return;
   }
@@ -1542,12 +1644,11 @@ const PAGE_MINI = {
   del: `<path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/>`,
 };
 const pageMini = (action: string, icon: string, i: number, title: string, disabled = false) => `
-  <button class="pmini" data-${action}="${i}" title="${title}" ${disabled ? "disabled" : ""}>
+  <button class="pmini${["moveuppage", "movedownpage", "hidepage"].includes(action) ? " page-secondary" : ""}" data-${action}="${i}" title="${title}" aria-label="${title}" ${disabled ? "disabled" : ""}>
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
   </button>`;
 
-// Shared by three surfaces: each page's floating header on the canvas, the scrolling Pages
-// panel, and the thumbnail filmstrip — all delegate here instead of duplicating the mutation.
+// Shared by the on-canvas page headers and thumbnail strip.
 function addPage() {
   const last = doc.pages[doc.pages.length - 1];
   const p = blankPage(); p.w = last.w; p.h = last.h;
@@ -1562,8 +1663,10 @@ function duplicatePage(i: number) {
   doc.pages.splice(i + 1, 0, copy);
   doc.active = i + 1; sel = [];
   commit(); renderAll(); buildThumbs(); refreshPagesUI();
+  scrollToPage(doc.active); applyWorld();
 }
 function deletePage(i: number) {
+  if (doc.pages.length <= 1) return;
   doc.pages.splice(i, 1);
   doc.active = clamp(doc.active, 0, doc.pages.length - 1); sel = [];
   commit(); renderAll(); refreshPagesUI();
@@ -1584,8 +1687,7 @@ function togglePageHidden(i: number) {
   doc.pages[i].hidden = !doc.pages[i].hidden;
   commit(); renderCanvas(); refreshPagesUI();
 }
-/** Jumps to page `i` without resetting zoom — used by the pages panel and the thumbnail strip.
- * Grid view jumps via zoomFit() instead, since it's meant as a reset-and-overview action. */
+/** All page indexes navigate the same canvas, keeping the current zoom. */
 function goToPage(i: number) {
   doc.active = i; sel = []; editingId = null;
   baseline = snap();
@@ -1602,37 +1704,10 @@ $("pagestack").addEventListener("click", (ev) => {
   const hide = t.closest<HTMLElement>("[data-hidepage]"); if (hide) { togglePageHidden(+hide.dataset.hidepage); return; }
 });
 
-/* ---------- pages index (rail tab) ----------
- * Navigation only: clicking a thumbnail scrolls the document to that page. The document
- * itself — the scrolling column of artboards — is the centre canvas, never this panel. */
-function renderPagesPanel() {
-  $("panel").innerHTML = `<h4 class="ptitle">Páginas</h4><p class="phint">Índice do documento. Clique numa miniatura para rolar até a página.</p>` +
-    doc.pages.map((p, i) => `
-      <div class="pagenavitem" aria-selected="${i === doc.active}">
-        <div class="pagenavhead">
-          <span class="plabel2">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
-          <div class="pageminis">
-            ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover para cima", i === 0)}
-            ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover para baixo", i === doc.pages.length - 1)}
-            ${pageMini("hidepage", p.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn, i, p.hidden ? "Mostrar página" : "Ocultar página")}
-            ${pageMini("duppage", PAGE_MINI.dup, i, "Duplicar página")}
-            ${doc.pages.length > 1 ? pageMini("delpage", PAGE_MINI.del, i, "Excluir página") : ""}
-          </div>
-        </div>
-        <div class="pagenavthumb" data-gopage="${i}" title="Rolar até a página ${i + 1}" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
-          ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
-          : ""}</div>
-      </div>`).join("") +
-    `<button class="addpagebtn" id="addPagePanel" style="position:static;width:100%;margin-top:2px">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      Adicionar página
-    </button>`;
-}
-
 /* ---------- thumbnail strip ---------- */
 function renderThumbStrip() {
   $("thumbstrip").innerHTML = doc.pages.map((p, i) => `
-    <button class="thumbitem" data-gopage="${i}" aria-selected="${i === doc.active}" title="Página ${i + 1}${p.hidden ? " · oculta" : ""}">
+    <button class="thumbitem" data-gopage="${i}" aria-pressed="${i === doc.active}" aria-label="Página ${i + 1}" title="Página ${i + 1}${p.hidden ? " · oculta" : ""}">
       <div class="thumbitempic" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
         ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : ""}</div>
@@ -1665,7 +1740,6 @@ function updatePagesModeButtons() {
   $("gridViewBtn").setAttribute("aria-pressed", String(m === "grid"));
 }
 function refreshPagesUI() {
-  if (activeTab === "pages") renderPagesPanel();
   if (!$("thumbstrip").hidden) renderThumbStrip();
   if (!$("gridview").hidden) renderGridView();
 }
@@ -1678,6 +1752,8 @@ function setPagesMode(mode: "document" | "thumb" | "grid") {
   if (next === "thumb") { $("thumbstrip").hidden = false; renderThumbStrip(); }
   if (next === "grid") { renderGridView(); $("gridview").hidden = false; }
   updatePagesModeButtons();
+  // Keep scale while the strip reserves its own space below the canvas.
+  clampView(); applyWorld(); renderOverlay();
 }
 $("docViewBtn").addEventListener("click", () => setPagesMode("document"));
 $("thumbViewBtn").addEventListener("click", () => setPagesMode("thumb"));
@@ -1687,20 +1763,19 @@ $("pageCountBtn").addEventListener("click", () => setPagesMode("grid"));
 /* ---------- grid view ---------- */
 function renderGridView() {
   $("gridview").innerHTML = doc.pages.map((p, i) => `
-    <div class="gridcell" data-gridpage="${i}" aria-selected="${i === doc.active}" title="Abrir página ${i + 1}">
+    <button class="gridcell" data-gridpage="${i}" aria-pressed="${i === doc.active}" title="Abrir página ${i + 1}">
       <div class="pt" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
         ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : ""}</div>
       <span class="plabel">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
-    </div>`).join("");
+    </button>`).join("");
 }
 $("gridview").addEventListener("click", (ev) => {
   const cell = (ev.target as HTMLElement).closest<HTMLElement>("[data-gridpage]");
   if (!cell) { setPagesMode("document"); return; }
-  doc.active = +cell.dataset.gridpage; sel = []; editingId = null;
-  baseline = snap();
+  const pageIdx = +cell.dataset.gridpage;
   setPagesMode("document");
-  renderAll(); zoomFit();
+  goToPage(pageIdx);
 });
 
 /* ---------- present mode ---------- */
@@ -1950,6 +2025,7 @@ function renderFileMenu() {
     <button data-fmaction="${action}" class="${danger ? "danger" : ""}">${label}</button>`;
   $("fileMenu").innerHTML = [
     item("rename", "Renomear"),
+    item("resize", "Redimensionar páginas"),
     canManage ? item("duplicate", "Duplicar") : "",
     canManage ? item("copy-id", "Copiar ID") : "",
     item("open-json", "Abrir arquivo local…"),
@@ -1969,6 +2045,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
   const action = b.dataset.fmaction;
   closeFileMenu();
   if (action === "rename") { $("docname").focus(); $("docname").select(); return; }
+  if (action === "resize") { setPanel("page"); return; }
   if (action === "open-json") { $("fileJson").click(); return; }
   if (action === "copy-id") {
     navigator.clipboard?.writeText(doc.seedId || "").then(() => toast("ID copiado")).catch(() => {});
@@ -1988,7 +2065,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
     return;
   }
 });
-$("resizeBtn").addEventListener("click", () => { activeTab = "page"; renderRail(); renderPanel(); });
+$("resizeBtn").addEventListener("click", () => setPanel("page"));
 window.addEventListener("pointerdown", (ev) => {
   const t = ev.target as HTMLElement | null;
   if (t && !t.closest("#fileMenu") && !t.closest("#fileMenuBtn")) closeFileMenu();
@@ -2040,7 +2117,16 @@ function setTool(t) {
   tool = t;
   $("stage").style.cursor = t === "hand" ? "grab" : t === "draw" ? "crosshair" : "default";
   if (activeTab === "draw") renderPanel();
+  $("selectTool").setAttribute("aria-pressed", String(t === "select"));
+  $("handTool").setAttribute("aria-pressed", String(t === "hand"));
 }
+$("selectTool").onclick = () => setTool("select");
+$("handTool").onclick = () => setTool("hand");
+$("zoomSlider").addEventListener("input", (ev) => {
+  const r = $("stage").getBoundingClientRect();
+  zoomAt(r.left + r.width / 2, r.top + r.height / 2, Number(ev.target.value) / 100);
+});
+$("zoomval").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); };
 $("zoomin").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom * 1.2); };
 $("zoomout").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom / 1.2); };
 $("zoomfit").onclick = zoomFit;
@@ -2057,8 +2143,11 @@ const typing = () => {
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("present").hidden) { exitPresent(); return; }
   if (e.key === "Escape" && !$("gridview").hidden) { setPagesMode("document"); return; }
-  if (e.code === "Space" && !typing()) { spaceDown = true; $("stage").style.cursor = "grab"; }
+  if (e.code === "Space" && !typing() && !(document.activeElement instanceof HTMLButtonElement)) { e.preventDefault(); spaceDown = true; $("stage").style.cursor = "grab"; }
   if (typing()) { if (e.key === "Escape") (document.activeElement as HTMLElement).blur(); return; }
+  // Let focused controls keep native keyboard activation and scrolling.
+  if (document.activeElement instanceof HTMLButtonElement && (e.key === "Enter" || e.code === "Space")) return;
+  if (document.activeElement?.id === "documentScroll" && ["ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) return;
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key.toLowerCase();
   if (mod && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -2075,7 +2164,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.key === "]") { e.preventDefault(); order("up"); return; }
   if (mod && e.key === "[") { e.preventDefault(); order("down"); return; }
   if (e.key === "Delete" || e.key === "Backspace") { if (sel.length) { e.preventDefault(); deleteSel(); } return; }
-  if (e.key === "Escape") { sel = []; editingId = null; setTool("select"); renderAll(); return; }
+  if (e.key === "Escape") { sel = []; editingId = null; propPopOpen = false; closeFileMenu(); setTool("select"); renderAll(); return; }
   if (e.key === "Enter" && sel.length === 1) { e.preventDefault(); startEditingText(sel[0]); return; }
   if (e.key.startsWith("Arrow") && sel.length) {
     e.preventDefault();
@@ -2217,7 +2306,16 @@ export function mountEditor() {
   updatePagesModeButtons();
   requestAnimationFrame(zoomFit);
   document.fonts.ready.then(() => renderCanvas());
-  window.addEventListener("resize", () => { if (editorMounted) { clampView(); applyWorld(); } });
+  // A panel or app split can resize the canvas without a window resize event.
+  let stageWidth = $("stage").clientWidth;
+  new ResizeObserver(() => {
+    const stage = $("stage");
+    if (!stage.clientWidth || !stage.clientHeight) return;
+    const widthChanged = stageWidth !== stage.clientWidth;
+    stageWidth = stage.clientWidth;
+    if (fitView && widthChanged) zoomFit();
+    else { clampView(); applyWorld(); renderOverlay(); }
+  }).observe($("stage"));
 }
 
 // Automation handle. The fidelity suite renders pages through the real export

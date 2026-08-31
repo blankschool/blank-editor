@@ -27,13 +27,20 @@ export function loadTemplateLocally(id: string): Doc | null {
   }
 }
 
-export function syncTemplateToServer(doc: Doc): void {
-  if (!doc.seedId) return;
-  fetch(`/api/v1/templates/${doc.seedId}`, {
+export async function syncTemplateToServer(doc: Doc): Promise<boolean> {
+  if (!doc.seedId) return true;
+  try {
+    const res = await fetch(`/api/v1/templates/${doc.seedId}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: doc.name, document: doc }),
-  }).then((res) => { if (res.ok) emitSaved(); }).catch(() => {});
+    });
+    if (!res.ok) return false;
+    emitSaved();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function fetchTemplateFromServer(id: string): Promise<Doc> {

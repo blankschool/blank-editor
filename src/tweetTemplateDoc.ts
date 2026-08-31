@@ -42,7 +42,7 @@ export function createTweetTemplateDocument(): Doc {
           w: 96,
           h: 96,
           radius: 48,
-          src: "https://placehold.co/96x96/2f3336/71757a?text=+",
+          src: "",
         }),
         element("text", "displayName", {
           x: 188,
@@ -90,7 +90,7 @@ export function createTweetTemplateDocument(): Doc {
           w: 936,
           h: 620,
           radius: 24,
-          src: "https://placehold.co/936x620/2f3336/71757a?text=+",
+          src: "",
         }),
       ],
     }],

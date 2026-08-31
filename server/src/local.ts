@@ -20,11 +20,11 @@ const SEED_TEMPLATE: TemplateRow = {
       h: 1350,
       bg: "#000000",
       els: [
-        { id: "avatar-field", type: "image", name: "avatar", x: 72, y: 64, w: 96, h: 96, radius: 48, src: "https://placehold.co/96x96/2f3336/71757a?text=+" },
+        { id: "avatar-field", type: "image", name: "avatar", x: 72, y: 64, w: 96, h: 96, radius: 48, src: "" },
         { id: "displayName-field", type: "text", name: "displayName", x: 188, y: 66, w: 820, h: 40, text: "Micael Crasto", font: "Inter", size: 34, weight: 700, align: "left", lh: 1.25, fill: "#E6E9EA" },
         { id: "handle-field", type: "text", name: "handle", x: 188, y: 110, w: 820, h: 34, text: "@MicaelCrasto", font: "Inter", size: 28, weight: 400, align: "left", lh: 1.25, fill: "#71757A" },
         { id: "tweetText-field", type: "text", name: "tweetText", x: 72, y: 192, w: 936, h: 290, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\nUt enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.", font: "Inter", size: 34, weight: 400, align: "left", lh: 1.4, fill: "#E6E9EA" },
-        { id: "media-field", type: "image", name: "media", x: 72, y: 506, w: 936, h: 620, radius: 24, src: "https://placehold.co/936x620/2f3336/71757a?text=+" },
+        { id: "media-field", type: "image", name: "media", x: 72, y: 506, w: 936, h: 620, radius: 24, src: "" },
       ],
     }],
   },

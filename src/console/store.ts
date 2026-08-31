@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
-import { openTemplateById } from "../editor";
+import { openTemplateById, openTemplateDocument } from "../editor";
+import { createPlaygroundDocument, savePlaygroundCopy } from "../playgroundDocument";
+import { hasBlankGerarImageSource, isBlankGerarImageSource, listGerarFixedElements, prepareGerarDraftDocument, type GerarFixedElement } from "../gerarDraft";
+import type { Doc } from "../types";
 import { getDefaultApiKey, getSession } from "../session";
 import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
 
@@ -56,7 +59,13 @@ export interface GerarSource { templateId: string; name: string }
 /** Uma página já gerada: o texto que a IA escreveu (editável), as camadas de imagem que ela
  *  nunca toca (preenchidas à mão aqui — URL ou upload, mesmo mecanismo do Playground) e o PNG
  *  resultante. */
-export interface GerarPage { page: number; layers: Record<string, string>; images: Record<string, string>; previewUrl: string }
+export interface GerarPage {
+  page: number;
+  layers: Record<string, string>;
+  images: Record<string, string>;
+  fixed: GerarFixedElement[];
+  previewUrl: string;
+}
 
 export interface State {
   view: View;
@@ -81,6 +90,10 @@ export interface State {
   rendered: boolean;
   response: string | null;
   previewUrl: string | null;
+  playgroundDocument: Doc | null;
+  renderedDocument: Doc | null;
+  playgroundOpening: boolean;
+  playgroundError: string | null;
   copiedCode: boolean;
   copied: string | null;
   keys: ApiKey[];
@@ -153,6 +166,10 @@ export const state: State = {
   rendered: false,
   response: null,
   previewUrl: null,
+  playgroundDocument: null,
+  renderedDocument: null,
+  playgroundOpening: false,
+  playgroundError: null,
   copiedCode: false,
   copied: null,
   keys: [],
@@ -355,7 +372,7 @@ export function snippetFor(lang: Lang): string {
 }
 
 export async function startRender() {
-  if (state.rendering) return;
+  if (state.rendering || state.playgroundOpening) return;
   if (!state.apiKey.trim()) {
     state.tab = "response";
     state.response = JSON.stringify({ ok: false, error: "Cole uma API key primeiro (crie uma em Chaves de API)." }, null, 2);
@@ -368,7 +385,17 @@ export async function startRender() {
     notify();
     return;
   }
-  state.rendering = true; state.rendered = false; state.response = null;
+  if (!state.playgroundDocument || state.layersLoadedForId !== state.templateId) {
+    state.playgroundError = "Aguarde o carregamento dos campos do template.";
+    notify();
+    return;
+  }
+  const revision = playgroundRevision;
+  const renderedDocument = createPlaygroundDocument(state.playgroundDocument, state.page, state.layers);
+  const body = JSON.stringify(requestBody());
+  const apiKey = state.apiKey;
+  clearPlaygroundResult();
+  state.rendering = true;
   notify();
   const started = performance.now();
   try {
@@ -376,16 +403,18 @@ export async function startRender() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${state.apiKey}`,
+        authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(requestBody()),
+      body,
     });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
 
     const png = await response.blob();
+    if (revision !== playgroundRevision) return;
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = URL.createObjectURL(png);
     state.rendered = true;
+    state.renderedDocument = renderedDocument;
     state.tab = "preview";
     state.response = JSON.stringify({
       ok: true,
@@ -395,6 +424,7 @@ export async function startRender() {
       renderTimeMs: Math.round(performance.now() - started),
     }, null, 2);
   } catch (error) {
+    if (revision !== playgroundRevision) return;
     state.previewUrl = null;
     state.tab = "response";
     state.response = JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }, null, 2);
@@ -402,6 +432,40 @@ export async function startRender() {
     state.rendering = false;
     notify();
   }
+}
+
+/** A result always uses the generation snapshot; later form edits must not change it. */
+export async function openPlaygroundInCanvas(result = false) {
+  if (state.playgroundOpening || state.rendering) return;
+  state.playgroundOpening = true;
+  state.playgroundError = null;
+  notify();
+  try {
+    const document = result ? state.renderedDocument : state.playgroundDocument &&
+      createPlaygroundDocument(state.playgroundDocument, state.page, state.layers);
+    if (!document) throw new Error("Carregue um template ou gere um resultado primeiro.");
+    const saved = await savePlaygroundCopy(document);
+    state.templatesLoaded = false;
+    // Set the saved document before navigating: the hash listener must not reload the source.
+    openTemplateDocument(saved);
+    location.hash = `/editor/${encodeURIComponent(saved.seedId!)}`;
+  } catch {
+    state.playgroundError = "Não foi possível criar a cópia editável. Seus campos e resultado foram mantidos; tente novamente.";
+  } finally {
+    state.playgroundOpening = false;
+    notify();
+  }
+}
+
+let playgroundRevision = 0;
+
+function clearPlaygroundResult() {
+  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = null;
+  state.rendered = false;
+  state.renderedDocument = null;
+  state.response = null;
+  state.playgroundError = null;
 }
 
 export function setLayerValue(id: number, value: string) {
@@ -474,14 +538,23 @@ export function recentTemplates(count = 3): TemplateSummary[] {
 
 /** Remonta os campos do playground a partir dos elementos text/image nomeados que o template realmente tem — template diferente tem campos diferentes, então não pode ser lista fixa. */
 export async function loadLayersForTemplate(id: string) {
-  state.layersLoadedForId = id; // antes do await, para reentrar na view durante o load não refetchar
+  const revision = ++playgroundRevision;
+  const requestedPage = state.page;
+  state.layersLoadedForId = id;
+  state.playgroundDocument = null;
+  state.layers = [];
+  clearPlaygroundResult();
+  notify();
   try {
     const res = await fetch(`/api/v1/templates/${id}`);
-    if (!res.ok) return;
-    const { document } = await res.json();
+    if (!res.ok) throw new Error("Template indisponível");
+    const { document, name } = await res.json();
+    if (revision !== playgroundRevision || state.templateId !== id) return;
     const pages: unknown[] = Array.isArray(document?.pages) ? document.pages : [];
+    if (!pages.length) throw new Error("Template sem páginas");
     state.templatePages = Math.max(1, pages.length);
-    if (state.page > state.templatePages) state.page = 1;
+    state.page = requestedPage > state.templatePages ? 1 : requestedPage;
+    state.playgroundDocument = { ...document, name, seedId: id };
     // Os campos são os DA PÁGINA escolhida: num carrossel cada slide pode declarar
     // camadas diferentes, e mostrar sempre as da capa daria um formulário errado.
     const page = pages[state.page - 1] as { els?: unknown[] } | undefined;
@@ -494,7 +567,11 @@ export async function loadLayersForTemplate(id: string) {
         name: el.name,
         value: el.type === "image" ? (el.src?.startsWith("http") ? el.src : "") : el.text || "",
       }));
-  } catch { /* offline — mantém os campos que já apareciam */ }
+  } catch {
+    if (revision !== playgroundRevision || state.templateId !== id) return;
+    state.layersLoadedForId = null;
+    state.playgroundError = "Não foi possível carregar o template. Selecione-o novamente para tentar de novo.";
+  }
   notify();
 }
 
@@ -605,13 +682,17 @@ async function fetchAccessToken(): Promise<string> {
  *  em cima, criando na primeira chamada e reaproveitando nas próximas (regenerar com um tema
  *  diferente reescreve o mesmo rascunho, até a pessoa confirmar com uma das duas saídas). */
 async function ensureGerarDraft(): Promise<string> {
-  if (state.gerarDraftId) return state.gerarDraftId;
+  if (state.gerarDraftId) {
+    await syncStoredGerarDraft(state.gerarDraftId);
+    return state.gerarDraftId;
+  }
   const source = state.gerarSource;
   if (!source) throw new Error("Escolha um modelo primeiro.");
 
   const fetched = await fetch(`/api/v1/templates/${source.templateId}`);
   if (!fetched.ok) throw new Error("Não deu para abrir esse design.");
-  const { document } = await fetched.json();
+  const { document: sourceDocument } = await fetched.json();
+  const document = prepareGerarDraftDocument(sourceDocument);
 
   const res = await fetch("/api/v1/templates", {
     method: "POST",
@@ -623,6 +704,23 @@ async function ensureGerarDraft(): Promise<string> {
   state.gerarDraftId = id;
   state.templatesLoaded = false; // já aparece em Seus designs mesmo sem confirmar nada
   return id;
+}
+
+/** Migra rascunhos que já estavam abertos quando o placeholder antigo ainda era usado. */
+async function syncStoredGerarDraft(id: string, page = 1, fixed: readonly GerarFixedElement[] = []): Promise<void> {
+  const fetched = await fetch(`/api/v1/templates/${id}`);
+  if (!fetched.ok) throw new Error("Não deu para atualizar esse rascunho.");
+  const { document, name } = await fetched.json();
+  const current = document?.pages?.[page - 1]?.els ?? [];
+  const visibilityChanged = fixed.some(item => current.find((element: { id?: string }) => element.id === item.id)?.hidden !== item.hidden);
+  if (!hasBlankGerarImageSource(document) && !visibilityChanged) return;
+  const cleaned = prepareGerarDraftDocument(document, page - 1, fixed);
+  const saved = await fetch(`/api/v1/templates/${id}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: name || state.gerarDraftName, document: cleaned }),
+  });
+  if (!saved.ok) throw new Error("Não deu para limpar as imagens vazias do rascunho.");
 }
 
 /** Tema → IA → render salvo, uma página de cada vez (a Edge Function faz as três coisas — ver
@@ -649,6 +747,7 @@ export async function runGerarGenerate() {
       page: p.page,
       layers: p.layers,
       images: {},
+      fixed: [],
       previewUrl: `data:image/png;base64,${p.imageBase64}`,
     }));
     state.gerarActivePage = 1;
@@ -659,12 +758,14 @@ export async function runGerarGenerate() {
     const tplRes = await fetch(`/api/v1/templates/${templateId}`);
     if (tplRes.ok) {
       const { document } = await tplRes.json();
-      const pages: Array<{ els?: Array<{ name?: string; type?: string; src?: string }> }> = document?.pages ?? [];
+      const pages: Array<{ els?: Array<{ id?: string; name?: string; type?: string; src?: string; hidden?: boolean }> }> = document?.pages ?? [];
       for (const gp of state.gerarPages) {
         const els = pages[gp.page - 1]?.els ?? [];
         gp.images = Object.fromEntries(
-          els.filter((el) => el.type === "image" && el.name).map((el) => [el.name as string, el.src ?? ""]),
+          els.filter((el) => el.type === "image" && el.name)
+            .map((el) => [el.name as string, isBlankGerarImageSource(el.src) ? "" : el.src ?? ""]),
         );
+        gp.fixed = listGerarFixedElements(document, gp.page - 1);
       }
       notify();
     }
@@ -693,6 +794,15 @@ export function setGerarImageValue(page: number, name: string, value: string) {
   notify();
 }
 
+export function setGerarFixedVisibility(page: number, id: string, hidden: boolean) {
+  const target = state.gerarPages.find((item) => item.page === page);
+  const element = target?.fixed?.find((item) => item.id === id);
+  if (!element) return;
+  element.hidden = hidden;
+  notify();
+  void commitGerarPageEdit(page);
+}
+
 /** Sobe a foto pro bucket privado (mesma rota do Playground) e já grava a página com ela —
  *  diferente de texto, não faz sentido "esperar sair do campo" depois de um upload. */
 export async function uploadGerarImage(page: number, name: string, file: File) {
@@ -714,8 +824,12 @@ export async function commitGerarPageEdit(page: number) {
   const target = state.gerarPages.find((p) => p.page === page);
   if (!target || !state.gerarDraftId) return;
   try {
+    await syncStoredGerarDraft(state.gerarDraftId, page, target.fixed ?? []);
     const layers: Record<string, { text?: string } | { image_url?: string }> = {};
     for (const [name, value] of Object.entries(target.layers)) layers[name] = { text: value };
+    target.images = Object.fromEntries(Object.entries(target.images).map(([name, value]) => [
+      name, isBlankGerarImageSource(value) ? "" : value,
+    ]));
     for (const [name, value] of Object.entries(target.images)) if (value) layers[name] = { image_url: value };
 
     const res = await fetch("/api/v1/render", {

@@ -1,4 +1,4 @@
-import { FileEdit, Image as ImageIcon, Loader2, RefreshCw, Sparkles, Upload } from "lucide-react";
+import { Eye, EyeOff, FileEdit, Image as ImageIcon, Layers3, Loader2, RefreshCw, Sparkles, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import {
@@ -9,6 +9,7 @@ import {
   selectGerarSource,
   setGerarActivePage,
   setGerarImageValue,
+  setGerarFixedVisibility,
   setGerarLayerValue,
   setGerarTheme,
   uploadGerarImage,
@@ -22,6 +23,8 @@ const FIELD_LABELS: Record<string, string> = {
   handle: "Usuário",
   tweetText: "Texto do post",
   avatar: "Avatar",
+  media: "Imagem do post",
+  verifiedBadge: "Selo verificado",
 };
 
 /** Faixa de modelos: só os designs já salvos da conta — Gerar escreve em cima de um template
@@ -122,6 +125,27 @@ function ImageLayerField({ page, name, value }: { page: number; name: string; va
   );
 }
 
+function FixedLayerField({ page, element }: { page: number; element: { id: string; name: string; type: string; hidden: boolean } }) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-line bg-inset p-2.5">
+      <Layers3 size={14} strokeWidth={1.5} className="flex-none text-muted" />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-xs text-text">{element.name}</span>
+        <span className="text-[10px] capitalize text-faint">{element.type} · vem do modelo</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => setGerarFixedVisibility(page, element.id, !element.hidden)}
+        aria-label={`${element.hidden ? "Mostrar" : "Ocultar"} ${element.name}`}
+        aria-pressed={!element.hidden}
+        className="flex h-8 w-8 flex-none items-center justify-center rounded-sm border border-line text-muted hover:border-line-strong hover:text-text"
+      >
+        {element.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+      </button>
+    </div>
+  );
+}
+
 export function GerarView() {
   const s = useConsole();
   const active = s.gerarPages.find((p) => p.page === s.gerarActivePage) ?? s.gerarPages[0];
@@ -173,6 +197,7 @@ export function GerarView() {
           <div className="flex flex-col gap-3">
             <span className="text-[13px] font-medium">Campos gerados</span>
             <span className="text-xs text-faint">Corrija à mão se quiser — grava sozinho ao sair do campo.</span>
+            <span className="text-xs leading-relaxed text-faint">Imagem vazia não aparece no preview. Adicione uma URL ou faça upload para exibi-la.</span>
             <div className="flex flex-col gap-2.5 overflow-y-auto">
               {active && Object.entries(active.layers).map(([name, value]) => (
                 <LayerField key={name} page={active.page} name={name} value={value} />
@@ -180,6 +205,15 @@ export function GerarView() {
               {active && Object.entries(active.images).map(([name, value]) => (
                 <ImageLayerField key={name} page={active.page} name={name} value={value} />
               ))}
+              {active && (active.fixed?.length ?? 0) > 0 && (
+                <div className="mt-1 flex flex-col gap-2">
+                  <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-faint">Elementos do modelo</span>
+                  <span className="text-xs leading-relaxed text-faint">Formas e decorações não são criadas pela IA. Oculte aqui o que não deve entrar no resultado.</span>
+                  {active.fixed.map((element) => (
+                    <FixedLayerField key={element.id} page={active.page} element={element} />
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mt-2 flex flex-col gap-2">

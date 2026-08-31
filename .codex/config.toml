@@ -1,0 +1,7 @@
+[mcp_servers.canva]
+command = "npx"
+args = [
+    "-y",
+    "mcp-remote@latest",
+    "https://mcp.canva.com/mcp",
+]

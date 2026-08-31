@@ -1,7 +1,7 @@
-import { Copy, Image as ImageIcon, Play, Type, Upload } from "lucide-react";
+import { Copy, Image as ImageIcon, Pencil, Play, Type, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { DevViewHeader } from "./AccountView";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,6 +10,7 @@ import {
   filledLayers,
   goToView,
   openTemplateById,
+  openPlaygroundInCanvas,
   selectPage,
   selectTemplate,
   set,
@@ -40,13 +41,20 @@ function LayerField({ layer }: { layer: { id: number; type: "text" | "image"; na
         </label>
       </div>
       <div className="flex items-center gap-1.5">
-        <Input
+        {layer.type === "text" ? <Textarea
           id={`layer-${layer.id}`}
           value={layer.value}
           onChange={(e) => setLayerValue(layer.id, e.target.value)}
-          placeholder={layer.type === "text" ? "Texto dinâmico" : "URL da imagem"}
+          placeholder="Texto dinâmico"
+          rows={layer.value.length > 100 || layer.value.includes("\n") ? 4 : 2}
+          className="resize-y font-sans text-sm"
+        /> : <Input
+          id={`layer-${layer.id}`}
+          value={layer.value}
+          onChange={(e) => setLayerValue(layer.id, e.target.value)}
+          placeholder="URL da imagem"
           className="h-9.5"
-        />
+        />}
         {layer.type === "image" && (
           <label
             title="Subir uma foto"
@@ -82,13 +90,13 @@ export function PlaygroundView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
       <DevViewHeader title="Playground" />
-      <div className="grid min-h-0 flex-1 grid-cols-[380px_minmax(0,1fr)] items-start gap-5">
+      <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-5 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
       <div className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-4.5">
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-medium">Template</span>
           {s.templates.length ? (
             <>
-              <Select value={s.templateId} onValueChange={selectTemplate}>
+              <Select value={s.templateId} onValueChange={selectTemplate} disabled={s.playgroundOpening}>
                 <SelectTrigger aria-label="Template">
                   <SelectValue placeholder="Escolha um template" />
                 </SelectTrigger>
@@ -100,9 +108,10 @@ export function PlaygroundView() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button variant="ghost" onClick={() => openTemplateById(s.templateId)} className="border border-line">
-                Abrir no canvas
+              <Button variant="ghost" onClick={() => openTemplateById(s.templateId)} disabled={s.playgroundOpening || s.rendering} className="border border-line">
+                Editar template original
               </Button>
+              <span className="text-xs leading-relaxed text-faint">Abre o modelo salvo, sem aplicar os campos deste teste.</span>
             </>
           ) : (
             <button
@@ -170,20 +179,27 @@ export function PlaygroundView() {
             className="mt-0.5"
           />
           <span className="flex flex-col gap-0.5">
-            <span className="font-medium text-text">Salvar como design</span>
+            <span className="font-medium text-text">Sobrescrever template ao gerar</span>
             <span className="text-faint">
-              Grava o resultado de volta neste template — o mesmo efeito de abrir no editor e salvar. Desligado, é só um teste.
+              Atualiza o template original com estes campos. Para preservar o modelo, deixe desligado e use “Editar resultado no canvas”.
             </span>
           </span>
         </label>
 
-        <Button size="xl" onClick={startRender} disabled={s.rendering} className="rounded-md text-sm">
+        <Button size="xl" onClick={startRender} disabled={s.rendering || s.playgroundOpening || !s.playgroundDocument} className="rounded-md text-sm">
           <Play size={13} fill="currentColor" strokeWidth={0} />
           {s.rendering ? "Gerando…" : "Gerar render"}
         </Button>
+        <Button variant="outline" onClick={() => openPlaygroundInCanvas()} disabled={s.rendering || s.playgroundOpening || !s.playgroundDocument}>
+          <Pencil size={14} />
+          {s.playgroundOpening ? "Abrindo cópia…" : "Editar campos no canvas"}
+        </Button>
+        <span className="text-xs leading-relaxed text-faint">Cria uma cópia com os campos atuais, mesmo sem gerar uma imagem.</span>
+        {s.playgroundError && <p role="alert" className="text-sm text-danger">{s.playgroundError}</p>}
       </div>
 
       <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
         <Segmented
           aria-label="Resultado"
           value={s.tab}
@@ -192,13 +208,24 @@ export function PlaygroundView() {
           size="tab"
           className="self-start p-[5px]"
         />
+        {s.renderedDocument && (
+          <Button onClick={() => openPlaygroundInCanvas(true)} disabled={s.playgroundOpening || s.rendering}>
+            <Pencil size={14} />
+            {s.playgroundOpening ? "Abrindo cópia…" : "Editar resultado no canvas"}
+          </Button>
+        )}
+        </div>
+
+        {s.renderedDocument && <p className="text-xs leading-relaxed text-muted">
+          O preview é uma imagem. Abra uma cópia com camadas editáveis e os valores da última geração, sem alterar o template original.
+        </p>}
 
         {s.tab === "preview" ? (
           <div className="flex min-h-[380px] items-center justify-center rounded-lg border border-line bg-inset p-8 text-center">
             {s.previewUrl ? (
               <img
                 src={s.previewUrl}
-                alt="Preview do tweet renderizado"
+                alt="Preview do resultado gerado"
                 className="block h-auto max-w-full rounded-sm"
               />
             ) : (
