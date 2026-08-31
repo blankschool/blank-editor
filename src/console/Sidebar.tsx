@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LayoutGrid, Monitor, Moon, PanelLeft, Plus, Search, Settings, Sparkles, Sun } from "lucide-react";
+import { BookOpen, LayoutGrid, Monitor, Moon, PanelLeft, Plus, Search, Settings, Sparkles, Sun } from "lucide-react";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { cn } from "@/lib/utils";
 import { Segmented } from "@/components/ui/segmented";
@@ -8,6 +8,7 @@ import { DEV_VIEWS, goToView, openNewDesign, set, useConsole, type View } from "
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof LayoutGrid }> = [
   { view: "designs", label: "Designs", icon: LayoutGrid },
   { view: "gerar", label: "Gerar", icon: Sparkles },
+  { view: "docs", label: "Documentação", icon: BookOpen },
   { view: "account", label: "Conta", icon: Settings },
 ];
 

@@ -20,6 +20,7 @@ import { AccountView } from "./AccountView";
 import { PlaygroundView } from "./PlaygroundView";
 import { ImportView } from "./ImportView";
 import { KeysView } from "./KeysView";
+import { DocsView } from "./DocsView";
 
 function NamePromptDialog() {
   const s = useConsole();
@@ -103,6 +104,7 @@ export function ConsoleApp() {
         <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
           {s.view === "designs" && <DesignsView />}
           {s.view === "gerar" && <GerarView />}
+          {s.view === "docs" && <DocsView />}
           {s.view === "account" && <AccountView />}
           {s.view === "playground" && <PlaygroundView />}
           {s.view === "import" && <ImportView />}

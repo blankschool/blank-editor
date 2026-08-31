@@ -28,8 +28,8 @@ import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
  * serviria como snapshot.
  */
 
-export type View = "designs" | "gerar" | "account" | "playground" | "import" | "keys";
-export const VIEWS: View[] = ["designs", "gerar", "account", "playground", "import", "keys"];
+export type View = "designs" | "gerar" | "docs" | "account" | "playground" | "import" | "keys";
+export const VIEWS: View[] = ["designs", "gerar", "docs", "account", "playground", "import", "keys"];
 const DEFAULT_VIEW: View = "designs";
 
 /**
