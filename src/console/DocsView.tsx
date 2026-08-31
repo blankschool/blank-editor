@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clipboard,
   Code2,
+  Download,
   ExternalLink,
   FileImage,
   KeyRound,
@@ -81,8 +82,9 @@ function Setting({ name, value }: { name: string; value: string }) {
 }
 
 export function DocsView() {
-  const baseUrl = location.origin;
+  const baseUrl = "https://blank-editor.ickanz.easypanel.host";
   const renderUrl = `${baseUrl}/api/v1/render`;
+  const [llmCopied, setLlmCopied] = useState(false);
 
   const quickStart = `curl -X POST "${renderUrl}" \\
   -H "Authorization: Bearer SUA_API_KEY" \\
@@ -172,6 +174,111 @@ export async function renderBlankDesign(args) {
   const listTemplates = `curl "${baseUrl}/api/v1/templates" \\
   -H "Authorization: Bearer SUA_API_KEY"`;
 
+  const llmMarkdown = [
+    "# Blank Editor API",
+    "",
+    "Use a API do Blank para transformar designs salvos em imagens PNG. Um agente ou workflow envia valores para as camadas nomeadas; o Blank preserva layout, tipografia, posições e identidade visual.",
+    "",
+    `- App e API: ${baseUrl}`,
+    `- Render: POST ${renderUrl}`,
+    "- Autenticação: `Authorization: Bearer SUA_API_KEY`",
+    "- Resposta: arquivo binário `image/png`",
+    "",
+    "## Regras para agentes",
+    "",
+    "1. Use somente IDs de templates configurados e nomes de camadas existentes.",
+    "2. Envie texto com `{ \"text\": \"...\" }`, imagem com `{ \"image_url\": \"https://...\" }` ou oculte com `{ \"hide\": true }`.",
+    "3. URLs de imagem precisam ser públicas e acessíveis pelo servidor.",
+    "4. `page` começa em 1 e só é necessário em designs de várias páginas.",
+    "5. Omita `save` ou use `false` para preservar o template. `save: true` sobrescreve as camadas no template.",
+    "6. Nunca exponha a API key em prompts, frontend ou repositórios.",
+    "",
+    "## Primeiro render",
+    "",
+    "```bash",
+    quickStart,
+    "```",
+    "",
+    "## Ferramenta para agente",
+    "",
+    "```json",
+    agentTool,
+    "```",
+    "",
+    "### Como ler o schema da ferramenta",
+    "",
+    "Esse JSON registra uma ferramenta de function calling no framework do agente; ele não faz a requisição HTTP sozinho. Quando o modelo decide usar `render_blank_design`, o framework valida os argumentos contra `parameters` e os entrega ao executor Node.js, que chama a API do Blank.",
+    "",
+    "- `name`: identificador estável usado pelo modelo e pelo código para selecionar a ferramenta.",
+    "- `description`: explica quando usar a ferramenta; seja específico para evitar chamadas desnecessárias.",
+    "- `parameters`: JSON Schema dos argumentos que o agente pode produzir.",
+    "- `template`: ID do design. Em produção, prefira uma lista permitida ou fixe esse valor no executor.",
+    "- `page`: página opcional, começando em 1.",
+    "- `layers`: mapa cujas chaves precisam ser os nomes exatos das camadas do design.",
+    "- `additionalProperties`: permite uma entrada por camada com `text`, `image_url` ou `hide`.",
+    "- `required`: obriga o agente a informar `template` e `layers`; `page` continua opcional.",
+    "",
+    "### Executor Node.js",
+    "",
+    "```javascript",
+    agentHandler,
+    "```",
+    "",
+    "## n8n",
+    "",
+    "Configure um nó HTTP Request:",
+    "",
+    "- Method: `POST`",
+    `- URL: ${renderUrl}`,
+    "- Authentication: `Generic Credential Type → Header Auth`",
+    "- Header name: `Authorization`",
+    "- Header value: `Bearer SUA_API_KEY`",
+    "- Body Content Type: `JSON`",
+    "- Response Format: `File`",
+    "- Output Property: `data`",
+    "",
+    "Body:",
+    "",
+    "```json",
+    n8nBody,
+    "```",
+    "",
+    "O PNG fica na propriedade binária `data`. Conecte o nó seguinte ao Google Drive, S3, Telegram, WhatsApp ou outro destino. Para um AI Agent no n8n, coloque o render em um subworkflow e conecte-o com Call n8n Workflow Tool; mantenha a chave e o template fora do prompt.",
+    "",
+    "## Referência",
+    "",
+    "| Campo | Tipo | Uso |",
+    "| --- | --- | --- |",
+    "| `template` | string | Obrigatório. ID do design salvo. |",
+    "| `page` | integer | Opcional. Página base 1 para carrosséis. |",
+    "| `layers` | object | Camadas nomeadas que serão substituídas ou ocultadas. |",
+    "| `save` | boolean | Opcional. Sobrescreve o template; padrão `false`. |",
+    "",
+    "Erros comuns: `400` para requisição inválida, `401` para chave ausente/revogada e `404` para design inexistente ou de outra conta.",
+    "",
+    "## Listar designs",
+    "",
+    "```bash",
+    listTemplates,
+    "```",
+    "",
+  ].join("\n");
+
+  async function copyForLlm() {
+    await navigator.clipboard.writeText(llmMarkdown);
+    setLlmCopied(true);
+    window.setTimeout(() => setLlmCopied(false), 1800);
+  }
+
+  function downloadMarkdown() {
+    const url = URL.createObjectURL(new Blob([llmMarkdown], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "blank-editor-api.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   function scrollTo(id: string) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -206,6 +313,14 @@ export async function renderBlankDesign(args) {
             <Button variant="outline" onClick={() => goToView("keys")}>
               <KeyRound size={14} />
               Criar chave de API
+            </Button>
+            <Button variant="outline" onClick={() => void copyForLlm()}>
+              {llmCopied ? <Check size={14} className="text-success" /> : <Clipboard size={14} />}
+              {llmCopied ? "Copiado para LLM" : "Copiar para LLM"}
+            </Button>
+            <Button variant="outline" onClick={downloadMarkdown}>
+              <Download size={14} />
+              Baixar .md
             </Button>
           </div>
         </div>
@@ -293,6 +408,45 @@ export async function renderBlankDesign(args) {
             <div className="grid gap-4 lg:grid-cols-2">
               <CodeBlock title="Contrato da ferramenta" language="JSON Schema" code={agentTool} />
               <CodeBlock title="Executor da ferramenta" language="Node.js" code={agentHandler} />
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-line bg-surface">
+              <div className="border-b border-line px-4 py-3.5">
+                <h3 className="text-[13px] font-semibold">O que esse contrato faz</h3>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Esse JSON registra uma ferramenta de function calling no framework do agente. Ele não chama a API sozinho: quando o modelo escolhe <code className="font-mono text-[11px] text-text">render_blank_design</code>, os argumentos validados são entregues ao executor Node.js acima.
+                </p>
+              </div>
+              <div className="grid md:grid-cols-2">
+                {[
+                  ["name", "Identificador estável que o modelo e seu código usam para selecionar a ferramenta."],
+                  ["description", "Diz ao agente quando a ferramenta é útil. Uma descrição específica evita chamadas erradas."],
+                  ["parameters", "JSON Schema que limita o formato dos argumentos produzidos pelo agente."],
+                  ["template", "ID do design. Em produção, prefira uma lista permitida ou fixe o ID no executor."],
+                  ["page", "Página opcional do design, começando em 1. Não entra em required."],
+                  ["layers", "Mapa em que cada chave deve ser exatamente o nome de uma camada no canvas."],
+                  ["additionalProperties", "Permite várias camadas, cada uma com text, image_url ou hide."],
+                  ["required", "Obriga template e layers antes da execução; o framework rejeita uma chamada incompleta."],
+                ].map(([field, explanation], index) => (
+                  <div
+                    key={field}
+                    className={cn(
+                      "grid grid-cols-[132px_minmax(0,1fr)] gap-3 border-line px-4 py-3",
+                      index > 1 && "border-t",
+                      index % 2 === 1 && "md:border-l",
+                    )}
+                  >
+                    <code className="font-mono text-[11px] font-semibold text-accent">{field}</code>
+                    <p className="text-xs leading-5 text-muted">{explanation}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-start gap-3 border-t border-line bg-inset px-4 py-3.5">
+                <ShieldCheck size={16} className="mt-0.5 flex-none text-success" />
+                <p className="text-xs leading-5 text-muted">
+                  Para mais controle, não deixe o agente escolher qualquer template. Guarde os IDs permitidos no servidor e valide os nomes das camadas antes de enviar a requisição ao Blank.
+                </p>
+              </div>
             </div>
 
             <div className="rounded-lg border border-line bg-surface p-4">

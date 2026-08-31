@@ -1,4 +1,4 @@
-import { Copy, Image as ImageIcon, Pencil, Play, Type, Upload } from "lucide-react";
+import { Copy, Image as ImageIcon, Pencil, Play, RefreshCw, Type, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input, Textarea } from "@/components/ui/input";
@@ -11,10 +11,12 @@ import {
   goToView,
   openTemplateById,
   openPlaygroundInCanvas,
+  preparePlaygroundApiKey,
   selectPage,
   selectTemplate,
   set,
   setLayerValue,
+  setPlaygroundApiKey,
   snippetFor,
   startRender,
   uploadLayerPhoto,
@@ -148,11 +150,26 @@ export function PlaygroundView() {
           <Input
             id="apiKey"
             value={s.apiKey}
-            onChange={(e) => set("apiKey", e.target.value)}
-            placeholder="crie uma em Chaves de API"
+            onChange={(e) => setPlaygroundApiKey(e.target.value)}
+            placeholder={s.apiKeyLoading ? "preparando chave padrão…" : "chave padrão da conta"}
+            disabled={s.apiKeyLoading}
             className="h-9 font-mono text-[11px]"
           />
-          <span className="font-mono text-[10px] text-faint">POST /api/v1/render → {location.host}</span>
+          <div className="flex items-center gap-2">
+            <span className="flex-1 font-mono text-[10px] text-faint">POST /api/v1/render → {location.host}</span>
+            {s.apiKeyError && (
+              <button
+                type="button"
+                onClick={() => void preparePlaygroundApiKey()}
+                className="flex items-center gap-1 text-[10px] text-danger hover:underline"
+              >
+                <RefreshCw size={11} />
+                Tentar novamente
+              </button>
+            )}
+          </div>
+          {s.apiKeyLoading && <span className="text-[10px] text-faint">Criando e salvando a chave desta conta…</span>}
+          {s.apiKeyError && <span role="alert" className="text-[10px] text-danger">{s.apiKeyError}</span>}
         </div>
 
         <span className="text-[13px] font-medium">Campos do template</span>
@@ -186,7 +203,7 @@ export function PlaygroundView() {
           </span>
         </label>
 
-        <Button size="xl" onClick={startRender} disabled={s.rendering || s.playgroundOpening || !s.playgroundDocument} className="rounded-md text-sm">
+        <Button size="xl" onClick={startRender} disabled={s.rendering || s.playgroundOpening || s.apiKeyLoading || !s.playgroundDocument} className="rounded-md text-sm">
           <Play size={13} fill="currentColor" strokeWidth={0} />
           {s.rendering ? "Gerando…" : "Gerar render"}
         </Button>

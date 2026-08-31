@@ -3,7 +3,8 @@ import { openTemplateById, openTemplateDocument } from "../editor";
 import { createPlaygroundDocument, savePlaygroundCopy } from "../playgroundDocument";
 import { hasBlankGerarImageSource, isBlankGerarImageSource, listGerarFixedElements, prepareGerarDraftDocument, type GerarFixedElement } from "../gerarDraft";
 import type { Doc } from "../types";
-import { getDefaultApiKey, getSession } from "../session";
+import { clearDefaultApiKey, getDefaultApiKey, getSession, saveDefaultApiKey } from "../session";
+import { ensurePlaygroundApiKey } from "../playgroundApiKey";
 import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
 
 /**
@@ -71,6 +72,10 @@ export interface State {
   view: View;
   templateId: string;
   apiKey: string;
+  /** Conta dona da chave que está no campo. Evita carregar a chave da conta anterior após logout/login. */
+  apiKeyOwnerId: string | null;
+  apiKeyLoading: boolean;
+  apiKeyError: string | null;
   layers: Layer[];
   collapsed: boolean;
   sort: string;
@@ -148,6 +153,9 @@ export const state: State = {
   view: DEFAULT_VIEW,
   templateId: "",
   apiKey: "",
+  apiKeyOwnerId: null,
+  apiKeyLoading: false,
+  apiKeyError: null,
   layers: [],
   collapsed: false,
   sort: "Ordem",
@@ -314,10 +322,72 @@ export function enterView(view: View) {
   }
   // A "Chave padrão" de cada conta fica cacheada no navegador (session.ts) — sem isso, a pessoa
   // precisaria copiar a chave em "Chaves de API" e colar aqui toda vez que abrisse o Playground.
-  if (view === "playground" && !state.apiKey) {
-    const session = getSession();
-    const cached = session ? getDefaultApiKey(session.id) : null;
-    if (cached) state.apiKey = cached;
+  if (view === "playground") void preparePlaygroundApiKey();
+  notify();
+}
+
+/**
+ * Toda conta chega ao Playground com uma chave utilizável. O servidor nunca consegue devolver
+ * uma chave antiga (guarda só o hash), então um navegador sem o cache local cria uma nova chave
+ * exclusiva e salva o segredo por ownerId. Abrir de novo reutiliza o cache e não cria duplicata.
+ */
+export async function preparePlaygroundApiKey() {
+  const session = getSession();
+  if (!session || state.apiKeyLoading) return;
+
+  if (state.apiKeyOwnerId !== session.id) {
+    state.apiKey = "";
+    state.apiKeyOwnerId = session.id;
+  }
+  if (state.apiKey.trim()) return;
+
+  state.apiKeyLoading = true;
+  state.apiKeyError = null;
+  notify();
+
+  try {
+    const secret = await ensurePlaygroundApiKey(session.id, {
+      read: getDefaultApiKey,
+      save: saveDefaultApiKey,
+      create: async () => {
+        const res = await fetch("/api/v1/keys", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Chave padrão · Playground" }),
+        });
+        if (!res.ok) throw new Error("key creation failed");
+        const created = await res.json();
+        const summary = { id: created.id, name: created.name, createdAt: created.createdAt, revoked: false };
+        if (!state.keys.some((key) => key.id === created.id)) state.keys.unshift(summary);
+        state.newKeySecret = { id: created.id, secret: created.secret };
+        return created.secret as string;
+      },
+    });
+    // A conta pode ter mudado enquanto a requisição estava no ar. A chave continua salva para
+    // sua dona, mas nunca é exibida na sessão de outra pessoa.
+    if (getSession()?.id === session.id) {
+      state.apiKey = secret;
+      state.apiKeyOwnerId = session.id;
+    }
+  } catch {
+    if (getSession()?.id === session.id) {
+      state.apiKeyError = "Não foi possível preparar a chave padrão.";
+    }
+  } finally {
+    state.apiKeyLoading = false;
+    notify();
+  }
+}
+
+/** Persiste também chaves coladas manualmente, sempre isoladas pela conta atual. */
+export function setPlaygroundApiKey(value: string) {
+  const session = getSession();
+  state.apiKey = value;
+  state.apiKeyOwnerId = session?.id ?? null;
+  state.apiKeyError = null;
+  if (session) {
+    if (value.trim()) saveDefaultApiKey(session.id, value.trim());
+    else clearDefaultApiKey(session.id);
   }
   notify();
 }
@@ -1000,6 +1070,12 @@ async function createKey(name: string): Promise<string | null> {
   const created = await res.json();
   state.keys.unshift({ id: created.id, name: created.name, createdAt: created.createdAt, revoked: false });
   state.newKeySecret = { id: created.id, secret: created.secret };
+  const session = getSession();
+  if (session && !state.apiKey.trim()) {
+    state.apiKey = created.secret;
+    state.apiKeyOwnerId = session.id;
+    saveDefaultApiKey(session.id, created.secret);
+  }
   return null;
 }
 
@@ -1007,7 +1083,10 @@ export async function revokeKey(id: string) {
   const res = await fetch(`/api/v1/keys/${id}`, { method: "DELETE" });
   if (!res.ok) return;
   state.keys = state.keys.map((k) => (k.id === id ? { ...k, revoked: true } : k));
-  if (state.newKeySecret?.id === id) state.newKeySecret = null;
+  if (state.newKeySecret?.id === id) {
+    if (state.apiKey === state.newKeySecret.secret) setPlaygroundApiKey("");
+    state.newKeySecret = null;
+  }
   notify();
 }
 

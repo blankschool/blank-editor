@@ -174,6 +174,7 @@ export function LoginApp() {
       set("newKeySecret", { id: body.apiKey.id, secret: body.apiKey.secret });
       saveDefaultApiKey(body.id, body.apiKey.secret);
       set("apiKey", body.apiKey.secret);
+      set("apiKeyOwnerId", body.id);
     }
     return { id: body.id, name: body.name, email: body.email };
   }

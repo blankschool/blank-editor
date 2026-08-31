@@ -139,6 +139,14 @@ export function getDefaultApiKey(ownerId: string): string | null {
   }
 }
 
+export function clearDefaultApiKey(ownerId: string): void {
+  try {
+    localStorage.removeItem(DEFAULT_KEY_PREFIX + ownerId);
+  } catch {
+    /* armazenamento bloqueado — não há cache local para limpar */
+  }
+}
+
 /** Initials for the avatar — first letter of up to two words, skipping short connectors ("do", "de", "da"). */
 export function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter((word) => word.length > 2);
