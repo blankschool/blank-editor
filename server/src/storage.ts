@@ -64,3 +64,15 @@ export async function fetchPrivateUpload(client: SupabaseClient, ref: string): P
   if (error) throw error;
   return Buffer.from(await data.arrayBuffer());
 }
+
+/** O editor roda no navegador e não tem a chave service-role — uma layer com `src` privado
+ *  (`PRIVATE_UPLOAD_PREFIX`) não é uma URL que `<img>`/canvas consegue buscar direto (o esquema
+ *  `supabase://` não existe pra fetch nenhum). Esta função devolve uma URL assinada, de curta
+ *  duração, que o navegador já consegue carregar sozinho — GET /api/v1/uploads/resolve (app.ts)
+ *  é quem confere que o `ref` pedido pertence a quem está pedindo antes de chamar isto. */
+export async function signPrivateUploadUrl(client: SupabaseClient, ref: string, expiresInSeconds = 300): Promise<string> {
+  const path = ref.startsWith(PRIVATE_UPLOAD_PREFIX) ? ref.slice(PRIVATE_UPLOAD_PREFIX.length) : ref;
+  const { data, error } = await client.storage.from(UPLOADS_BUCKET).createSignedUrl(path, expiresInSeconds);
+  if (error) throw error;
+  return data.signedUrl;
+}
