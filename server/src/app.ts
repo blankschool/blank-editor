@@ -7,7 +7,7 @@ import { parseLayers, type Layers } from "./render/layers.ts";
 import { pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
-import { publicRenderUrl, uploadRenderedPng, uploadUserPhoto } from "./storage.ts";
+import { PRIVATE_UPLOAD_PREFIX, publicRenderUrl, signPrivateUploadUrl, uploadRenderedPng, uploadUserPhoto } from "./storage.ts";
 import type { ApiKeyOwner, ApiKeySummary, TemplateRow, TemplateSummary } from "./db.ts";
 import {
   clearSessionCookies,
@@ -264,6 +264,25 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     const buffer = await file.toBuffer();
     const src = await uploadUserPhoto(storage.client, ownerId, file.filename, file.mimetype, buffer);
     return reply.code(201).send({ src });
+  });
+
+  // O editor roda no navegador, sem a chave service-role — não consegue buscar um `src` privado
+  // (`supabase://uploads/...`) direto, só o servidor sabe resolver isso. Esta rota devolve uma
+  // URL assinada de curta duração que o `<img>`/canvas do editor já consegue carregar sozinho.
+  // A checagem de prefixo por ownerId é o que impede alguém logado assinar a URL de outro dono —
+  // o cliente Storage é service-role e ignora RLS de propósito, então a garantia é aqui.
+  app.get<{ Querystring: { ref?: string } }>("/api/v1/uploads/resolve", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+
+    const ref = request.query.ref;
+    if (!ref || !ref.startsWith(PRIVATE_UPLOAD_PREFIX)) return reply.code(400).send({ error: "missing or invalid ref" });
+    if (!ref.slice(PRIVATE_UPLOAD_PREFIX.length).startsWith(`${ownerId}/`)) {
+      return reply.code(403).send({ error: "ref does not belong to this owner" });
+    }
+    const url = await signPrivateUploadUrl(storage.client, ref);
+    return { url };
   });
 
   app.get("/api/v1/keys", async (request, reply) => {

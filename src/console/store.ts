@@ -129,7 +129,6 @@ export interface State {
   gerarError: string | null;
   gerarPages: GerarPage[];
   gerarActivePage: number;
-  gerarSaved: boolean;
 }
 
 export const state: State = {
@@ -183,7 +182,6 @@ export const state: State = {
   gerarError: null,
   gerarPages: [],
   gerarActivePage: 1,
-  gerarSaved: false,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -585,7 +583,6 @@ export function selectGerarSource(source: GerarSource) {
   state.gerarPages = [];
   state.gerarActivePage = 1;
   state.gerarError = null;
-  state.gerarSaved = false;
   notify();
 }
 
@@ -624,6 +621,7 @@ async function ensureGerarDraft(): Promise<string> {
   if (!res.ok) throw new Error("Não deu para criar o rascunho agora.");
   const { id } = await res.json();
   state.gerarDraftId = id;
+  state.templatesLoaded = false; // já aparece em Seus designs mesmo sem confirmar nada
   return id;
 }
 
@@ -654,7 +652,6 @@ export async function runGerarGenerate() {
       previewUrl: `data:image/png;base64,${p.imageBase64}`,
     }));
     state.gerarActivePage = 1;
-    state.gerarSaved = false;
 
     // A IA só escreveu texto — as camadas de imagem (avatar/media) não vêm na resposta da Edge
     // Function de propósito. Busca o documento salvo mais uma vez só pra saber quais existem e
@@ -738,22 +735,12 @@ export async function commitGerarPageEdit(page: number) {
   } catch { /* melhor esforço — o que a pessoa editou já está na tela de qualquer forma */ }
 }
 
-/** "Abrir no editor": a geração confirmada vira o design que se abre pra ajustar à mão. */
+/** "Abrir no editor": a geração vira o design que se abre pra ajustar à mão. */
 export async function openGeneratedInEditor() {
   if (!state.gerarDraftId) return;
   const id = state.gerarDraftId;
-  state.gerarDraftId = null; // confirmado — a próxima geração começa um rascunho novo
-  state.templatesLoaded = false;
+  state.gerarDraftId = null; // a próxima geração começa um rascunho novo
   await openTemplateById(id);
-}
-
-/** "Salvar como design novo": confirma sem sair da tela — aparece em Seus designs. */
-export function saveGeneratedAsNewDesign() {
-  if (!state.gerarDraftId) return;
-  state.gerarDraftId = null; // confirmado — idem
-  state.templatesLoaded = false;
-  state.gerarSaved = true;
-  notify();
 }
 
 /** Valida um JSON colado/enviado o suficiente para tentar abrir — o editor é o juiz real de usabilidade. */

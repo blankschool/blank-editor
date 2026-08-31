@@ -33,9 +33,7 @@ body {
   height: 40px;
   font-size: 14px;
 }
-.sep,
-.bbsep,
-.tbsep {
+.sep {
   height: 24px;
 }
 
@@ -56,9 +54,7 @@ body {
 .layer .mini svg,
 .qbtn svg,
 .thumbitem.thumbadd svg,
-.seg button svg,
-.tbelt svg,
-.tchev svg {
+.seg button svg {
   width: var(--icon);
   height: var(--icon);
 }
@@ -191,18 +187,6 @@ body {
 .tile svg {
   width: 24px;
   height: 24px;
-}
-
-.tbelt {
-  width: 40px;
-  height: 40px;
-}
-.tchev {
-  height: 40px;
-}
-.flyout button {
-  height: 36px;
-  font-size: 14px;
 }
 
 .field {

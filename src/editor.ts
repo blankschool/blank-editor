@@ -68,6 +68,8 @@ let lastClickTime = 0;
 // property edits on the same selection so it doesn't snap shut mid-adjustment.
 let propPopOpen = false;
 let propPopKey = "";
+let panelTab: "organize" | "layers" = "organize";
+let ctxMenuOpen = false;
 let activeTab = "elements";
 const imgCache = new Map<string, HTMLImageElement>();
 
@@ -130,7 +132,31 @@ const pageIdxOf = (id: string): number => locate(id)?.pageIdx ?? doc.active;
 const selEls = () => sel.map(byId).filter(Boolean);
 // Images live once in doc.assets; elements point at them with "@key" so the
 // same photo used on several slides is stored a single time.
-const srcOf = (e) => (e.src && e.src[0] === "@" ? (doc.assets && doc.assets[e.src.slice(1)]) || "" : e.src || "");
+const rawSrcOf = (e) => (e.src && e.src[0] === "@" ? (doc.assets && doc.assets[e.src.slice(1)]) || "" : e.src || "");
+
+// A `src` starting with this prefix is a private-bucket reference, not a URL — the browser has
+// no service-role key to fetch it directly (only the server's render pipeline can). Resolve it
+// to a short-lived signed URL first; while that's in flight, srcOf returns "" (the existing
+// "no src yet" placeholder box), and renderCanvas() re-runs once the real URL lands.
+const PRIVATE_UPLOAD_PREFIX = "supabase://uploads/";
+const resolvedPrivateSrc = new Map<string, string>();
+const resolvingPrivateSrc = new Set<string>();
+function resolvePrivateSrc(ref: string): string {
+  const cached = resolvedPrivateSrc.get(ref);
+  if (cached) return cached;
+  if (!resolvingPrivateSrc.has(ref)) {
+    resolvingPrivateSrc.add(ref);
+    fetch(`/api/v1/uploads/resolve?ref=${encodeURIComponent(ref)}`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then(({ url }) => { resolvedPrivateSrc.set(ref, url); resolvingPrivateSrc.delete(ref); renderCanvas(); })
+      .catch(() => { resolvingPrivateSrc.delete(ref); });
+  }
+  return "";
+}
+const srcOf = (e) => {
+  const raw = rawSrcOf(e);
+  return raw.startsWith(PRIVATE_UPLOAD_PREFIX) ? resolvePrivateSrc(raw) : raw;
+};
 
 
 /* ============================ history ============================ */
@@ -428,8 +454,8 @@ function renderOverlay() {
     const hs = e.locked ? [] : (isText ? HANDLES.filter((h) => ["e", "w", "nw", "ne", "se", "sw"].includes(h[0])) : HANDLES);
     html += `<div class="box" style="left:${e.x}px;top:${e.y}px;width:${e.w}px;height:${e.h}px;transform:rotate(${e.rot}deg)">
       <div class="tag num" style="left:0;top:0">${Math.round(e.w)} × ${Math.round(e.h)}${e.rot ? " · " + Math.round(e.rot) + "°" : ""}</div>
-      ${hs.map(([k, fx, fy]) => `<div class="hdl" data-h="${k}" style="left:${fx * 100}%;top:${fy * 100}%;cursor:${CURSORS[k]};pointer-events:auto"></div>`).join("")}
-      ${e.locked ? "" : `<div class="hdl rot" data-h="rot" style="left:50%;top:0;margin-top:-26px;cursor:grab;pointer-events:auto"></div>`}
+      ${hs.map(([k, fx, fy]) => `<div class="hdl" data-h="${k}" title="Redimensionar" style="left:${fx * 100}%;top:${fy * 100}%;cursor:${CURSORS[k]};pointer-events:auto"></div>`).join("")}
+      ${e.locked ? "" : `<div class="hdl rot" data-h="rot" title="Girar" style="left:50%;top:0;margin-top:-26px;cursor:grab;pointer-events:auto"></div>`}
     </div>`;
   } else {
     const b = bbox(els);
@@ -437,7 +463,7 @@ function renderOverlay() {
       <div class="tag num" style="left:0;top:0">${els.length} selected</div>
       ${["nw", "ne", "se", "sw"].map((k) => {
         const [, fx, fy] = HANDLES.find((h) => h[0] === k);
-        return `<div class="hdl" data-h="${k}" data-multi="1" style="left:${fx * 100}%;top:${fy * 100}%;cursor:${CURSORS[k]};pointer-events:auto"></div>`;
+        return `<div class="hdl" data-h="${k}" data-multi="1" title="Redimensionar" style="left:${fx * 100}%;top:${fy * 100}%;cursor:${CURSORS[k]};pointer-events:auto"></div>`;
       }).join("")}
     </div>`;
   }
@@ -472,85 +498,128 @@ const QALIGN_ICON = {
   center: `<path d="M4 6h16"/><path d="M7 12h10"/><path d="M5.5 18h13"/>`,
   right: `<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>`,
 };
-/* The slim always-visible bar above the selection — quick access to the handful
- * of properties worth one click; everything else lives behind "⋯" in #proppop,
- * which is just the original #props panel relocated, unchanged. */
-function renderSelToolbar() {
-  const bar = $("seltoolbar");
+const FLIP_H_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7L4 12l4 5z"/><path d="M16 7l4 5-4 5z"/></svg>`;
+const FLIP_V_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8l5-4 5 4z"/><path d="M7 16l5 4 5-4z"/></svg>`;
+const REPLACE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 14l3-3 2.5 2.5L17 10l2 2"/><circle cx="8" cy="9" r="1.3"/></svg>`;
+const LOCK_ICON = (locked: boolean) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${locked ? `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>` : `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>`}</svg>`;
+const DUP_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+const DEL_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+const MORE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+
+/* Fixed contextual bar (Toolbar): per-type controls for the current selection, docked
+ * above the stage — never floats over the element itself. Mirrors the exact control set
+ * Canva shows for text vs. photo vs. shape selections (see /Users/it4mi/Downloads/canva/*.html). */
+function renderToolbar() {
+  const bar = $("toolbar");
   const els = selEls().filter((e) => !e.hidden);
+  // Stays in flow (never [hidden]) even with nothing selected — .toolbar's min-height
+  // reserves the same space either way, so selecting/deselecting never shifts the stage.
   if (!els.length || editingId) { bar.innerHTML = ""; return; }
   const e = els[0];
   const one = els.length === 1;
   const t = e.type;
-  const showFill = one && ["rect", "ellipse", "triangle", "star", "line", "text", "icon"].includes(t);
-  const showReplace = one && t === "image";
-  const showStroke = one && ["rect", "ellipse", "image", "draw"].includes(t);
-  const showRadius = one && ["rect", "image"].includes(t);
-  const showFlip = one && t !== "text";
   let html = "";
-  if (showFill) html += `<input type="color" id="qFill" class="qcolor" title="Cor" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
-  if (showReplace) {
-    html += `<button class="qbtn" id="qReplace" title="Substituir imagem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 14l3-3 2.5 2.5L17 10l2 2"/><circle cx="8" cy="9" r="1.3"/></svg></button>`;
-  }
-  if (showStroke) {
-    html += `<input type="color" id="qStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
-  }
-  if (showRadius) {
-    html += `<button class="qbtn" id="qRadDown" title="Diminuir raio dos cantos">⌐</button>`;
-    html += `<span class="qsizeval num">${Math.round(e.radius || 0)}</span>`;
-    html += `<button class="qbtn" id="qRadUp" title="Aumentar raio dos cantos">◠</button>`;
-  }
-  if (showFlip) {
-    html += `<button class="qbtn" data-qflip="h" title="Espelhar na horizontal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7L4 12l4 5z"/><path d="M16 7l4 5-4 5z"/></svg></button>`;
-    html += `<button class="qbtn" data-qflip="v" title="Espelhar na vertical"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8l5-4 5 4z"/><path d="M7 16l5 4 5-4z"/></svg></button>`;
-  }
-  if (showReplace || showStroke || showRadius || showFlip) html += `<div class="qsep"></div>`;
+
   if (one && t === "text") {
-    html += `<select id="qFont" class="qselect" title="Fonte">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
+    html += `<select id="tFont" class="qselect" title="Fonte">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
     html += `<div class="qsep"></div>`;
-    html += `<button class="qbtn" id="qSizeDown" title="Diminuir corpo">−</button>`;
-    html += `<span class="qsizeval num">${Math.round(e.size)}</span>`;
-    html += `<button class="qbtn" id="qSizeUp" title="Aumentar corpo">+</button>`;
+    html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><span class="qsizeval num">${Math.round(e.size)}</span><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
     html += `<div class="qsep"></div>`;
-    html += `<button class="qbtn" data-qtw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800" title="Negrito">B</button>`;
-    html += `<button class="qbtn" data-qtw="italic" aria-pressed="${!!e.italic}" style="font-style:italic" title="Itálico">I</button>`;
-    html += `<button class="qbtn" data-qtw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline" title="Sublinhado">U</button>`;
+    html += `<input type="color" id="tFill" class="qcolor" title="Cor do texto" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
     html += `<div class="qsep"></div>`;
-    html += (["left", "center", "right"] as const).map((a) => `<button class="qbtn" data-qta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
+    html += `<button class="qbtn" data-ttw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800" title="Negrito">B</button>`;
+    html += `<button class="qbtn" data-ttw="italic" aria-pressed="${!!e.italic}" style="font-style:italic" title="Itálico">I</button>`;
+    html += `<button class="qbtn" data-ttw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline" title="Sublinhado">U</button>`;
     html += `<div class="qsep"></div>`;
+    html += (["left", "center", "right"] as const).map((a) => `<button class="qbtn" data-tta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
+    html += `<div class="qsep"></div>`;
+    html += `<div class="field" style="width:52px" title="Entrelinha"><input id="tLh" value="${e.lh}"></div>`;
+    html += `<div class="field" style="width:52px" title="Espaçamento entre letras"><input id="tLs" value="${e.ls}"></div>`;
+  } else if (one && t === "image") {
+    html += `<button class="qbtn" disabled title="Sem suporte ainda">Removedor de Fundo</button>`;
+    html += `<div class="qsep"></div>`;
+    html += `<button class="qbtn" id="tReplace" title="Substituir imagem">${REPLACE_ICON}</button>`;
+    html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
+    html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
+    html += `<button class="qbtn" disabled title="Sem suporte ainda">Cortar</button>`;
+    html += `<button class="qbtn" data-tflip="h" title="Inverter na horizontal">${FLIP_H_ICON}</button>`;
+    html += `<button class="qbtn" data-tflip="v" title="Inverter na vertical">${FLIP_V_ICON}</button>`;
+  } else if (one) {
+    const showFill = ["rect", "ellipse", "triangle", "star", "line", "icon"].includes(t);
+    const showStroke = ["rect", "ellipse", "draw"].includes(t);
+    const showRadius = t === "rect";
+    if (showFill) html += `<input type="color" id="tFill" class="qcolor" title="Preenchimento" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
+    if (showStroke) html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
+    if (showRadius) html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
+    html += `<button class="qbtn" data-tflip="h" title="Espelhar na horizontal">${FLIP_H_ICON}</button>`;
+    html += `<button class="qbtn" data-tflip="v" title="Espelhar na vertical">${FLIP_V_ICON}</button>`;
   }
-  html += `<button class="qbtn" id="qMore" aria-pressed="${propPopOpen}" title="Mais opções">⋯</button>`;
+
+  html += `<div class="qsep"></div>`;
+  html += `<div class="field" style="width:74px" title="Transparência"><input type="range" id="tOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}"></div>`;
+  html += `<div class="qsep"></div>`;
+  html += `<button class="qbtn" id="tPosition" aria-pressed="${propPopOpen && panelTab === "organize"}" title="Posição">Posição</button>`;
+  html += `<div class="qsep"></div>`;
+  html += `<button class="qbtn" disabled title="Sem suporte ainda">Copiar estilo</button>`;
+
   bar.innerHTML = html;
 }
-$("seltoolbar").addEventListener("click", (ev) => {
-  const tw = (ev.target as HTMLElement).closest<HTMLElement>("[data-qtw]");
+$("toolbar").addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  const tw = t.closest<HTMLElement>("[data-ttw]");
   if (tw) {
-    const k = tw.dataset.qtw, e = selEls()[0];
+    const k = tw.dataset.ttw, e = selEls()[0];
     if (k === "bold") patch({ weight: e.weight >= 700 ? 400 : 700 }, true);
     if (k === "italic") patch({ italic: !e.italic }, true);
     if (k === "underline") patch({ underline: !e.underline }, true);
-    renderSelToolbar(); renderProps(); return;
+    renderToolbar(); return;
   }
-  const ta = (ev.target as HTMLElement).closest<HTMLElement>("[data-qta]");
-  if (ta) { patch({ align: ta.dataset.qta }, true); renderSelToolbar(); renderProps(); return; }
-  const qf = (ev.target as HTMLElement).closest<HTMLElement>("[data-qflip]");
-  if (qf) { flip(qf.dataset.qflip); return; }
-  if ((ev.target as HTMLElement).closest("#qSizeUp")) { const e = selEls()[0]; patch({ size: (e.size || 16) + 2 }, true); renderSelToolbar(); renderProps(); return; }
-  if ((ev.target as HTMLElement).closest("#qSizeDown")) { const e = selEls()[0]; patch({ size: Math.max(6, (e.size || 16) - 2) }, true); renderSelToolbar(); renderProps(); return; }
-  if ((ev.target as HTMLElement).closest("#qRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderSelToolbar(); renderProps(); return; }
-  if ((ev.target as HTMLElement).closest("#qRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderSelToolbar(); renderProps(); return; }
-  if ((ev.target as HTMLElement).closest("#qReplace")) { $("fileImgReplace").click(); return; }
-  if ((ev.target as HTMLElement).closest("#qMore")) { propPopOpen = !propPopOpen; renderSelToolbar(); positionFloatingUI(); return; }
+  const ta = t.closest<HTMLElement>("[data-tta]");
+  if (ta) { patch({ align: ta.dataset.tta }, true); renderToolbar(); return; }
+  const tf = t.closest<HTMLElement>("[data-tflip]");
+  if (tf) { flip(tf.dataset.tflip); return; }
+  if (t.closest("#tSizeUp")) { const e = selEls()[0]; patch({ size: (e.size || 16) + 2 }, true); renderToolbar(); return; }
+  if (t.closest("#tSizeDown")) { const e = selEls()[0]; patch({ size: Math.max(6, (e.size || 16) - 2) }, true); renderToolbar(); return; }
+  if (t.closest("#tRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderToolbar(); return; }
+  if (t.closest("#tRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderToolbar(); return; }
+  if (t.closest("#tReplace")) { $("fileImgReplace").click(); return; }
+  if (t.closest("#tPosition")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
 });
-$("seltoolbar").addEventListener("input", (ev) => {
+$("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
-  if (t.id === "qFill") patch({ fill: t.value });
-  if (t.id === "qFont") patch({ font: t.value }, true);
-  if (t.id === "qStroke") patch({ stroke: t.value });
+  if (t.id === "tFill") patch({ fill: t.value });
+  if (t.id === "tFont") patch({ font: t.value }, true);
+  if (t.id === "tStroke") patch({ stroke: t.value });
+  if (t.id === "tOp") patch({ opacity: clamp(parseFloat(t.value) / 100, 0, 1) });
+  if (t.id === "tLh") { const n = parseFloat(t.value); if (n > 0) patch({ lh: n }); }
+  if (t.id === "tLs") { const n = parseFloat(t.value); patch({ ls: n || 0 }); }
 });
-$("seltoolbar").addEventListener("change", (ev) => {
+$("toolbar").addEventListener("change", (ev) => {
   const id = (ev.target as HTMLElement).id;
-  if (id === "qFill" || id === "qStroke") commit();
+  if (["tFill", "tStroke", "tOp", "tLh", "tLs"].includes(id)) commit();
+});
+
+/* The slim always-visible bar above the selection — Canva's own "floating toolbar" only ever
+ * carries universal actions (never per-type controls, those live in the fixed Toolbar above). */
+function renderSelToolbar() {
+  const bar = $("seltoolbar");
+  const els = selEls().filter((e) => !e.hidden);
+  if (!els.length || editingId) { bar.innerHTML = ""; return; }
+  const locked = els.every((e) => e.locked);
+  let html = "";
+  html += `<button class="qbtn" id="qLock" aria-pressed="${locked}" title="${locked ? "Desbloquear" : "Bloquear"}">${LOCK_ICON(locked)}</button>`;
+  html += `<button class="qbtn" id="qDup" title="Duplicar (⌘D)">${DUP_ICON}</button>`;
+  html += `<button class="qbtn" id="qDel" title="Excluir (⌫)" style="color:var(--danger)">${DEL_ICON}</button>`;
+  html += `<button class="qbtn" id="qMore" aria-pressed="${ctxMenuOpen}" title="Mais">${MORE_ICON}</button>`;
+  bar.innerHTML = html;
+}
+$("seltoolbar").addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  if (t.closest("#qLock")) { const locked = selEls().every((e) => e.locked); for (const e of selEls()) e.locked = !locked; commit(); renderAll(); return; }
+  if (t.closest("#qDup")) { duplicateSel(); return; }
+  if (t.closest("#qDel")) { deleteSel(); return; }
+  const more = t.closest<HTMLElement>("#qMore");
+  if (more) { const r = more.getBoundingClientRect(); openContextMenu(r.left, r.bottom + 6); return; }
 });
 $("fileImgReplace").addEventListener("change", async (ev) => {
   const input = ev.target as HTMLInputElement;
@@ -563,9 +632,74 @@ $("fileImgReplace").addEventListener("change", async (ev) => {
   if (!img) { toast(`Não foi possível ler ${f.name}.`); return; }
   patch({ src }, true);
 });
+
+/* ============================ context menu ============================ */
+function openContextMenu(clientX: number, clientY: number) {
+  ctxMenuOpen = true;
+  renderContextMenu();
+  const el = $("ctxmenu");
+  el.hidden = false;
+  el.style.left = clientX + "px";
+  el.style.top = clientY + "px";
+  requestAnimationFrame(() => {
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) el.style.left = Math.max(8, clientX - r.width) + "px";
+    if (r.bottom > window.innerHeight - 8) el.style.top = Math.max(8, clientY - r.height) + "px";
+  });
+  renderSelToolbar();
+}
+function closeContextMenu() {
+  if (!ctxMenuOpen) return;
+  ctxMenuOpen = false;
+  $("ctxmenu").hidden = true;
+  renderSelToolbar();
+}
+const CTX_ORDER = [["front", "Trazer para a frente"], ["up", "Avançar"], ["down", "Recuar"], ["back", "Enviar para trás"]] as const;
+const CTX_ALIGN = [["left", "Esquerda"], ["cx", "Centro"], ["right", "Direita"], ["top", "Cima"], ["cy", "Meio"], ["bottom", "Baixo"]] as const;
+function renderContextMenu() {
+  const els = selEls();
+  const hasSel = els.length > 0;
+  const locked = hasSel && els.every((e) => e.locked);
+  const dis = (ok: boolean) => (ok ? "" : "disabled");
+  $("ctxmenu").innerHTML = `
+    <button class="ctxitem" data-ctx="copy" ${dis(hasSel)}>Copiar<span class="ctxkey">⌘C</span></button>
+    <button class="ctxitem" disabled title="Sem suporte ainda">Copiar estilo<span class="ctxkey">⌥⌘C</span></button>
+    <button class="ctxitem" data-ctx="paste" ${dis(!!clipboard?.length)}>Colar<span class="ctxkey">⌘V</span></button>
+    <button class="ctxitem" data-ctx="duplicate" ${dis(hasSel)}>Duplicar<span class="ctxkey">⌘D</span></button>
+    <button class="ctxitem danger" data-ctx="delete" ${dis(hasSel)}>Excluir<span class="ctxkey">DELETE</span></button>
+    <div class="ctxsep"></div>
+    <div class="ctxitem has-sub">Camada<span class="ctxarrow">›</span>
+      <div class="ctxsub">
+        ${CTX_ORDER.map(([k, label]) => `<button class="ctxitem" data-ctxorder="${k}" ${dis(hasSel)}>${label}</button>`).join("")}
+      </div>
+    </div>
+    <div class="ctxitem has-sub">Alinhar à página<span class="ctxarrow">›</span>
+      <div class="ctxsub ctxalign">
+        ${CTX_ALIGN.map(([k, label]) => `<button class="ctxitem" data-ctxalign="${k}" ${dis(hasSel)}>${label}</button>`).join("")}
+      </div>
+    </div>
+    <div class="ctxsep"></div>
+    <button class="ctxitem" data-ctx="lock" ${dis(hasSel)}>${locked ? "Desbloquear" : "Bloquear"}</button>
+    <button class="ctxitem" disabled title="Sem suporte ainda">Adicionar link<span class="ctxkey">⌘K</span></button>
+  `;
+}
+$("ctxmenu").addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest("button") as HTMLButtonElement | null;
+  if (!b || b.disabled) return;
+  if (b.dataset.ctx === "copy") copySel();
+  else if (b.dataset.ctx === "paste") paste();
+  else if (b.dataset.ctx === "duplicate") duplicateSel();
+  else if (b.dataset.ctx === "delete") deleteSel();
+  else if (b.dataset.ctx === "lock") { const locked = selEls().every((e) => e.locked); for (const e of selEls()) e.locked = !locked; commit(); renderAll(); }
+  else if (b.dataset.ctxorder) order(b.dataset.ctxorder);
+  else if (b.dataset.ctxalign) align(b.dataset.ctxalign);
+  else return;
+  closeContextMenu();
+});
 window.addEventListener("pointerdown", (ev) => {
   const t = ev.target as HTMLElement | null;
-  if (propPopOpen && t && !t.closest("#proppop") && !t.closest("#qMore")) { propPopOpen = false; positionFloatingUI(); }
+  if (propPopOpen && t && !t.closest("#proppop") && !t.closest("#tPosition")) { propPopOpen = false; positionFloatingUI(); }
+  if (ctxMenuOpen && t && !t.closest("#ctxmenu")) closeContextMenu();
 }, true);
 
 
@@ -583,10 +717,13 @@ $("stage").addEventListener("pointerdown", (ev) => {
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
   // through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #toolbelt, #flyout, #bottombar, #thumbstrip, #gridview, .pagehead, #addPageCanvas")) return;
-  // Middle-click, right-click, Space+drag, or the hand tool all pan — matching Canva's own
-  // set of ways to pan the canvas.
-  if (ev.button === 1 || ev.button === 2 || spaceDown || tool === "hand") { startPan(ev); return; }
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #bottombar, #ctxmenu, #thumbstrip, #gridview, .pagehead, #addPageCanvas")) return;
+  // Right-click only pans when it actually drags — a plain right-click (no movement) opens
+  // the Context Menu instead, matching how canvas tools commonly split the two.
+  if (ev.button === 2) { startRightClickPanOrMenu(ev); return; }
+  // Middle-click, Space+drag, or the hand tool all pan — matching Canva's own set of ways
+  // to pan the canvas.
+  if (ev.button === 1 || spaceDown || tool === "hand") { startPan(ev); return; }
   const hdl = ev.target.closest(".hdl");
   if (hdl) { startTransform(ev, hdl); return; }
   const node = ev.target.closest(".el");
@@ -627,6 +764,32 @@ $("stage").addEventListener("pointerdown", (ev) => {
   if (editingId === id) return;
   startMove(ev);
 });
+
+/* Right-click: a plain click (no movement) opens the Context Menu at the cursor — if it
+ * landed on an element, that element is selected first. Dragging still pans, exactly like
+ * middle-click/Space, so the existing "right-click pans" habit keeps working. */
+function startRightClickPanOrMenu(ev) {
+  ev.preventDefault();
+  const sx = ev.clientX, sy = ev.clientY, px = panX, py = panY;
+  let moved = false;
+  drag = {
+    move: (e) => {
+      if (!moved && Math.hypot(e.clientX - sx, e.clientY - sy) > 4) moved = true;
+      if (moved) { panX = px + (e.clientX - sx); panY = py + (e.clientY - sy); clampView(); applyWorld(); updateActivePageFromScroll(); }
+    },
+    up: (e) => {
+      if (moved) return;
+      const node = (e.target as HTMLElement).closest<HTMLElement>(".el");
+      if (node) {
+        const id = node.dataset.id;
+        const el = byId(id);
+        if (el && !el.hidden && !sel.includes(id)) sel = [id];
+      }
+      openContextMenu(e.clientX, e.clientY);
+    },
+  };
+  capture(ev);
+}
 
 function startPan(ev) {
   ev.preventDefault();
@@ -1097,11 +1260,10 @@ const TABS = [
   { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
   { id: "draw", label: "Desenho", icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
   { id: "page", label: "Tela", icon: `<path d="M12 3s6.5 6.8 6.5 10.5A6.5 6.5 0 1 1 5.5 13.5C5.5 9.8 12 3 12 3z"/>` },
-  { id: "layers", label: "Camadas", icon: `<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>` },
 ];
 function renderRail() {
   $("rail").innerHTML = TABS.map((t) => `
-    <button class="railbtn" data-tab="${t.id}" aria-pressed="${activeTab === t.id}">
+    <button class="railbtn" data-tab="${t.id}" aria-pressed="${activeTab === t.id}" title="${t.label}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
       ${t.label}
     </button>`).join("");
@@ -1113,99 +1275,6 @@ $("rail").addEventListener("click", (e) => {
   renderRail(); renderPanel();
 });
 
-
-/* ---------- floating toolbelt ---------- */
-let beltMove = "select", beltShape = "rect";
-const SV = (inner: string, fill?: boolean) => `<svg width="19" height="19" viewBox="0 0 24 24" fill="${fill ? "currentColor" : "none"}" stroke="${fill ? "none" : "currentColor"}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-const BICON = {
-  select: SV(`<path d="M5 3l14 8.4-6.1 1.3L10.9 21 5 3z"/>`, true),
-  hand: SV(`<path d="M8 12.5V6.2a1.5 1.5 0 0 1 3 0V11"/><path d="M11 11V4.6a1.5 1.5 0 0 1 3 0V11"/><path d="M14 11.4V6.4a1.5 1.5 0 0 1 3 0V14"/><path d="M17 12.2v-.7a1.5 1.5 0 0 1 3 0V15c0 3.9-2.3 6.5-6 6.5h-1.4c-2.6 0-3.6-.8-5-2.7L5.2 15.9a1.4 1.4 0 0 1 2.2-1.7L8 15"/>`),
-  rect: SV(`<rect x="4" y="6" width="16" height="12" rx="2"/>`),
-  ellipse: SV(`<circle cx="12" cy="12" r="8"/>`),
-  triangle: SV(`<path d="M12 4.5L20 19H4z"/>`),
-  star: SV(`<path d="M12 4l2.4 5.6L20 10l-4.2 3.9 1.2 6.1L12 17l-5 3 1.2-6.1L4 10l5.6-.4z"/>`),
-  line: SV(`<path d="M5 19L19 5"/>`),
-  pen: SV(`<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>`),
-  text: SV(`<path d="M5 6h14"/><path d="M12 6v13"/>`),
-  image: SV(`<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 15l4.5-4.5 3.5 3.5 3-3 6 6"/><circle cx="8.5" cy="9.5" r="1.3"/>`),
-};
-const SHAPES = [["rect", "Retângulo", "R"], ["ellipse", "Elipse", "O"], ["triangle", "Triângulo", ""], ["star", "Estrela", ""], ["line", "Linha", "L"]];
-const MOVES = [["select", "Mover", "V"], ["hand", "Mão", "H"]];
-
-function renderToolbelt() {
-  const grp = (key, main, pressed, label, shortcut) => `
-    <div class="tgroup" data-group="${key}">
-      <button class="tbelt" data-belt="${key}" aria-pressed="${pressed}" title="${label}${shortcut ? " (" + shortcut + ")" : ""}">${BICON[main]}</button>
-      <button class="tchev" data-chev="${key}" aria-haspopup="menu" title="Ferramentas: ${label}">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 10l4 4 4-4"/></svg>
-      </button>
-    </div>`;
-  const btn = (key, label, shortcut) => `
-    <button class="tbelt" data-belt="${key}" aria-pressed="${key === "pen" && tool === "draw"}" title="${label}${shortcut ? " (" + shortcut + ")" : ""}">${BICON[key]}</button>`;
-
-  const moveLabel = MOVES.find((m) => m[0] === beltMove)[1];
-  const shapeLabel = SHAPES.find((s) => s[0] === beltShape)[1];
-  $("toolbelt").innerHTML =
-    grp("move", beltMove, tool === beltMove, moveLabel, MOVES.find((m) => m[0] === beltMove)[2]) +
-    `<div class="tbsep"></div>` +
-    grp("shape", beltShape, false, shapeLabel, SHAPES.find((s) => s[0] === beltShape)[2]) +
-    btn("pen", "Caneta", "P") +
-    btn("text", "Texto", "T") +
-    btn("image", "Imagem", "");
-}
-
-function closeFlyout() {
-  $("flyout").hidden = true;
-  document.querySelectorAll(".tgroup").forEach((g) => g.removeAttribute("data-open"));
-}
-function openFlyout(key) {
-  const group = document.querySelector(`.tgroup[data-group="${key}"]`);
-  const items = key === "move" ? MOVES : SHAPES;
-  const cur = key === "move" ? beltMove : beltShape;
-  const f = $("flyout");
-  f.innerHTML = items.map(([id, label, sc]) => `
-    <button data-pick="${key}:${id}" role="menuitemradio" aria-checked="${id === cur}">
-      <span style="display:grid;place-items:center;width:19px;color:var(--muted)">${BICON[id]}</span>
-      ${label}<span class="tick">${sc || ""}</span>
-    </button>`).join("");
-  f.hidden = false;
-  group.setAttribute("data-open", "true");
-  const gr = group.getBoundingClientRect(), sr = $("stage").getBoundingClientRect();
-  f.style.left = Math.max(8, gr.left - sr.left) + "px";
-  f.style.top = (gr.top - sr.top - f.offsetHeight - 8) + "px";
-}
-
-$("toolbelt").addEventListener("click", (ev) => {
-  const chev = ev.target.closest("[data-chev]");
-  if (chev) {
-    const key = chev.dataset.chev;
-    const open = document.querySelector(`.tgroup[data-group="${key}"]`)?.hasAttribute("data-open");
-    closeFlyout();
-    if (!open) openFlyout(key);
-    return;
-  }
-  const b = ev.target.closest("[data-belt]");
-  if (!b) return;
-  closeFlyout();
-  const key = b.dataset.belt;
-  if (key === "move") return setTool(beltMove);
-  if (key === "pen") return setTool(tool === "draw" ? "select" : "draw");
-  if (key === "shape") { setTool("select"); return addEl(beltShape); }
-  if (key === "text") { setTool("select"); return addEl("text"); }
-  if (key === "image") return $("fileImg").click();
-});
-$("flyout").addEventListener("click", (ev) => {
-  const p = ev.target.closest("[data-pick]");
-  if (!p) return;
-  const [key, id] = p.dataset.pick.split(":");
-  closeFlyout();
-  if (key === "move") { beltMove = id; setTool(id); }
-  else { beltShape = id; renderToolbelt(); setTool("select"); addEl(id); }
-});
-window.addEventListener("pointerdown", (ev) => {
-  const t = ev.target as HTMLElement | null;
-  if (t && !t.closest("#flyout") && !t.closest(".tchev")) closeFlyout();
-}, true);
 
 function renderPanel() {
   const el = $("panel");
@@ -1220,9 +1289,9 @@ function renderPanel() {
   const P = page();
   if (activeTab === "text") {
     el.innerHTML = `<h4 class="ptitle">Texto</h4><p class="phint">Clique para adicionar. Dê duplo clique em qualquer texto da tela para editá-lo no lugar.</p>
-      <button class="texttile" data-add="text" data-size="88" data-weight="700" style="font-size:21px;font-weight:700">Título</button>
-      <button class="texttile" data-add="text" data-size="52" data-weight="600" style="font-size:16px;font-weight:600">Subtítulo</button>
-      <button class="texttile" data-add="text" data-size="30" data-weight="400" style="font-size:13px">Corpo de texto</button>`;
+      <button class="texttile" data-add="text" data-size="88" data-weight="700" title="Adicionar título" style="font-size:21px;font-weight:700">Título</button>
+      <button class="texttile" data-add="text" data-size="52" data-weight="600" title="Adicionar subtítulo" style="font-size:16px;font-weight:600">Subtítulo</button>
+      <button class="texttile" data-add="text" data-size="30" data-weight="400" title="Adicionar corpo de texto" style="font-size:13px">Corpo de texto</button>`;
   }
   if (activeTab === "elements") {
     const shapes = [
@@ -1234,27 +1303,27 @@ function renderPanel() {
     ];
     el.innerHTML = `<h4 class="ptitle">Formas</h4><p class="phint">Formas vetoriais que você reestiliza no painel de propriedades.</p>
       <div class="grid2">${shapes.map(([t, n, ic]) => `
-        <button class="tile" data-add="${t}"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">${ic}</svg>${n}</button>`).join("")}</div>`;
+        <button class="tile" data-add="${t}" title="Adicionar ${n.toLowerCase()}"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">${ic}</svg>${n}</button>`).join("")}</div>`;
   }
   if (activeTab === "uploads") {
     el.innerHTML = `<h4 class="ptitle">Imagens</h4><p class="phint">Suas próprias imagens, deste dispositivo. Ficam guardadas dentro do design.</p>
-      <button class="dropzone" id="pickImg">Escolher imagens…</button>
+      <button class="dropzone" id="pickImg" title="Escolher imagens do dispositivo">Escolher imagens…</button>
       <p class="phint">Nada aqui vem de banco de imagens.</p>`;
   }
   if (activeTab === "draw") {
     el.innerHTML = `<h4 class="ptitle">Desenho</h4><p class="phint">Caneta à mão livre. Cada traço vira uma camada editável.</p>
-      <button class="tile" style="width:100%;height:44px;flex-direction:row;gap:8px" id="drawOn" aria-pressed="${tool === "draw"}">
+      <button class="tile" style="width:100%;height:44px;flex-direction:row;gap:8px" id="drawOn" aria-pressed="${tool === "draw"}" title="${tool === "draw" ? "Parar de desenhar" : "Começar a desenhar"}">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/></svg>
         ${tool === "draw" ? "Desenhando — clique para parar" : "Começar a desenhar"}</button>`;
   }
   if (activeTab === "page") {
     el.innerHTML = `<h4 class="ptitle">Tela</h4><p class="phint">Cor de fundo e tamanho da tela na página ${doc.active + 1}.</p>
       <div class="sec"><h4>Fundo</h4>
-        <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-bg="${c}" aria-pressed="${P.bg.toLowerCase() === c}" style="background:${c}"></button>`).join("")}</div>
+        <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-bg="${c}" aria-pressed="${P.bg.toLowerCase() === c}" title="Fundo da página ${c}" style="background:${c}"></button>`).join("")}</div>
         <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${P.bg}"></div>
       </div>
       <div class="sec"><h4>Fundo do canvas</h4><p class="phint" style="margin-bottom:8px">A área ao redor da página — não o conteúdo dela.</p>
-        <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${(stageBg || "").toLowerCase() === c.toLowerCase()}" style="background:${c}"></button>`).join("")}</div>
+        <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${(stageBg || "").toLowerCase() === c.toLowerCase()}" title="Fundo do canvas ${c}" style="background:${c}"></button>`).join("")}</div>
         <div class="row" style="margin-bottom:8px"><button class="tbtn ghost" data-stagebg-reset style="flex:1;height:30px;font-size:11.5px" aria-pressed="${!stageBg}">Seguir o tema</button></div>
         <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg || stageGroundHex()}"></div>
       </div>
@@ -1263,11 +1332,13 @@ function renderPanel() {
         <div class="row"><div class="field"><label>L</label><input class="num" id="pgW" value="${P.w}"></div><div class="field"><label>A</label><input class="num" id="pgH" value="${P.h}"></div></div>
       </div>`;
   }
-  if (activeTab === "layers") renderLayers();
 }
 
+/* Lives inside the Panel/Inspector's "Camadas" tab (#props, when panelTab === "layers") —
+ * matches painel-posicao.html: thumbnail + name + a "…" menu button that opens the Context
+ * Menu for that row (select it, then act on it — lock/order/delete etc. all live there now). */
 function renderLayers() {
-  if (activeTab !== "layers") return;
+  if (panelTab !== "layers") return;
   const P = page();
   const icons = {
     rect: `<rect x="4" y="6" width="16" height="12" rx="1.5"/>`, ellipse: `<circle cx="12" cy="12" r="8"/>`,
@@ -1277,17 +1348,15 @@ function renderLayers() {
     draw: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/>`,
     icon: `<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.4 2.4 4.6-5"/>`,
   };
-  $("panel").innerHTML = `<h4 class="ptitle">Camadas</h4><p class="phint">O topo da lista é a frente da tela.</p>` +
+  $("props").innerHTML = `<p class="phint">O topo da lista é a frente da tela.</p>` +
     (P.els.length ? [...P.els].reverse().map((e) => `
       <div class="layer" data-layer="${e.id}" aria-selected="${sel.includes(e.id)}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.65">${icons[e.type] || ""}</svg>
         <span class="lname">${esc(e.name)}</span>
-        <button class="mini" data-lock="${e.id}" title="${e.locked ? "Desbloquear" : "Bloquear"}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${e.locked ? `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>` : `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>`}</svg>
-        </button>
         <button class="mini" data-hide="${e.id}" title="${e.hidden ? "Mostrar" : "Ocultar"}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${e.hidden ? `<path d="M3 3l18 18"/><path d="M10.6 5.2A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.4 4.2M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7c1.3 0 2.5-.3 3.6-.7"/>` : `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.6"/>`}</svg>
         </button>
+        <button class="mini" data-layermenu="${e.id}" title="Menu">${MORE_ICON}</button>
       </div>`).join("") : `<p class="empty">Esta página está vazia. Adicione texto ou uma forma pela barra lateral.</p>`);
 }
 
@@ -1328,16 +1397,6 @@ $("panel").addEventListener("click", (ev) => {
   }
   if (ev.target.closest("#pickImg")) { $("fileImg").click(); return; }
   if (ev.target.closest("#drawOn")) { setTool(tool === "draw" ? "select" : "draw"); return; }
-  const lock = ev.target.closest("[data-lock]");
-  if (lock) { const e = byId(lock.dataset.lock); e.locked = !e.locked; commit(); renderAll(); return; }
-  const hide = ev.target.closest("[data-hide]");
-  if (hide) { const e = byId(hide.dataset.hide); e.hidden = !e.hidden; commit(); renderAll(); return; }
-  const layer = ev.target.closest("[data-layer]");
-  if (layer) {
-    const id = layer.dataset.layer;
-    sel = ev.shiftKey ? (sel.includes(id) ? sel.filter((s) => s !== id) : [...sel, id]) : [id];
-    renderAll();
-  }
 });
 $("panel").addEventListener("input", (ev) => {
   if (ev.target.id === "bgPick") { page().bg = ev.target.value; renderCanvas(); }
@@ -1355,16 +1414,22 @@ $("panel").addEventListener("change", (ev) => {
 /* ============================ properties ============================ */
 function renderProps() {
   renderSelToolbar();
+  renderToolbar();
+
+  const tabs = $("ptabs");
+  if (tabs) {
+    (tabs.querySelectorAll("[data-ptab]") as NodeListOf<HTMLElement>).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.ptab === panelTab)));
+  }
+  if (panelTab === "layers") { renderLayers(); return; }
+
   const box = $("props");
   const els = selEls();
   if (!els.length) {
-    box.innerHTML = "";
+    box.innerHTML = `<p class="empty">Nada selecionado.</p>`;
     return;
   }
   const e = els[0];
   const one = els.length === 1;
-  const t = e.type;
-  const shows = { fill: ["rect", "ellipse", "triangle", "star", "line", "text", "icon"].includes(t), stroke: ["rect", "ellipse", "image", "draw"].includes(t), radius: ["rect", "image"].includes(t) };
 
   box.innerHTML = `
     ${one ? `<div class="sec"><h4>Camada</h4><div class="field" title="Nome desta camada — é o que aparece na lista Camadas"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
@@ -1395,77 +1460,56 @@ function renderProps() {
       </div>
     </div>
 
-    ${one ? `<div class="sec"><h4>Posição e tamanho</h4>
+    ${one ? `<div class="sec"><h4>Avançados</h4>
       <div class="grid2" style="gap:6px">
+        <div class="field" title="Largura, em px"><label>L</label><input id="pW" value="${Math.round(e.w)}"></div>
+        <div class="field" title="${e.type === "text" ? "Altura — automática no texto, definida pelo conteúdo" : "Altura, em px"}"><label>A</label><input id="pH" value="${Math.round(e.h)}" ${e.type === "text" ? "disabled" : ""}></div>
         <div class="field" title="X — distância da borda esquerda da página, em px"><label>X</label><input id="pX" value="${Math.round(e.x)}"></div>
         <div class="field" title="Y — distância do topo da página, em px"><label>Y</label><input id="pY" value="${Math.round(e.y)}"></div>
-        <div class="field" title="Largura, em px"><label>L</label><input id="pW" value="${Math.round(e.w)}"></div>
-        <div class="field" title="${t === "text" ? "Altura — automática no texto, definida pelo conteúdo" : "Altura, em px"}"><label>A</label><input id="pH" value="${Math.round(e.h)}" ${t === "text" ? "disabled" : ""}></div>
         <div class="field" title="Rotação, em graus"><label>∠</label><input id="pR" value="${Math.round(e.rot)}"></div>
-      </div></div>` : ""}
-
-    ${shows.fill ? `<div class="sec"><h4>${t === "text" ? "Cor do texto" : "Preenchimento"}</h4>
-      <div class="grid4" style="margin-bottom:7px">${PALETTE.map((c) => `<button class="swatch" style="height:26px;background:${c}" data-fill="${c}" aria-pressed="${(e.fill || "").toLowerCase() === c}" title="${t === "text" ? "Cor do texto" : "Preenchimento"} ${c}"></button>`).join("")}</div>
-      <div class="field" title="${t === "text" ? "Cor do texto — escolha livre" : "Preenchimento — cor livre"}"><input type="color" id="pFill" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}"></div></div>` : ""}
-
-    ${t === "text" ? `<div class="sec"><h4>Tipografia</h4>
-      <select class="field" id="pFont" title="Fonte" style="width:100%;margin-bottom:6px">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>
-      <div class="row" style="margin-bottom:6px">
-        <div class="field" style="flex:1" title="Corpo — tamanho da fonte, em px"><label>Corpo</label><input id="pSize" value="${e.size}"></div>
-        <div class="field" style="flex:1" title="Entrelinha — altura da linha como múltiplo do corpo (1,2 = 120%)"><label>Entrelinha</label><input id="pLh" value="${e.lh}"></div>
-      </div>
-      <div class="field" style="margin-bottom:6px" title="Espaçamento entre letras, em px"><label>Espaçamento</label><input id="pLs" value="${e.ls}"></div>
-      <div class="seg" style="margin-bottom:6px">
-        <button data-tw="bold" aria-pressed="${e.weight >= 700}" title="Negrito" style="font-weight:800">B</button>
-        <button data-tw="italic" aria-pressed="${!!e.italic}" title="Itálico" style="font-style:italic;font-family:Lora,serif">I</button>
-        <button data-tw="underline" aria-pressed="${!!e.underline}" title="Sublinhado" style="text-decoration:underline">U</button>
-      </div>
-      <div class="seg">${["left", "center", "right"].map((a) => `<button data-ta="${a}" aria-pressed="${e.align === a}" title="Alinhar texto ${PT_ALIGN[a === "center" ? "cx" : a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="${a === "left" ? "M4 12h10" : a === "center" ? "M7 12h10" : "M10 12h10"}"/><path d="${a === "left" ? "M4 18h13" : a === "center" ? "M5.5 18h13" : "M7 18h13"}"/></svg></button>`).join("")}</div>
-    </div>` : ""}
-
-    ${shows.stroke ? `<div class="sec"><h4>${t === "draw" ? "Traço" : "Borda"}</h4>
-      <div class="row"><div class="field" style="flex:0 0 54px" title="${t === "draw" ? "Cor do traço" : "Cor da borda"}"><input type="color" id="pStroke" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}"></div>
-      <div class="field" style="flex:1" title="${t === "draw" ? "Espessura do traço, em px" : "Espessura da borda, em px — 0 esconde a borda"}"><label>Espessura</label><input id="pSW" value="${e.strokeWidth || 0}"></div></div></div>` : ""}
-
-    ${shows.radius ? `<div class="sec"><h4>Raio dos cantos</h4><div class="field" style="width:96px" title="Raio dos cantos, em px — 0 deixa os cantos retos"><input id="pRad" value="${e.radius || 0}"></div></div>` : ""}
-
-    <div class="sec"><h4>Opacidade</h4>
-      <div class="row" title="Opacidade — 0% invisível, 100% opaco"><input type="range" id="pOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}">
-      <span class="num" style="width:38px;text-align:right;color:var(--muted)">${Math.round((e.opacity ?? 1) * 100)}%</span></div>
-    </div>`;
+      </div></div>` : ""}`;
 }
 
+$("ptabs")?.addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-ptab]");
+  if (!b) return;
+  panelTab = b.dataset.ptab as "organize" | "layers";
+  renderProps();
+});
 $("props").addEventListener("click", (ev) => {
-  const g = (a) => ev.target.closest(`[data-${a}]`);
+  const t = ev.target as HTMLElement;
+  const hideBtn = t.closest<HTMLElement>("[data-hide]");
+  if (hideBtn) { const el = byId(hideBtn.dataset.hide); el.hidden = !el.hidden; commit(); renderAll(); return; }
+  const menuBtn = t.closest<HTMLElement>("[data-layermenu]");
+  if (menuBtn) {
+    const id = menuBtn.dataset.layermenu;
+    if (!sel.includes(id)) { sel = [id]; renderAll(); }
+    const r = menuBtn.getBoundingClientRect();
+    openContextMenu(r.right - 240, r.bottom + 4);
+    return;
+  }
+  const layerRow = t.closest<HTMLElement>("[data-layer]");
+  if (layerRow) {
+    const id = layerRow.dataset.layer;
+    sel = (ev as MouseEvent).shiftKey ? (sel.includes(id) ? sel.filter((s) => s !== id) : [...sel, id]) : [id];
+    renderAll();
+    return;
+  }
+  const g = (a: string) => t.closest<HTMLElement>(`[data-${a}]`);
   if (g("order")) return order(g("order").dataset.order);
   if (g("align")) return align(g("align").dataset.align);
   if (g("flip")) return flip(g("flip").dataset.flip);
   if (g("cmd")) return g("cmd").dataset.cmd === "delete" ? deleteSel() : duplicateSel();
-  if (g("fill")) return patch({ fill: g("fill").dataset.fill }, true), renderProps();
-  if (g("tw")) {
-    const k = g("tw").dataset.tw, e = selEls()[0];
-    if (k === "bold") patch({ weight: e.weight >= 700 ? 400 : 700 }, true);
-    if (k === "italic") patch({ italic: !e.italic }, true);
-    if (k === "underline") patch({ underline: !e.underline }, true);
-    return renderProps();
-  }
-  if (g("ta")) return patch({ align: g("ta").dataset.ta }, true), renderProps();
 });
 $("props").addEventListener("input", (ev) => {
-  const id = ev.target.id, v = ev.target.value, n = parseFloat(v);
+  const id = (ev.target as HTMLElement).id, v = (ev.target as HTMLInputElement).value, n = parseFloat(v);
   const map = {
     pX: () => patch({ x: n || 0 }), pY: () => patch({ y: n || 0 }),
     pW: () => n > 0 && patch({ w: n }), pH: () => n > 0 && patch({ h: n }),
     pR: () => patch({ rot: n || 0 }), pName: () => patch({ name: v }),
-    pFill: () => patch({ fill: v }),
-    pFont: () => patch({ font: v }), pSize: () => n > 0 && patch({ size: n }),
-    pLh: () => n > 0 && patch({ lh: n }), pLs: () => patch({ ls: n || 0 }),
-    pStroke: () => patch({ stroke: v }), pSW: () => patch({ strokeWidth: Math.max(0, n || 0) }),
-    pRad: () => patch({ radius: Math.max(0, n || 0) }),
-    pOp: () => patch({ opacity: clamp(n / 100, 0, 1) }),
   };
-  if (map[id]) { map[id](); if (id === "pOp") ev.target.nextElementSibling.textContent = Math.round(n) + "%"; }
-  if (["pW", "pH", "pR", "pSize"].includes(id)) renderOverlay();
+  if (map[id]) { map[id](); }
+  if (["pW", "pH", "pR"].includes(id)) renderOverlay();
 });
 $("props").addEventListener("change", () => commit());
 
@@ -1575,7 +1619,7 @@ function renderPagesPanel() {
             ${doc.pages.length > 1 ? pageMini("delpage", PAGE_MINI.del, i, "Excluir página") : ""}
           </div>
         </div>
-        <div class="pagenavthumb" data-gopage="${i}" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+        <div class="pagenavthumb" data-gopage="${i}" title="Rolar até a página ${i + 1}" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
           ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
           : ""}</div>
       </div>`).join("") +
@@ -1643,7 +1687,7 @@ $("pageCountBtn").addEventListener("click", () => setPagesMode("grid"));
 /* ---------- grid view ---------- */
 function renderGridView() {
   $("gridview").innerHTML = doc.pages.map((p, i) => `
-    <div class="gridcell" data-gridpage="${i}" aria-selected="${i === doc.active}">
+    <div class="gridcell" data-gridpage="${i}" aria-selected="${i === doc.active}" title="Abrir página ${i + 1}">
       <div class="pt" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
         ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : ""}</div>
@@ -1698,9 +1742,9 @@ let expFmt = "png", expScale = 2;
 
 function renderExport() {
   $("fmts").innerHTML = ["png", "jpg", "pdf", "json"].map((f) =>
-    `<button class="fmt" data-fmt="${f}" aria-pressed="${expFmt === f}">${f.toUpperCase()}</button>`).join("");
+    `<button class="fmt" data-fmt="${f}" aria-pressed="${expFmt === f}" title="Exportar como ${f.toUpperCase()}">${f.toUpperCase()}</button>`).join("");
   $("scales").innerHTML = [1, 2, 3].map((s) =>
-    `<button data-scale="${s}" aria-pressed="${expScale === s}">${s}×</button>`).join("");
+    `<button data-scale="${s}" aria-pressed="${expScale === s}" title="Escala ${s}×">${s}×</button>`).join("");
   $("scales").parentElement.style.display = (expFmt === "json") ? "none" : "";
 }
 $("exportBtn").addEventListener("click", () => { renderExport(); $("scrim").hidden = false; });
@@ -1994,9 +2038,7 @@ $("fileImg").addEventListener("change", async (ev) => {
 /* ============================ keyboard ============================ */
 function setTool(t) {
   tool = t;
-  if (t === "select" || t === "hand") beltMove = t;
   $("stage").style.cursor = t === "hand" ? "grab" : t === "draw" ? "crosshair" : "default";
-  renderToolbelt();
   if (activeTab === "draw") renderPanel();
 }
 $("zoomin").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom * 1.2); };
@@ -2171,7 +2213,7 @@ export function mountEditor() {
   applyStageBg();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
-  renderRail(); renderToolbelt(); renderPanel(); renderAll(); buildThumbs(); syncHistory();
+  renderRail(); renderPanel(); renderAll(); buildThumbs(); syncHistory();
   updatePagesModeButtons();
   requestAnimationFrame(zoomFit);
   document.fonts.ready.then(() => renderCanvas());

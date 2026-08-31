@@ -1,4 +1,4 @@
-import { Check, FileEdit, Image as ImageIcon, Loader2, Save, Sparkles, Upload } from "lucide-react";
+import { FileEdit, Image as ImageIcon, Loader2, RefreshCw, Sparkles, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import {
@@ -6,7 +6,6 @@ import {
   goToView,
   openGeneratedInEditor,
   runGerarGenerate,
-  saveGeneratedAsNewDesign,
   selectGerarSource,
   setGerarActivePage,
   setGerarImageValue,
@@ -15,6 +14,15 @@ import {
   uploadGerarImage,
   useConsole,
 } from "./store";
+
+/** Nome de exibição pros campos gerados — a chave (displayName, handle...) é o nome real da
+ *  camada no template e não muda, só o rótulo mostrado aqui. Chave sem tradução cai no nome cru. */
+const FIELD_LABELS: Record<string, string> = {
+  displayName: "Nome de exibição",
+  handle: "Usuário",
+  tweetText: "Texto do post",
+  avatar: "Avatar",
+};
 
 /** Faixa de modelos: só os designs já salvos da conta — Gerar escreve em cima de um template
  *  que já existe, nunca inventa um layout do zero (isso é o "Começar por um modelo", em Designs).
@@ -64,7 +72,7 @@ function ModelStrip() {
 function LayerField({ page, name, value }: { page: number; name: string; value: string }) {
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-inset p-2.5">
-      <label className="font-mono text-[11px] text-muted">{name}</label>
+      <label className="font-mono text-[11px] text-muted">{FIELD_LABELS[name] ?? name}</label>
       <textarea
         value={value}
         onChange={(e) => setGerarLayerValue(page, name, e.target.value)}
@@ -83,7 +91,7 @@ function ImageLayerField({ page, name, value }: { page: number; name: string; va
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-inset p-2.5">
       <div className="flex items-center gap-2">
         <ImageIcon size={13} strokeWidth={1.5} className="flex-none text-muted" />
-        <label className="font-mono text-[11px] text-muted">{name}</label>
+        <label className="font-mono text-[11px] text-muted">{FIELD_LABELS[name] ?? name}</label>
       </div>
       <div className="flex items-center gap-1.5">
         <input
@@ -179,9 +187,9 @@ export function GerarView() {
                 <FileEdit size={14} strokeWidth={1.6} />
                 Abrir no editor
               </Button>
-              <Button onClick={saveGeneratedAsNewDesign} className="rounded-md text-sm">
-                {s.gerarSaved ? <Check size={14} strokeWidth={2} /> : <Save size={14} strokeWidth={1.6} />}
-                {s.gerarSaved ? "Salvo em Seus designs" : "Salvar como design novo"}
+              <Button onClick={() => active && commitGerarPageEdit(active.page)} className="rounded-md text-sm">
+                <RefreshCw size={14} strokeWidth={1.6} />
+                Atualizar preview
               </Button>
             </div>
           </div>
