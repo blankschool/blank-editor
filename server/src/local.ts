@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, TemplateRow } from "./db.ts";
+import type { ApiKeySummary, FontFaceRow, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -48,6 +48,8 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
     [SEED_TEMPLATE.id, SEED_TEMPLATE],
   ]);
   const apiKeys = new Map<string, StoredApiKey>();
+  /** Faces por sha256: a mesma dedup que o `unique (owner_id, sha256)` do Postgres faz. */
+  const fontFaces = new Map<string, FontFaceRow>();
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -82,8 +84,8 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
         .map((t) => ({ id: t.id, name: t.name, updatedAt: touchedAt.get(t.id) ?? new Date(bootedAt).toISOString() }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
 
-    createTemplate: async (ownerId, { name, document }) => {
-      const row: TemplateRow = { id: randomUUID(), ownerId, kind: "custom", name, document };
+    createTemplate: async (ownerId, { id, name, document }) => {
+      const row: TemplateRow = { id: id ?? randomUUID(), ownerId, kind: "custom", name, document };
       templates.set(row.id, row);
       touch(row.id);
       return row;
@@ -135,5 +137,19 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
     },
 
     renderTemplatePng,
+
+    upsertFontFace: async (input) => {
+      const existente = fontFaces.get(input.sha256);
+      if (existente) return { ...existente, sfntPath: input.sfntPath };
+      const face: FontFaceRow = {
+        id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
+        postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,
+        stretch: input.stretch ?? null, os2FsType: input.os2FsType ?? null,
+        sfntPath: input.sfntPath, woff2Path: input.woff2Path,
+      };
+      fontFaces.set(input.sha256, face);
+      return face;
+    },
+    listFontFaces: async () => [...fontFaces.values()],
   };
 }

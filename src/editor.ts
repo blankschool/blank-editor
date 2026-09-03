@@ -1,4 +1,5 @@
 import "./styles.css";
+import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
@@ -2260,6 +2261,9 @@ function normalizeDoc(d: Doc): Doc {
 
 export function openTemplateDocument(templateDoc: Doc) {
   doc = normalizeDoc(templateDoc);
+  // As fontes do design chegam junto com o documento e não estão carregadas ainda; redesenha
+  // quando chegarem, senão o canvas fica com a medida da fonte de fallback.
+  loadDesignFonts(doc).then(() => { if (editorMounted) renderAll(); });
   doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
   pendingDocument = true;
   sel = [];

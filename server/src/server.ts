@@ -13,12 +13,15 @@ import {
   findApiKeyOwner,
   findTemplate,
   listApiKeys,
+  listFontFaces,
   listTemplates,
   revokeApiKey,
   updateTemplate,
+  upsertFontFace,
 } from "./db.ts";
 import { createLocalDeps } from "./local.ts";
 import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.ts";
+import { configureFontStorage } from "./render/fontCache.ts";
 
 // Só em dev: `.env` não existe em produção (env vars vêm injetadas pelo runtime lá), e não faz
 // sentido nenhum exigir esse arquivo pra rodar o servidor de verdade — daí o existsSync antes.
@@ -43,8 +46,8 @@ if (DATABASE_URL) {
     findApiKeyOwner: (keyHash) => findApiKeyOwner(sql, keyHash),
     findTemplate: (ownerId, id) => findTemplate(sql, ownerId, id),
     listTemplates: (ownerId) => listTemplates(sql, ownerId),
-    createTemplate: (ownerId, { name, document }) =>
-      createTemplate(sql, { id: randomUUID(), ownerId, kind: "custom", name, document }),
+    createTemplate: (ownerId, { id, name, document }) =>
+      createTemplate(sql, { id: id ?? randomUUID(), ownerId, kind: "custom", name, document }),
     updateTemplate: (ownerId, id, input) => updateTemplate(sql, ownerId, id, input),
     deleteTemplate: (ownerId, id) => deleteTemplate(sql, ownerId, id),
     listApiKeys: (ownerId) => listApiKeys(sql, ownerId),
@@ -54,6 +57,8 @@ if (DATABASE_URL) {
       return { ...created, secret };
     },
     revokeApiKey: (ownerId, id) => revokeApiKey(sql, ownerId, id),
+    upsertFontFace: (input) => upsertFontFace(sql, input),
+    listFontFaces: (ownerId) => listFontFaces(sql, ownerId),
     deleteApiKey: (ownerId, id) => deleteApiKey(sql, ownerId, id),
     renderTemplatePng,
   };
@@ -82,6 +87,7 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   const client = createStorageClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   storage = { client };
   configureStorageClient(client);
+  configureFontStorage(client);
 } else if (DATABASE_URL) {
   console.warn("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — Storage (uploads, download links) is disabled");
 }

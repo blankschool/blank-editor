@@ -32,6 +32,13 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     revokeApiKey: async (ownerId, id) => id === "key-1" && ownerId === OWNER_ID,
     deleteApiKey: async (ownerId, id) => id === "revoked-key" && ownerId === OWNER_ID,
     renderTemplatePng: async () => PNG_BYTES,
+    upsertFontFace: async (input) => ({
+      id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
+      postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,
+      stretch: input.stretch ?? null, os2FsType: input.os2FsType ?? null,
+      sfntPath: input.sfntPath, woff2Path: input.woff2Path,
+    }),
+    listFontFaces: async () => [],
     ...overrides,
   };
 }
@@ -324,6 +331,321 @@ test("POST /api/v1/uploads requires auth even when Storage is configured", async
   const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
   const res = await app.inject({ method: "POST", url: "/api/v1/uploads" });
   assert.equal(res.statusCode, 401);
+});
+
+test("POST /api/v1/generations requires Storage before creating a design", async () => {
+  let created = false;
+  const app = buildApp(makeDeps({
+    createTemplate: async (ownerId, { name, document }) => {
+      created = true;
+      return { id: "generated", ownerId, kind: "custom", name, document };
+    },
+  }));
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "run-1" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+
+  assert.equal(res.statusCode, 501);
+  assert.equal(created, false);
+});
+
+test("POST /api/v1/generations requires an authenticated owner", async () => {
+  const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { "idempotency-key": "run-1" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+
+  assert.equal(res.statusCode, 401);
+});
+
+test("POST /api/v1/generations cannot clone a template owned by another account", async () => {
+  let created = false;
+  const app = buildApp(makeDeps({
+    findApiKeyOwner: async () => ({ ownerId: "other-owner" }),
+    createTemplate: async (ownerId, { name, document }) => {
+      created = true;
+      return { id: "generated", ownerId, kind: "custom", name, document };
+    },
+  }), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "other-owner-run" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(created, false);
+});
+
+test("POST /api/v1/generations requires an Idempotency-Key", async () => {
+  const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: AUTH,
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.match(JSON.parse(res.body).error, /Idempotency-Key/);
+});
+
+test("POST /api/v1/generations creates and renders an editable design from a one-page template", async () => {
+  const source: TemplateRow = {
+    ...TPL,
+    id: "automation-card",
+    name: "Card para automação",
+    document: {
+      name: "Card para automação",
+      active: 0,
+      pages: [{
+        id: "source-page",
+        w: 1080,
+        h: 1350,
+        bg: "#000",
+        els: [
+          { id: "title", type: "text", name: "titulo", text: "Título" },
+          { id: "body", type: "text", name: "corpo", text: "Corpo" },
+        ],
+      }],
+    },
+  };
+  let created: TemplateRow | null = null;
+  const renderedPages: number[] = [];
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => {
+      if (ownerId !== OWNER_ID) return null;
+      if (id === source.id) return source;
+      return created?.id === id ? created : null;
+    },
+    createTemplate: async (ownerId, input) => {
+      created = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      return created;
+    },
+    renderTemplatePng: async (_document, _layers, pageIndex) => {
+      renderedPages.push(pageIndex!);
+      return PNG_BYTES;
+    },
+  });
+  const app = buildApp(deps, null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "briefing-1" },
+    payload: {
+      template: source.id,
+      name: "Carrossel novo",
+      pages: [
+        { layers: { titulo: { text: "Capa" }, corpo: { text: "Abertura" } } },
+        { layers: { titulo: { text: "Fim" }, corpo: { text: "Conclusão" } } },
+      ],
+    },
+  });
+  const body = JSON.parse(res.body);
+  const document = created!.document as { name: string; active: number; pages: Array<{ id: string; els: Array<{ name: string; text: string }> }> };
+
+  assert.deepEqual({
+    status: res.statusCode,
+    response: {
+      id: body.design.id,
+      name: body.design.name,
+      pageCount: body.design.pageCount,
+      editorPath: body.design.editorPath,
+      pages: body.design.pages,
+    },
+    stored: {
+      id: created!.id,
+      name: document.name,
+      active: document.active,
+      pageCount: document.pages.length,
+      titles: document.pages.map((page) => page.els.find((element) => element.name === "titulo")?.text),
+      uniquePageIds: new Set(document.pages.map((page) => page.id)).size,
+    },
+    renderedPages,
+  }, {
+    status: 201,
+    response: {
+      id: created!.id,
+      name: "Carrossel novo",
+      pageCount: 2,
+      editorPath: `/#/editor/${created!.id}`,
+      pages: [
+        { page: 1, pngUrl: `https://fake.supabase.co/storage/v1/object/public/renders/${created!.id}/page-1.png` },
+        { page: 2, pngUrl: `https://fake.supabase.co/storage/v1/object/public/renders/${created!.id}/page-2.png` },
+      ],
+    },
+    stored: {
+      id: created!.id,
+      name: "Carrossel novo",
+      active: 0,
+      pageCount: 2,
+      titles: ["Capa", "Fim"],
+      uniquePageIds: 2,
+    },
+    renderedPages: [0, 1],
+  });
+});
+
+test("POST /api/v1/generations replays the same design without overwriting manual edits", async () => {
+  const source: TemplateRow = {
+    ...TPL,
+    id: "automation-card",
+    document: {
+      name: "Card",
+      active: 0,
+      pages: [{ id: "source", w: 1080, h: 1350, bg: "#000", els: [
+        { id: "title", type: "text", name: "titulo", text: "Título" },
+      ] }],
+    },
+  };
+  let stored: TemplateRow | null = null;
+  let creates = 0;
+  const renderedTitles: string[] = [];
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => {
+      if (ownerId !== OWNER_ID) return null;
+      if (id === source.id) return source;
+      return stored?.id === id ? stored : null;
+    },
+    createTemplate: async (ownerId, input) => {
+      creates += 1;
+      stored = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      return stored;
+    },
+    renderTemplatePng: async (document) => {
+      const doc = document as { pages: Array<{ els: Array<{ name: string; text: string }> }> };
+      renderedTitles.push(doc.pages[0].els.find((element) => element.name === "titulo")!.text);
+      return PNG_BYTES;
+    },
+  });
+  const app = buildApp(deps, null, { client: makeFakeStorageClient() });
+  const request = {
+    method: "POST" as const,
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "same-run" },
+    payload: { template: source.id, name: "Gerado", pages: [{ layers: { titulo: { text: "IA" } } }] },
+  };
+  const first = await app.inject(request);
+  const doc = stored!.document as { pages: Array<{ els: Array<{ name: string; text: string }> }> };
+  doc.pages[0].els.find((element) => element.name === "titulo")!.text = "Edição manual";
+  const second = await app.inject(request);
+
+  assert.deepEqual({
+    firstStatus: first.statusCode,
+    secondStatus: second.statusCode,
+    sameId: JSON.parse(first.body).design.id === JSON.parse(second.body).design.id,
+    creates,
+    renderedTitles,
+  }, {
+    firstStatus: 201,
+    secondStatus: 200,
+    sameId: true,
+    creates: 1,
+    renderedTitles: ["IA", "Edição manual"],
+  });
+});
+
+test("POST /api/v1/generations treats a concurrent idempotent insert as a replay", async () => {
+  const source: TemplateRow = {
+    ...TPL,
+    id: "automation-card",
+    document: {
+      name: "Card",
+      active: 0,
+      pages: [{ id: "source", w: 1080, h: 1350, bg: "#000", els: [
+        { id: "title", type: "text", name: "titulo", text: "Título" },
+      ] }],
+    },
+  };
+  let winner: TemplateRow | null = null;
+  const renderedTitles: string[] = [];
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => {
+      if (ownerId !== OWNER_ID) return null;
+      if (id === source.id) return source;
+      return winner?.id === id ? winner : null;
+    },
+    createTemplate: async (ownerId, input) => {
+      winner = {
+        id: input.id!,
+        ownerId,
+        kind: "custom",
+        name: "Primeiro vencedor",
+        document: {
+          name: "Primeiro vencedor",
+          active: 0,
+          pages: [{ id: "winner-page", w: 1080, h: 1350, bg: "#000", els: [
+            { id: "winner-title", type: "text", name: "titulo", text: "Edição vencedora" },
+          ] }],
+        },
+      };
+      throw new Error("duplicate key value violates unique constraint");
+    },
+    renderTemplatePng: async (document) => {
+      const doc = document as { pages: Array<{ els: Array<{ name: string; text: string }> }> };
+      renderedTitles.push(doc.pages[0].els.find((element) => element.name === "titulo")!.text);
+      return PNG_BYTES;
+    },
+  });
+  const app = buildApp(deps, null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "concurrent-run" },
+    payload: { template: source.id, name: "Segundo concorrente", pages: [{ layers: { titulo: { text: "Perdedor" } } }] },
+  });
+
+  assert.deepEqual({
+    status: res.statusCode,
+    name: JSON.parse(res.body).design?.name,
+    renderedTitles,
+  }, {
+    status: 200,
+    name: "Primeiro vencedor",
+    renderedTitles: ["Perdedor", "Edição vencedora"],
+  });
+});
+
+test("POST /api/v1/generations rejects a page without a layers object", async () => {
+  const app = buildApp(makeDeps(), null, { client: makeFakeStorageClient() });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "bad-page" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{}] },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.match(JSON.parse(res.body).error, /pages\[0\]\.layers/);
+});
+
+test("POST /api/v1/generations reports a Storage upload outage", async () => {
+  const failingStorage = {
+    storage: {
+      from: (bucket: string) => ({
+        upload: async () => ({ error: new Error("storage offline") }),
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://fake.supabase.co/${bucket}/${path}` } }),
+      }),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  const app = buildApp(makeDeps(), null, { client: failingStorage });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "storage-outage" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+
+  assert.equal(res.statusCode, 502);
+  assert.match(JSON.parse(res.body).error, /storage offline/);
 });
 
 // --- API keys ------------------------------------------------------------------

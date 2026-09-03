@@ -2,15 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { renderTemplatePng } from "./renderTweet.ts";
+import { FIXTURE_FAMILY, fixtureDocFont } from "./__fixtures__/fixtureFont.ts";
 
 function textOnlyDocument(text: string) {
   return {
     active: 0,
+    fonts: [fixtureDocFont()],
     pages: [{
       w: 300,
       h: 100,
       bg: "#000000",
-      els: [{ type: "text", name: "tweetText", x: 10, y: 10, w: 280, h: 40, text, size: 15 }],
+      els: [{ type: "text", name: "tweetText", x: 10, y: 10, w: 280, h: 40, text, size: 15, font: FIXTURE_FAMILY }],
     }],
   };
 }

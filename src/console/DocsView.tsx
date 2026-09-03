@@ -84,6 +84,7 @@ function Setting({ name, value }: { name: string; value: string }) {
 export function DocsView() {
   const baseUrl = "https://blank-editor.ickanz.easypanel.host";
   const renderUrl = `${baseUrl}/api/v1/render`;
+  const generationUrl = `${baseUrl}/api/v1/generations`;
   const [llmCopied, setLlmCopied] = useState(false);
 
   const quickStart = `curl -X POST "${renderUrl}" \\
@@ -171,6 +172,12 @@ export async function renderBlankDesign(args) {
   }
 }`;
 
+  const n8nGenerationBody = `{
+  "template": "={{ $json.blank_template_id }}",
+  "name": "={{ $json.titulo }}",
+  "pages": "={{ $json.pages }}"
+}`;
+
   const listTemplates = `curl "${baseUrl}/api/v1/templates" \\
   -H "Authorization: Bearer SUA_API_KEY"`;
 
@@ -244,6 +251,12 @@ export async function renderBlankDesign(args) {
     "```",
     "",
     "O PNG fica na propriedade binária `data`. Conecte o nó seguinte ao Google Drive, S3, Telegram, WhatsApp ou outro destino. Para um AI Agent no n8n, coloque o render em um subworkflow e conecte-o com Call n8n Workflow Tool; mantenha a chave e o template fora do prompt.",
+    "",
+    "Para criar um carrossel novo e editável, use `POST /api/v1/generations`, resposta JSON, e envie `Idempotency-Key`. O body é:",
+    "",
+    "```json",
+    n8nGenerationBody,
+    "```",
     "",
     "## Referência",
     "",
@@ -517,6 +530,15 @@ export async function renderBlankDesign(args) {
             </div>
 
             <CodeBlock title="Body JSON do HTTP Request" language="n8n expression" code={n8nBody} />
+
+            <div className="rounded-lg border border-line bg-surface p-4">
+              <h3 className="text-[13px] font-semibold">Criar um design editável inteiro</h3>
+              <p className="mt-2 text-xs leading-5 text-muted">
+                Para transformar um roteiro em um novo carrossel no Blank, chame <code className="font-mono text-[11px] text-text">{generationUrl}</code> com resposta JSON. Envie também <code className="font-mono text-[11px] text-text">Idempotency-Key</code> usando o run_id ou o ID da execução. Um modelo de uma página será repetido para cada item de <code className="font-mono text-[11px] text-text">pages</code>.
+              </p>
+            </div>
+
+            <CodeBlock title="Body para /api/v1/generations" language="n8n expression" code={n8nGenerationBody} />
 
             <div className="rounded-lg border border-line bg-surface p-4">
               <div className="flex items-center gap-2">

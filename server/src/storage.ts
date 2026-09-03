@@ -9,6 +9,8 @@ export function createStorageClient(url: string, serviceRoleKey: string): Supaba
 
 const RENDERS_BUCKET = "renders";
 const UPLOADS_BUCKET = "uploads";
+const FONTS_BUCKET = "fonts";
+const FONT_SFNT_BUCKET = "font-sfnt";
 
 /** Prefixo que marca um `src` de layer como referência ao bucket privado, em vez de uma URL
  *  http(s) normal — é o que `renderTweet.ts` usa pra saber que precisa buscar via Storage, não
@@ -38,6 +40,49 @@ export async function uploadRenderedPng(
  *  link só resolve de verdade depois do primeiro render salvo). */
 export function publicRenderUrl(client: SupabaseClient, templateId: string, pageIndex = 0): string {
   return client.storage.from(RENDERS_BUCKET).getPublicUrl(renderPath(templateId, pageIndex)).data.publicUrl;
+}
+
+/** Marca um `sfnt_path` como referência ao bucket privado de fontes, do mesmo jeito que
+ *  PRIVATE_UPLOAD_PREFIX faz para as fotos — é o que diz ao renderer "busque via Storage com a
+ *  chave service-role, não por fetch". */
+export const FONT_SFNT_PREFIX = "supabase://font-sfnt/";
+
+/**
+ * Sobe os dois formatos de uma face (supabase/migrations/0003_design_fonts.sql).
+ *
+ * Endereçado por conteúdo (`{sha256}.{ext}`), não por dono: a mesma face usada em dez designs é
+ * um blob só, e o nome do arquivo já é a identidade que o cache do renderer usa. `upsert` porque
+ * reimportar o mesmo PDF reescreve bytes idênticos.
+ *
+ * O WOFF2 vai para o bucket público e volta como URL; o SFNT vai para o privado e volta como
+ * referência `supabase://`. A assimetria é deliberada — ver o comentário da migration.
+ */
+export async function uploadFontFace(
+  client: SupabaseClient,
+  sha256: string,
+  sfnt: { ext: string; bytes: Buffer },
+  woff2: Buffer,
+): Promise<{ sfntPath: string; woff2Path: string }> {
+  const sfntName = `${sha256}.${sfnt.ext}`;
+  const woff2Name = `${sha256}.woff2`;
+  const [sfntRes, woff2Res] = await Promise.all([
+    client.storage.from(FONT_SFNT_BUCKET).upload(sfntName, sfnt.bytes, { contentType: "font/ttf", upsert: true }),
+    client.storage.from(FONTS_BUCKET).upload(woff2Name, woff2, { contentType: "font/woff2", upsert: true }),
+  ]);
+  if (sfntRes.error) throw sfntRes.error;
+  if (woff2Res.error) throw woff2Res.error;
+  return {
+    sfntPath: FONT_SFNT_PREFIX + sfntName,
+    woff2Path: client.storage.from(FONTS_BUCKET).getPublicUrl(woff2Name).data.publicUrl,
+  };
+}
+
+/** Baixa o SFNT privado de uma face. Só o servidor consegue: o bucket não tem policy de leitura. */
+export async function fetchFontSfnt(client: SupabaseClient, ref: string): Promise<Buffer> {
+  const path = ref.startsWith(FONT_SFNT_PREFIX) ? ref.slice(FONT_SFNT_PREFIX.length) : ref;
+  const { data, error } = await client.storage.from(FONT_SFNT_BUCKET).download(path);
+  if (error) throw error;
+  return Buffer.from(await data.arrayBuffer());
 }
 
 export async function uploadUserPhoto(

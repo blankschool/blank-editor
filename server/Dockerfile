@@ -1,12 +1,10 @@
 FROM node:22-slim
 
-# sharp rasterizes the template's SVG <text> via librsvg/Pango, which need fontconfig plus
-# actual font files to draw any glyphs at all — node:22-slim ships neither, so without this
-# the rendered text comes out blank. DejaVu Sans is metric-similar to the Inter/system-ui
-# stack the template asks for and covers the sans-serif fallback either way.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core \
-  && rm -rf /var/lib/apt/lists/*
+# O texto do SVG é rasterizado pelo @resvg/resvg-js com `loadSystemFonts: false`: as fontes vêm
+# do registry (Doc.fonts -> storage -> cache em /tmp), não do sistema. Por isso não há mais
+# fontconfig nem pacote de fontes aqui — nada instalado na imagem influencia o desenho, que é
+# justamente a propriedade que se quer. O binário nativo do resvg vem por optionalDependencies
+# do npm, então não acrescente --no-optional ao install abaixo.
 
 WORKDIR /app
 
@@ -14,6 +12,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
 COPY src ./src
+
 
 ENV NODE_ENV=production
 EXPOSE 8787

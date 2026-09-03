@@ -73,6 +73,10 @@ function paint(element: EditableElement): string {
   return ` fill="${fill}"${stroke} opacity="${Math.max(0, Math.min(1, finite(element.opacity, 1)))}"`;
 }
 
+/** Família usada quando o elemento não declara nenhuma. Exportada porque o resolvedor de
+ *  fontes (resolveFonts.ts) precisa exigir exatamente a mesma que o SVG vai pedir. */
+export const DEFAULT_FONT_FAMILY = "Inter";
+
 function renderText(element: EditableElement, value: string): string {
   const x = finite(element.x);
   const y = finite(element.y);
@@ -87,7 +91,7 @@ function renderText(element: EditableElement, value: string): string {
     .join("");
   const decoration = element.underline ? ` text-decoration="underline"` : "";
   const style = element.italic ? "italic" : "normal";
-  return `<text x="${x}" y="${y}" text-anchor="${align}" dominant-baseline="text-before-edge" font-family="${escapeXml(element.font || "Inter")}" font-size="${size}" font-weight="${finite(element.weight, 400)}" font-style="${style}" letter-spacing="${finite(element.ls)}"${decoration}${paint(element)}${transform(element)}>${tspans}</text>`;
+  return `<text x="${x}" y="${y}" text-anchor="${align}" dominant-baseline="text-before-edge" font-family="${escapeXml(element.font || DEFAULT_FONT_FAMILY)}" font-size="${size}" font-weight="${finite(element.weight, 400)}" font-style="${style}" letter-spacing="${finite(element.ls)}"${decoration}${paint(element)}${transform(element)}>${tspans}</text>`;
 }
 
 /** How tall an element actually renders — real wrapped-line height for text, the authored box otherwise. */
@@ -171,13 +175,44 @@ export function pageCount(document: unknown): number {
   return Array.isArray(candidate?.pages) ? candidate.pages.length : 0;
 }
 
+/**
+ * Uma imagem pode guardar o conteúdo em `Doc.assets` e apontar com "@chave" em vez de trazer o
+ * `src` inteiro — é como o editor evita duplicar a mesma foto usada em várias páginas
+ * (`rawSrcOf`, editor.ts). Quem lê `src` sem resolver isso enxerga a string "@fundo", que não
+ * é URL nem data URI: o layer some do render em silêncio. Era o que fazia um design salvo com
+ * assets abrir no canvas e renderizar em branco pela API.
+ */
+function resolveSrc(document: unknown, src: string | undefined): string | undefined {
+  if (!src || src[0] !== "@") return src;
+  const assets = (document as { assets?: Record<string, string> } | null)?.assets;
+  return assets?.[src.slice(1)];
+}
+
 /** Every image-type layer a template declares, with whatever `src` it was saved with (if any). */
 export function listImageLayers(document: unknown, pageIndex?: number): Array<{ name: string; src?: string }> {
   const page = pageAt(document, pageIndex);
   if (!Array.isArray(page?.els)) return [];
   return page.els
     .filter((el): el is EditableElement & { name: string } => Boolean(el && el.type === "image" && el.name))
-    .map((el) => ({ name: el.name, src: el.src }));
+    .map((el) => ({ name: el.name, src: resolveSrc(document, el.src) }));
+}
+
+/** As faces que este documento carrega consigo — ver Doc.fonts em src/types.ts. Uma entrada sem
+ *  `sha256` é descartada: sem identidade não há cache confiável nem detecção de ambiguidade. */
+export function listDesignFonts(document: unknown): Array<{ family: string; weight: number; sha256: string; src: string; glyphs?: string }> {
+  const fonts = (document as { fonts?: unknown } | null)?.fonts;
+  if (!Array.isArray(fonts)) return [];
+  return fonts
+    .filter((f): f is { family: string; weight: number; sha256: string; ttf: string; glyphs?: string } =>
+      Boolean(f && typeof f.family === "string" && typeof f.ttf === "string" && typeof f.sha256 === "string" && f.sha256))
+    .map((f) => ({ family: f.family, weight: Number(f.weight) || 400, sha256: f.sha256, src: f.ttf,
+                   ...(typeof (f as { glyphs?: unknown }).glyphs === "string" ? { glyphs: (f as { glyphs: string }).glyphs } : {}) }));
+}
+
+/** A página que uma renderização vai desenhar — exposta para resolver as fontes DELA, não as da
+ *  capa, num documento de várias páginas. */
+export function pageForRender(document: unknown, pageIndex?: number) {
+  return pageAt(document, pageIndex);
 }
 
 /**
@@ -222,7 +257,7 @@ export function buildTemplateSvg(
       return;
     }
     if (element.type === "image") {
-      const source = resolvedImages[name] ?? String(element.src || "");
+      const source = resolvedImages[name] ?? String(resolveSrc(document, element.src) || "");
       if (!source.startsWith("data:image/")) return;
       const clipId = `image-clip-${index}`;
       definitions.push(`<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}"/></clipPath>`);

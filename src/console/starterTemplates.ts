@@ -1,14 +1,14 @@
 import type { Doc, El, Page } from "../types";
 
 /**
- * Os três modelos de partida.
+ * Os modelos de partida.
  *
  * "Novo design" abria um canvas em branco, e branco é ferramenta, não produto:
  * quem chega para publicar todo dia não quer uma tela vazia, quer um modelo que
  * já funciona e no qual só troca o texto. São estes que fazem a promessa dos
  * 30 segundos ser verdadeira.
  *
- * Duas regras que valem para os três, e são o que os torna um motor de template
+ * Duas regras que valem para todos, e são o que os torna um motor de template
  * em vez de um arquivo bonito:
  *
  *  1. Toda peça editável tem NOME. O nome do elemento é a superfície da API —
@@ -70,7 +70,7 @@ function page(id: string, w: number, h: number, els: El[]): Page {
 
 export interface Starter {
   /** Identifica o modelo na UI; não vai para o servidor. */
-  id: "post" | "story" | "carrossel";
+  id: "post" | "story" | "carrossel" | "automation";
   label: string;
   /** Uma linha dizendo para que serve, não que tamanho tem. */
   hint: string;
@@ -208,6 +208,44 @@ export const STARTERS: readonly Starter[] = [
             x: 72, y: 1236, w: 936, h: 44,
             text: "3 / 3",
             size: 28, weight: 600, fill: ACCENT,
+          }),
+        ]),
+      ],
+    }),
+  },
+  {
+    id: "automation",
+    label: "Card para automação",
+    hint: "Uma página-base que o n8n repete para cada card do roteiro.",
+    ratio: "4 / 5",
+    sizeLabel: "1080 × 1350",
+    pages: 1,
+    fields: ["titulo", "corpo", "numero", "cta"],
+    build: () => ({
+      name: "Card para automação",
+      active: 0,
+      pages: [
+        page("automation-1", 1080, 1350, [
+          el("rect", "marcador-fundo", { x: 72, y: 72, w: 182, h: 64, radius: 32, fill: ACCENT }),
+          text("numero", {
+            x: 72, y: 88, w: 182, h: 36,
+            text: "1/5",
+            size: 26, weight: 700, align: "center",
+          }),
+          text("titulo", {
+            x: 72, y: 210, w: 936, h: 250,
+            text: "Título do card",
+            size: 84, weight: 700, lh: 1.08,
+          }),
+          text("corpo", {
+            x: 72, y: 520, w: 936, h: 520,
+            text: "Corpo do card. O n8n troca este conteúdo para cada item do roteiro.",
+            size: 42, lh: 1.45, fill: MUTED,
+          }),
+          text("cta", {
+            x: 72, y: 1194, w: 936, h: 64,
+            text: "",
+            size: 30, weight: 600, fill: ACCENT,
           }),
         ]),
       ],

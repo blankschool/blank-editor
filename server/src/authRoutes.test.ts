@@ -27,6 +27,13 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     },
     updateTemplate: async () => null,
     deleteTemplate: async () => false,
+    upsertFontFace: async (input) => ({
+      id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
+      postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,
+      stretch: input.stretch ?? null, os2FsType: input.os2FsType ?? null,
+      sfntPath: input.sfntPath, woff2Path: input.woff2Path,
+    }),
+    listFontFaces: async () => [],
     listApiKeys: async () => [],
     createApiKey: async (ownerId, name) => ({ id: "key-1", name, secret: "blk_live_generated", createdAt: "2024-01-01T00:00:00.000Z" }),
     revokeApiKey: async () => false,

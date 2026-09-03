@@ -125,6 +125,40 @@ faria o chamador acreditar que gerou o slide que pediu.
 O servidor de produção continua aceitando `DATABASE_URL`; `dev:local` usa
 somente a chave e os templates em memória.
 
+## Geração editável pelo n8n
+
+`POST /api/v1/generations` cria um design novo a partir de um design salvo, em
+vez de sobrescrever o modelo. A rota exige uma chave de API do Blank e o header
+`Idempotency-Key`; repetir a mesma chave devolve o mesmo design e preserva
+qualquer correção manual que já tenha sido feita nele.
+
+Um modelo de uma página funciona como card-base e é repetido para cada item de
+`pages`. Em modelos que já têm várias páginas, a quantidade enviada precisa ser
+idêntica. Todas as camadas informadas precisam existir na página e aceitar o
+tipo enviado.
+
+```jsonc
+{
+  "template": "ID_DO_DESIGN_BASE",
+  "name": "Título do briefing",
+  "pages": [
+    {
+      "layers": {
+        "titulo": { "text": "Uma tese forte" },
+        "corpo": { "text": "O argumento deste card." },
+        "numero": { "text": "1/5" },
+        "cta": { "text": "" }
+      }
+    }
+  ]
+}
+```
+
+A resposta traz o novo ID, `editorPath` e um PNG público por página. O n8n deve
+guardar a API key numa credencial, enviar `run_id` (ou o ID da execução) como
+`Idempotency-Key` e montar a URL de edição como
+`https://blank-editor.ickanz.easypanel.host${editorPath}`.
+
 ## Publicar
 
 `dist/` (frontend) e `server/` (API) são deploys separados — o frontend é

@@ -1,0 +1,62 @@
+[
+ {
+  "arquivo": "NYTFranklin-Bold",
+  "familia": "NYTFranklin",
+  "estilo": "Bold",
+  "peso": 700,
+  "glifos": 18,
+  "texto": " $06:BRaehilmorstõ",
+  "sha256": "bb56e47be8a927fbed70364bbc83577b10dcca9793ee98ee51d1cefb3b4eaf61",
+  "postscript_name": "NYTFranklin-Bold",
+  "stretch": "normal",
+  "os2_fs_type": 4,
+  "asc": 1.0708,
+  "desc": 0.19189,
+  "kb": 1.5
+ },
+ {
+  "arquivo": "NYTFranklin-Light",
+  "familia": "NYTFranklin",
+  "estilo": "Light",
+  "peso": 300,
+  "glifos": 16,
+  "texto": " ?acdegilmnoruvó",
+  "sha256": "26d39658cd7a5594f2d27625d16842b294c9c4584578ae38625d43995f2c4c23",
+  "postscript_name": "NYTFranklin-Light",
+  "stretch": "normal",
+  "os2_fs_type": 4,
+  "asc": 1.0708,
+  "desc": 0.19189,
+  "kb": 1.3
+ },
+ {
+  "arquivo": "NYTFranklin-Semibold",
+  "familia": "NYTFranklin",
+  "estilo": "Semibold",
+  "peso": 600,
+  "glifos": 8,
+  "texto": "CEGINOSÓ",
+  "sha256": "11fe0d5a6210b2e3a2e9d2f59a74494945bac6829c756473dc4a9bcf7872181b",
+  "postscript_name": "NYTFranklin-Semibold",
+  "stretch": "normal",
+  "os2_fs_type": 4,
+  "asc": 1.0708,
+  "desc": 0.19189,
+  "kb": 0.9
+ },
+ {
+  "arquivo": "AniconSans-Regular",
+  "familia": "AniconSans",
+  "estilo": "Regular",
+  "peso": 400,
+  "glifos": 10,
+  "texto": " AGJLMNORU",
+  "sha256": "ce2808125cb7e6d15b4d497780a9980e89bb2b57a18b235ec799ffe85d39b096",
+  "postscript_name": "AniconSans-Regular",
+  "stretch": "normal",
+  "os2_fs_type": 0,
+  "asc": 0.9,
+  "desc": 0.215,
+  "kb": 0.8
+ }
+]

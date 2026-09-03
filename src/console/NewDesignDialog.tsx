@@ -56,7 +56,7 @@ export function NewDesignDialog() {
 
   return (
     <Dialog open={s.newDesignOpen} onOpenChange={(open) => !open && closeNewDesign()}>
-      <DialogContent className="max-w-[820px]">
+      <DialogContent className="max-w-[1040px]">
         <div className="flex flex-col gap-1.5 pr-8">
           <DialogTitle className="text-[17px]">Começar por um modelo</DialogTitle>
           <DialogDescription>
@@ -64,7 +64,7 @@ export function NewDesignDialog() {
           </DialogDescription>
         </div>
 
-        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
           {STARTERS.map((starter) => (
             <StarterCard key={starter.id} starter={starter} />
           ))}

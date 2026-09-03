@@ -111,4 +111,31 @@ export interface Doc {
   assets?: Record<string, string>;
   /** Identifies the built-in design; a saved copy of an older one is discarded. */
   seedId?: string;
+  /** Fontes que pertencem a ESTE design, não ao app.
+   *
+   *  Uma arte importada de um PDF do Canva traz as famílias dela embutidas (AniconSans,
+   *  NYTFranklin…). Elas não estão instaladas em lugar nenhum — nem no navegador de quem abre
+   *  o design, nem no container que renderiza —, então precisam viajar junto com o documento.
+   *  Sem isto, o canvas e o render desenham o mesmo texto com fontes diferentes: as larguras
+   *  divergem e a manchete, cujos trechos são posicionados por largura medida, colide. */
+  fonts?: DocFont[];
+}
+
+/** Uma face de fonte que o design carrega consigo. */
+export interface DocFont {
+  /** O que os elementos põem em `El.font` — a família, sem o estilo ("NYTFranklin"). */
+  family: string;
+  /** Peso CSS que esta face atende (300, 600, 700…), casado com `El.weight`. */
+  weight: number;
+  /** sha256 dos bytes do SFNT. É a IDENTIDADE da face, não só um checksum: o cache do renderer
+   *  é indexado por ele, e é o que garante que um design antigo não mude de aparência porque
+   *  alguém subiu bytes diferentes na mesma URL. */
+  sha256: string;
+  /** URL pública do .woff2, para o @font-face do navegador. */
+  woff2: string;
+  /** URL do .ttf/.otf, para o rasterizador do servidor carregar o arquivo. */
+  ttf: string;
+  /** Só os glifos que esta face traz — o subset vem do PDF e não cobre o alfabeto inteiro.
+   *  É o que permite avisar "essa letra não existe nesta fonte" em vez de desenhar nada. */
+  glyphs?: string;
 }

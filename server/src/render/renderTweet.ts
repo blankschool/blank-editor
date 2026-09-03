@@ -1,6 +1,9 @@
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildTemplateSvg, listImageLayers, type TemplateOverrides } from "./editableTweetTemplate.ts";
+import { renderAsync } from "@resvg/resvg-js";
+import { buildTemplateSvg, listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
+import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
+import { assertGlyphCoverage, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
 import type { ParsedLayers } from "./layers.ts";
@@ -37,6 +40,18 @@ export async function renderTemplatePng(
   document: unknown,
   layers: ParsedLayers,
   pageIndex?: number,
+  /**
+   * Faces que o DONO tem registradas, para as famílias que o documento usa mas não declara.
+   *
+   * Um design importado de PDF carrega as fontes dele em `Doc.fonts`. Um template comum não
+   * carrega nada — ele só diz `font: "Inter"` e conta que Inter exista. Sem esta lista, semear
+   * o registry não adiantaria nada: o render nunca olharia para lá, e todo template do app
+   * falharia por família não declarada.
+   *
+   * O documento tem precedência: uma face declarada nele descreve AQUELE design e não deve ser
+   * trocada por outra versão que o dono tenha registrado depois.
+   */
+  registryFaces: readonly FaceRef[] = [],
 ): Promise<Buffer> {
   const toFetch: Record<string, string> = {};
   for (const [name, url] of Object.entries(layers.images)) {
@@ -54,7 +69,33 @@ export async function renderTemplatePng(
   );
   const resolvedImages = Object.fromEntries(fetched);
 
+  // As fontes desta página, em disco, antes de rasterizar. Só as famílias que a página usa —
+  // e falha alto se alguma não estiver declarada (resolveFonts.ts).
+  const page = pageForRender(document, pageIndex);
+  const doDocumento = listDesignFonts(document);
+  const declaradas = new Set(doDocumento.map((f) => `${f.family}::${f.weight}`));
+  const disponiveis = [...doDocumento, ...registryFaces.filter((f) => !declaradas.has(`${f.family}::${f.weight}`))];
+  const faces = resolveFaces(disponiveis, listUsedFamilies(page));
+  // Um subset vindo de PDF não cobre o alfabeto: conferir ANTES de rasterizar transforma
+  // "a manchete saiu com um buraco" em erro nomeando a camada e o caractere.
+  assertGlyphCoverage(page, layers.texts, faces);
+  const fontFiles = await ensureFontFiles(faces);
+
   const overrides: TemplateOverrides = { texts: layers.texts, hidden: layers.hidden };
   const svg = buildTemplateSvg(document, overrides, resolvedImages, pageIndex);
-  return sharp(Buffer.from(svg)).png().toBuffer();
+
+  // resvg, não sharp/librsvg, para desenhar o SVG.
+  //
+  // Duas razões, as duas medidas nesta migração. (1) O librsvg resolve fonte pelo fontconfig do
+  // PROCESSO, que lê a configuração uma vez e ignora mudanças — não há como entregar a ele uma
+  // fonte que chegou junto com o documento. O resvg monta um banco de fontes por renderização a
+  // partir dos arquivos que recebe. (2) O librsvg era o desalinhado: no mesmo SVG e com a mesma
+  // fonte, ele posiciona `dominant-baseline="text-before-edge"` de 6 a 31px acima do Chrome,
+  // enquanto o resvg bate com o navegador em 0-1px. Trocar aproximou o render do canvas do
+  // editor, em vez de afastar.
+  // `renderAsync`, não `new Resvg(...).render()`: a versão síncrona rasteriza no thread do Node
+  // e trava o event loop do Fastify pelo tempo do desenho — numa página de 1080x1440 com fotos,
+  // tempo suficiente para segurar todas as outras requisições.
+  const png = await renderAsync(svg, { font: { fontFiles, loadSystemFonts: false } });
+  return sharp(png.asPng()).png().toBuffer();
 }

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { CloudOff, Plus, Sparkles, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -87,6 +88,23 @@ function LoadFailedState() {
 
 export function DesignsView() {
   const s = useConsole();
+
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible" && location.hash.startsWith("#/console/designs")) {
+        void loadTemplates();
+      }
+    };
+    const interval = window.setInterval(refreshIfVisible, 15_000);
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, []);
+
   const query = s.search.trim().toLowerCase();
   const searching = query.length > 0;
 

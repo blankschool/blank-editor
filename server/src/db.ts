@@ -133,3 +133,69 @@ export async function deleteApiKey(sql: Sql, ownerId: string, id: string): Promi
   `;
   return rows.length > 0;
 }
+
+/** Uma face de fonte registrada — ver supabase/migrations/0003_design_fonts.sql. */
+export interface FontFaceRow {
+  id: string;
+  sha256: string;
+  internalFamily: string;
+  postscriptName: string | null;
+  weight: number;
+  style: string;
+  stretch: string | null;
+  os2FsType: number | null;
+  sfntPath: string;
+  woff2Path: string;
+}
+
+export interface FontFaceInput {
+  id: string;
+  ownerId: string;
+  sha256: string;
+  internalFamily: string;
+  postscriptName?: string | null;
+  weight: number;
+  style: string;
+  stretch?: string | null;
+  os2FsType?: number | null;
+  sfntPath: string;
+  woff2Path: string;
+}
+
+const FONT_FACE_COLUMNS = `
+  id, sha256, internal_family as "internalFamily", postscript_name as "postscriptName",
+  weight, style, stretch, os2_fs_type as "os2FsType",
+  sfnt_path as "sfntPath", woff2_path as "woff2Path"
+`;
+
+/**
+ * Registra a face, ou devolve a que já existe.
+ *
+ * `on conflict do update` em vez de `do nothing` porque `do nothing` não devolve linha, e quem
+ * chama precisa do id para gravar em `Doc.fonts`. O update é sobre a própria chave, então é
+ * idempotente: reimportar o mesmo PDF não cria uma segunda linha nem muda a identidade.
+ */
+export async function upsertFontFace(sql: Sql, input: FontFaceInput): Promise<FontFaceRow> {
+  const rows = await sql<FontFaceRow[]>`
+    insert into font_faces (
+      id, owner_id, sha256, internal_family, postscript_name, weight, style, stretch,
+      os2_fs_type, sfnt_path, woff2_path
+    )
+    values (
+      ${input.id}, ${input.ownerId}, ${input.sha256}, ${input.internalFamily},
+      ${input.postscriptName ?? null}, ${input.weight}, ${input.style}, ${input.stretch ?? null},
+      ${input.os2FsType ?? null}, ${input.sfntPath}, ${input.woff2Path}
+    )
+    on conflict (owner_id, sha256) do update set sfnt_path = excluded.sfnt_path
+    returning ${sql.unsafe(FONT_FACE_COLUMNS)}
+  `;
+  return rows[0];
+}
+
+export async function listFontFaces(sql: Sql, ownerId: string): Promise<FontFaceRow[]> {
+  return sql<FontFaceRow[]>`
+    select ${sql.unsafe(FONT_FACE_COLUMNS)} from font_faces
+    where owner_id = ${ownerId}
+    order by internal_family, weight
+  `;
+}
