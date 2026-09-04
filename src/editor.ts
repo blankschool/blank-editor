@@ -75,7 +75,7 @@ let lastClickId: string | null = null;
 let lastClickTime = 0;
 // Keep the position/layers inspector open across selection and history changes.
 let propPopOpen = false;
-let panelTab: "organize" | "layers" = "organize";
+let panelTab: "organize" | "layers" | "code" = "organize";
 let ctxMenuOpen = false;
 let activeTab: string | null = null;
 let fitView = true;
@@ -1556,6 +1556,7 @@ function renderProps() {
     (tabs.querySelectorAll("[data-ptab]") as NodeListOf<HTMLElement>).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.ptab === panelTab)));
   }
   if (panelTab === "layers") { renderLayers(); return; }
+  if (panelTab === "code") { renderCodePanel(); return; }
 
   const box = $("props");
   const els = selEls();
@@ -1605,10 +1606,37 @@ function renderProps() {
       </div></div>` : ""}`;
 }
 
+/** Painel de código (item 4.4 do backlog) — só leitura, o JSON do elemento selecionado com um
+ *  botão de copiar. Escopo bem menor que o "handoff" do repo de referência (que mapeia pra
+ *  arquivos-fonte reais de um app gerado) — aqui não existe geração de código por trás de um
+ *  design, então "o que essa camada é" já é o próprio JSON dela, não uma referência a outra
+ *  coisa. Útil pra depurar um layout importado ou copiar um elemento pra outro design colando
+ *  fora do app. */
+function renderCodePanel() {
+  const box = $("props");
+  const els = selEls();
+  if (!els.length) {
+    box.innerHTML = `<p class="empty">Selecione um elemento pra ver o JSON dele.</p>`;
+    return;
+  }
+  const json = els.length === 1 ? JSON.stringify(els[0], null, 2) : JSON.stringify(els, null, 2);
+  box.innerHTML = `
+    <div class="sec">
+      <h4>${els.length === 1 ? "Elemento selecionado" : `${els.length} elementos selecionados`}</h4>
+      <button class="tbtn ghost" id="codeCopyBtn" style="margin-bottom:8px">Copiar JSON</button>
+      <pre id="codeJson" style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:11px;background:var(--surface-2);border-radius:8px;padding:10px;max-height:420px;overflow:auto">${esc(json)}</pre>
+    </div>`;
+}
+$("props").addEventListener("click", (ev) => {
+  if (!(ev.target as HTMLElement).closest("#codeCopyBtn")) return;
+  const text = $("codeJson")?.textContent || "";
+  navigator.clipboard?.writeText(text).then(() => toast("JSON copiado")).catch(() => {});
+});
+
 $("ptabs")?.addEventListener("click", (ev) => {
   const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-ptab]");
   if (!b) return;
-  panelTab = b.dataset.ptab as "organize" | "layers";
+  panelTab = b.dataset.ptab as "organize" | "layers" | "code";
   renderProps();
 });
 $("closeProps").addEventListener("click", () => { propPopOpen = false; positionFloatingUI(); });

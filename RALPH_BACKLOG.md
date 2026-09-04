@@ -275,11 +275,17 @@ habilitado, políticas por dono).
   já existente), pin por `x/y` relativo à página, resolver/reabrir, painel no
   editor. Depende de 4.1 existir pra decidir se comentário é por versão ou
   pelo design como um todo (sugestão: pelo design, mais simples).
-- [ ] **4.4 Painel de código/handoff.** Painel read-only no editor mostrando
-  o JSON do elemento selecionado e um botão "copiar" — bem mais simples que o
-  do repo de referência (que mapeia pra arquivos-fonte reais, o que não faz
-  sentido aqui já que não há geração de código por trás). Escopo reduzido
-  deliberadamente.
+- [x] **4.4 Painel de código/handoff.** Nova aba "{ }" no popover de
+  propriedades (ao lado de Organizar/Camadas), read-only: JSON do elemento
+  selecionado (ou de todos, se vários) com botão "Copiar JSON". Escopo bem
+  menor que o repo de referência de propósito — lá o painel mapeia pra
+  arquivos-fonte reais de um app gerado; aqui não existe geração de código
+  por trás de um design, "o que essa camada é" já É o JSON, não uma
+  referência a outra coisa. NÃO VERIFICADO VISUALMENTE — o editor está atrás
+  do login com Supabase Auth real, sem credencial disponível. Confiança vem
+  de reusar exatamente os mesmos padrões já visualmente comprovados nesta
+  sessão (`.tbtn`/`.sec`/`.empty`, `navigator.clipboard` do jeito que
+  "Copiar markup"/"Copiar link" já usam) — build e typecheck limpos.
 - [ ] **4.5 Abas de múltiplos designs abertos.** Estado novo em
   `src/console/store.ts` (`openTabs: Array<{id, name}>`), UI de abas no topo
   do editor, persistir em localStorage (não em banco — é preferência de
