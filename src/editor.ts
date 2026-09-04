@@ -1968,6 +1968,15 @@ $("exportBtn").addEventListener("click", () => {
   $("scrim").hidden = false;
 });
 $("expCancel").addEventListener("click", () => { $("scrim").hidden = true; });
+$("expCopyMarkup").addEventListener("click", async () => {
+  if (!await ensureCanDownload()) return;
+  const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
+  $("scrim").hidden = true;
+  await document.fonts.ready;
+  const html = await buildScreensHtml(name, expScale);
+  navigator.clipboard?.writeText(html).then(() => toast("Markup copiado"))
+    .catch(() => toast("Não foi possível copiar — o navegador recusou o clipboard"));
+});
 $("scrim").addEventListener("click", (e) => { if (e.target === $("scrim")) $("scrim").hidden = true; });
 $("scrim").addEventListener("click", (e) => {
   const f = e.target.closest("[data-fmt]"); if (f) { expFmt = f.dataset.fmt; renderExport(); }
@@ -2131,24 +2140,43 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
   }
 }
 
-async function doExport() {
-  if (looksGenerated(doc.seedId) && !legacyGeneratedDesign) {
-    // A pessoa pode clicar em Exportar antes do autosave disparar. Salvar e reler o estado aqui
-    // fecha essa janela: uma edição feita depois da aprovação volta a rascunho antes de qualquer
-    // byte ser baixado.
-    clearTimeout(persistTimer);
-    if (!await syncTemplateToServer(doc)) {
-      $("scrim").hidden = true;
-      toast("Não foi possível confirmar a versão atual antes do download.");
-      return;
-    }
-    await refreshGenerationReview();
-    if (!generationReview?.canDownload) {
-      $("scrim").hidden = true;
-      toast("A versão precisa ser aprovada antes do download.");
-      return;
-    }
+/** Todas as páginas não-ocultas, renderizadas e empurradas numa página HTML estática só —
+ *  usado pela exportação em HTML e por "Copiar markup" (mesmo conteúdo, destino diferente:
+ *  arquivo baixado ou clipboard). */
+async function buildScreensHtml(title: string, scale: number): Promise<string> {
+  const imgs = [];
+  for (const p of doc.pages.filter((p) => !p.hidden)) {
+    const c = await renderPageCanvas(p, scale);
+    imgs.push(`<img src="${c.toDataURL("image/png")}" width="${p.w}" height="${p.h}" style="display:block;max-width:100%;height:auto;margin:0 auto 24px;box-shadow:0 1px 8px rgba(0,0,0,.15)">`);
   }
+  return `<!doctype html>\n<html><head><meta charset="utf-8"><title>${esc(title)}</title></head>` +
+    `<body style="margin:0;padding:24px;background:#f2f2f2">${imgs.join("")}</body></html>\n`;
+}
+
+/** Mesma checagem em dois pontos de saída (baixar arquivo, copiar markup): um design gerado
+ *  só sai da máquina depois de aprovado. Devolve `false` (e já mostra o toast/fecha o modal)
+ *  quando algo bloqueia; quem chama só precisa checar o retorno antes de seguir. */
+async function ensureCanDownload(): Promise<boolean> {
+  if (!looksGenerated(doc.seedId) || legacyGeneratedDesign) return true;
+  // A pessoa pode clicar antes do autosave disparar. Salvar e reler o estado aqui fecha essa
+  // janela: uma edição feita depois da aprovação volta a rascunho antes de qualquer byte sair.
+  clearTimeout(persistTimer);
+  if (!await syncTemplateToServer(doc)) {
+    $("scrim").hidden = true;
+    toast("Não foi possível confirmar a versão atual antes do download.");
+    return false;
+  }
+  await refreshGenerationReview();
+  if (!generationReview?.canDownload) {
+    $("scrim").hidden = true;
+    toast("A versão precisa ser aprovada antes do download.");
+    return false;
+  }
+  return true;
+}
+
+async function doExport() {
+  if (!await ensureCanDownload()) return;
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
   $("scrim").hidden = true;
   const saver = downloads ?? { save: browserDownload };
@@ -2171,14 +2199,7 @@ async function doExport() {
     if (expFmt === "html") {
       // Uma página HTML estática com todas as telas empilhadas — pra abrir/compartilhar sem
       // precisar do editor nem de um PDF, um arquivo só por design em vez de um por página.
-      const imgs = [];
-      for (const p of doc.pages.filter((p) => !p.hidden)) {
-        const c = await renderPageCanvas(p, expScale);
-        imgs.push(`<img src="${c.toDataURL("image/png")}" width="${p.w}" height="${p.h}" style="display:block;max-width:100%;height:auto;margin:0 auto 24px;box-shadow:0 1px 8px rgba(0,0,0,.15)">`);
-      }
-      const html = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${esc(name)}</title></head>` +
-        `<body style="margin:0;padding:24px;background:#f2f2f2">${imgs.join("")}</body></html>\n`;
-      await saver.save({ filename: `${name}.html`, data: html });
+      await saver.save({ filename: `${name}.html`, data: await buildScreensHtml(name, expScale) });
       toast("Salvo"); return;
     }
     const p = page();

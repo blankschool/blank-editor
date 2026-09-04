@@ -163,9 +163,12 @@ usados em server/src/db.ts e supabase/migrations/*).
 - [ ] **3.1b Exportar HTML de uma versão específica.** Depende do item 4.1
   (histórico de versões) existir — não dá pra exportar "a versão 3" sem
   versões nomeadas existirem ainda.
-- [ ] **3.1c Copiar markup pro clipboard.** Serializar o doc atual pra HTML
-  estático (mesmo formato do 3.1a) e copiar via `navigator.clipboard`, sem
-  baixar arquivo. Não depende de nada, só não foi feito ainda.
+- [x] **3.1c Copiar markup pro clipboard.** Botão "Copiar markup" no modal
+  de exportar, ao lado de Cancelar/Exportar. `buildScreensHtml()` extraída
+  do 3.1a pra ficar compartilhada entre exportar-como-arquivo e copiar — e a
+  checagem "gerado precisa estar aprovado antes de sair da máquina" também
+  virou uma função só (`ensureCanDownload`), pra copiar markup não abrir uma
+  porta que baixar arquivo não tem.
 - [ ] **3.2 Página pública `/t/:slug`.** Rota nova (server + frontend) que
   serve um HTML somente-leitura de um design por slug, sem precisar do
   console/editor — pré-requisito de compartilhamento (item 4.2). Precisa
