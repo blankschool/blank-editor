@@ -229,19 +229,23 @@ habilitado, políticas por dono).
   `src/console/store.ts` (`openTabs: Array<{id, name}>`), UI de abas no topo
   do editor, persistir em localStorage (não em banco — é preferência de
   sessão do navegador, não dado do design).
-- [ ] **4.6 Modo apresentação em tela cheia.** VERIFICAR PRIMEIRO: o editor já
-  tem um botão "Apresentar em tela cheia" na barra de zoom
-  (`editor.ts`, toolbar) — checar se já funciona de ponta a ponta (avança
-  página, esconde chrome, Esc sai) antes de assumir que falta construir do
-  zero.
+- [x] **4.6 Modo apresentação em tela cheia — JÁ EXISTIA.** Verificado:
+  `enterPresent`/`exitPresent`/`renderPresentFrame` em `editor.ts` (~linha
+  1812) já é uma feature completa e funcional — tela cheia de verdade
+  (`requestFullscreen`), navega página com prev/next, Esc sai, clique fora
+  do slide sai. Nada construído aqui, só confirmado que não faltava nada.
 - [ ] **4.7 Painel de design system/marca.** Paletas de cor/fonte salvas por
   conta, reaproveitáveis entre designs — tabela nova (`brand_kits`), painel
   no editor pra aplicar uma paleta salva.
-- [ ] **4.8 Diálogo de login/cadastro em modal.** VERIFICAR PRIMEIRO: o
-  backend já tem `/api/v1/auth/signup`+`/login` completos
-  (`server/src/supabaseAuth.ts`) — o que falta é só a UI ser um diálogo modal
-  em vez de página cheia (se for o caso; conferir como o console hoje pede
-  login).
+- [x] **4.8 Login/cadastro — JÁ EXISTE, NÃO VIRA MODAL.** Verificado:
+  `src/login/LoginApp.tsx` já fala com `/api/v1/auth/signup`+`/login` de
+  verdade (sessão real em cookie httpOnly). É página cheia, não modal — mas
+  isso é decisão de design DELIBERADA e já documentada no próprio arquivo
+  (comentário longo explicando a escolha de não usar o bloco pago
+  `@reui/auth-1` e reconstruir a peça visual à mão). Transformar isso num
+  modal `AuthDialog` só pra bater com o repo de referência iria CONTRA uma
+  decisão já tomada com o usuário — não fiz essa mudança. Fechado como "não
+  é gap", não como "feito".
 - [ ] **4.9 Chat de IA contínuo editando o design.** Maior item do backlog.
   O repo de referência usa um interpretador de regras local (não LLM de
   verdade); este repo já tem geração por LLM real em `GerarView.tsx`/
