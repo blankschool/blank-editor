@@ -27,7 +27,7 @@ A extração de texto (`extrair_texto`) usa `page.get_text("dict")`, que já vem
 tamanho por span — dispensa portar o parser de content-stream daquele outro repo, já que o
 PyMuPDF é dependência deste arquivo de qualquer forma.
 """
-import base64, hashlib, io, json, re, sys
+import base64, hashlib, io, json, math, re, sys
 from pathlib import Path
 import fitz
 from fontTools.ttLib import TTFont, newTable
@@ -189,6 +189,31 @@ def detectar_fundo(page):
         return None
     return "#%02x%02x%02x" % tuple(round(c * 255) for c in encontrado)
 
+def caixa_nao_rotacionada(x0, y0, x1, y1, ang_rad):
+    """`bloco["bbox"]` do PyMuPDF é a caixa alinhada aos eixos que ENVOLVE o texto já
+    rotacionado — não a caixa original antes de girar, que é o que o `El` do Blank Editor
+    guarda (x/y/w/h SEM rotação; o editor gira em torno do próprio CENTRO dessa caixa ao
+    desenhar, ver `drawEl` em editor.ts). Sem desfazer isso, um título a 30° chegava com uma
+    caixa maior que o texto e `rot` != 0 desenhando ele girado DUAS vezes (uma pela caixa
+    inflada, outra pelo `rot`).
+
+    O centro não muda ao girar em torno de si mesmo, então `(cx,cy)` da AABB já é o centro
+    certo. Resolve W,H de volta com o sistema linear
+    AABB_w = W·|cosθ| + H·|senθ|
+    AABB_h = W·|senθ| + H·|cosθ|
+    — singular só em θ ≈ 45°/135°/…, onde a AABB some a mesma informação nos dois eixos e não
+    dá pra separar W de H; nesse caso raro, usa a própria AABB como aproximação."""
+    cos_a, sin_a = abs(math.cos(ang_rad)), abs(math.sin(ang_rad))
+    aabb_w, aabb_h = x1 - x0, y1 - y0
+    det = cos_a * cos_a - sin_a * sin_a
+    if abs(det) > 1e-3:
+        w = (cos_a * aabb_w - sin_a * aabb_h) / det
+        h = (cos_a * aabb_h - sin_a * aabb_w) / det
+    else:
+        w, h = aabb_w, aabb_h
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return cx - w / 2, cy - h / 2, w, h
+
 def extrair_texto(page, peso_por_estilo):
     """Blocos de texto da pagina, no formato que `El` do Blank Editor espera
     (x/y/w/h/text/font/weight/size/fill). Um bloco vira um elemento so — Canva normalmente usa
@@ -198,9 +223,10 @@ def extrair_texto(page, peso_por_estilo):
     LIMITACAO CONHECIDA: um bloco com mistura de estilos (negrito no meio de uma frase, por
     exemplo) vira um elemento so com o estilo do PRIMEIRO span — dividir por span preservaria o
     estilo exato, mas fragmentaria a caixa de texto em varios elementos que o editor não sabe
-    reagrupar. Rotacao vem do vetor `dir` da linha; só 0°/180° tem confianca (o mesmo limite que
-    `placementFromMatrix`, em pdfSource.ts, documenta pro caminho de imagem)."""
-    import math
+    reagrupar. Rotacao vem do vetor `dir` — que o PyMuPDF expõe na LINHA, não no span (um span
+    não tem chave "dir" nenhuma; pegar `primeiro_span.get("dir", (1,0))` sempre batia no default e
+    NUNCA capturava rotação nenhuma, bug real achado testando com um PDF girado de verdade — a
+    caixa saía w/h maiores que o texto, sem girar, com `rot: 0` mesmo pra texto a 30°)."""
     elementos = []
     for bloco in page.get_text("dict")["blocks"]:
         if bloco.get("type") != 0:
@@ -220,17 +246,19 @@ def extrair_texto(page, peso_por_estilo):
             # nao acha. Melhor deixar de fora do que desenhar com a fonte errada.
             continue
         x0, y0, x1, y1 = bloco["bbox"]
-        dx, dy = primeiro_span.get("dir", (1, 0))
+        dx, dy = linhas[0].get("dir", (1, 0))
+        ang = math.atan2(-dy, dx)
+        x, y, w, h = caixa_nao_rotacionada(x0, y0, x1, y1, ang)
         elementos.append(dict(
             type="text",
-            x=round(x0, 2), y=round(y0, 2),
-            w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+            x=round(x, 2), y=round(y, 2),
+            w=round(w, 2), h=round(h, 2),
             text=texto,
             font=familia,
             weight=peso,
             size=round(primeiro_span.get("size", 12), 2),
             fill="#%06x" % (primeiro_span.get("color", 0) & 0xFFFFFF),
-            rot=round(math.degrees(math.atan2(-dy, dx)), 2),
+            rot=round(math.degrees(ang), 2),
         ))
     return elementos
 

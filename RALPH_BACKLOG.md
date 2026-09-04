@@ -37,11 +37,18 @@ usados em server/src/db.ts e supabase/migrations/*).
   moldura (`x/y/w/h` do clip) + posição da foto dentro dela — mesmo conceito
   de `img`/moldura do `importar.py` de referência. Círculo vira `radius` no
   `El` de imagem quando a proporção bate.
-- [ ] **1.5 Rotação de texto em qualquer ângulo.** `extrair_texto` em
-  `canva-pdf-fonts.py` já calcula `rot` via `atan2` mas o comentário assume só
-  0°/180° serem confiáveis. Verificar se o cálculo já generaliza (é só
-  trigonometria) e remover a limitação se os testes com um PDF rotacionado de
-  verdade confirmarem.
+- [x] **1.5 Rotação de texto em qualquer ângulo.** Achado bug real, não só
+  limitação: `dir` vive na LINHA do `get_text("dict")`, não no span —
+  `primeiro_span.get("dir", (1,0))` sempre batia no default e `rot` era
+  **sempre 0**, pra qualquer PDF. Corrigido pra ler de `linhas[0]`. Além
+  disso, a bbox do bloco é a caixa alinhada aos eixos que ENVOLVE o texto já
+  girado, não a caixa original — sem desfazer isso, um título a 30° tinha uma
+  caixa maior que o texto E `rot`, girando duas vezes. Adicionado
+  `caixa_nao_rotacionada()`: o centro da AABB não muda com a rotação (gira em
+  torno de si), então dá pra resolver W/H originais de volta via sistema
+  linear com o ângulo. Verificado com PDF sintético girado a 30°: valores
+  batem exatamente com o cálculo manual (x=179.26, y=214.6, w=220, h=40,
+  rot=30). Caso sem rotação seguiu idêntico (regressão ok).
 - [ ] **1.6 Letter-spacing por bloco.** Extrair o tracking real (diferença
   entre avanço medido dos glifos e a largura "natural" da fonte no tamanho
   usado) e gravar como `ls` no elemento de texto.
