@@ -1915,6 +1915,27 @@ let downloads = null;
 if (window.claude?.use) {
   window.claude.use("downloads").then((d) => { downloads = d; }).catch(() => {});
 }
+
+/** Mesma forma que a capability `downloads` do runtime de Artifact ({filename, data} →
+ *  Promise<void>), pra `doExport` não precisar de dois caminhos — só existe pra quando o app
+ *  roda como site publicado de verdade (sem `window.claude`), que é o deploy de produção deste
+ *  projeto. O tipo MIME vem da extensão do arquivo porque `data` chega em três formas diferentes
+ *  (string do JSON, Uint8Array do PDF, Blob já tipado do canvas) e só o nome é comum às três. */
+const DOWNLOAD_MIME_BY_EXT = { json: "application/json", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg" };
+async function browserDownload({ filename, data }) {
+  const ext = filename.split(".").pop().toLowerCase();
+  const blob = data instanceof Blob ? data : new Blob([data], { type: DOWNLOAD_MIME_BY_EXT[ext] || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoga tarde: Safari/Firefox iniciam o download de forma assíncrona — revogar cedo demais
+  // corta o arquivo pela metade.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 let expFmt = "png", expScale = 2;
 
 function renderExport() {
@@ -2107,11 +2128,11 @@ async function doExport() {
   }
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
   $("scrim").hidden = true;
-  if (!downloads) { toast("Download não está disponível nesta visualização."); return; }
+  const saver = downloads ?? { save: browserDownload };
   try {
     await document.fonts.ready;
     if (expFmt === "json") {
-      await downloads.save({ filename: `${name}.json`, data: JSON.stringify(doc, null, 2) });
+      await saver.save({ filename: `${name}.json`, data: JSON.stringify(doc, null, 2) });
       toast("Salvo"); return;
     }
     if (expFmt === "pdf") {
@@ -2121,14 +2142,14 @@ async function doExport() {
         const b64 = c.toDataURL("image/jpeg", 0.92).split(",")[1];
         pgs.push({ bytes: b64ToBytes(b64), pw: c.width, ph: c.height, w: p.w, h: p.h });
       }
-      await downloads.save({ filename: `${name}.pdf`, data: buildPDF(pgs) });
+      await saver.save({ filename: `${name}.pdf`, data: buildPDF(pgs) });
       toast("Salvo"); return;
     }
     const p = page();
     const c = await renderPageCanvas(p, expScale);
     const mime = expFmt === "jpg" ? "image/jpeg" : "image/png";
     const blob = await new Promise((r) => c.toBlob(r, mime, 0.94));
-    await downloads.save({ filename: `${name}-page-${doc.active + 1}.${expFmt}`, data: blob });
+    await saver.save({ filename: `${name}-page-${doc.active + 1}.${expFmt}`, data: blob });
     toast("Salvo");
   } catch (err) {
     const code = err?.code;

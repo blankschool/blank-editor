@@ -969,6 +969,11 @@ export function buildApp(
           rot: el.rot, opacity: 1, locked: false, hidden: false,
           fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
           text: el.text, font: el.font, weight: el.weight, size: el.size,
+          // `lh` não é opcional na prática: o render em canvas (editor.ts) faz `size * lh` pra
+          // posicionar cada linha — undefined vira NaN, e `fillText` com coordenada NaN não
+          // desenha nada, em silêncio (achado exportando um design importado de verdade: a foto
+          // saía, o texto sumia). 1.25 é o valor que os outros textos deste projeto já usam.
+          lh: 1.25, align: "left",
         };
       }),
     }));
