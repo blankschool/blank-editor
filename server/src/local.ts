@@ -11,6 +11,7 @@ const SEED_TEMPLATE: TemplateRow = {
   ownerId: LOCAL_OWNER_ID,
   kind: "tweet",
   name: "Tweet Hollywood creators",
+  favorite: false,
   document: {
     name: "Tweet Hollywood creators",
     active: 0,
@@ -81,23 +82,24 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
     listTemplates: async (ownerId) =>
       [...templates.values()]
         .filter((t) => t.ownerId === ownerId)
-        .map((t) => ({ id: t.id, name: t.name, updatedAt: touchedAt.get(t.id) ?? new Date(bootedAt).toISOString() }))
+        .map((t) => ({ id: t.id, name: t.name, updatedAt: touchedAt.get(t.id) ?? new Date(bootedAt).toISOString(), favorite: t.favorite }))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
 
     createTemplate: async (ownerId, { id, name, document }) => {
-      const row: TemplateRow = { id: id ?? randomUUID(), ownerId, kind: "custom", name, document };
+      const row: TemplateRow = { id: id ?? randomUUID(), ownerId, kind: "custom", name, document, favorite: false };
       templates.set(row.id, row);
       touch(row.id);
       return row;
     },
 
-    updateTemplate: async (ownerId, id, { name, document }) => {
+    updateTemplate: async (ownerId, id, { name, document, favorite }) => {
       const existing = templates.get(id);
       if (!existing || existing.ownerId !== ownerId) return null;
       const updated: TemplateRow = {
         ...existing,
         name: name ?? existing.name,
         document: document !== undefined ? document : existing.document,
+        favorite: favorite ?? existing.favorite,
       };
       templates.set(id, updated);
       touch(id);

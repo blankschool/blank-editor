@@ -25,12 +25,14 @@ export interface TemplateRow {
   kind: string;
   name: string;
   document: unknown;
+  favorite: boolean;
 }
 
 export interface TemplateSummary {
   id: string;
   name: string;
   updatedAt: string;
+  favorite: boolean;
 }
 
 /** The workspace that a valid, non-revoked API key belongs to — every template/key query is scoped to this id. */
@@ -50,17 +52,17 @@ export interface ApiKeySummary {
  *  explicit `where owner_id = ...` is what the app actually relies on). */
 export async function findTemplate(sql: Sql, ownerId: string, id: string): Promise<TemplateRow | null> {
   const rows = await sql<TemplateRow[]>`
-    select id, owner_id as "ownerId", kind, name, document from templates
+    select id, owner_id as "ownerId", kind, name, document, favorite from templates
     where id = ${id} and owner_id = ${ownerId}
   `;
   return rows[0] ?? null;
 }
 
 export async function listTemplates(sql: Sql, ownerId: string): Promise<TemplateSummary[]> {
-  const rows = await sql<{ id: string; name: string; updated_at: Date }[]>`
-    select id, name, updated_at from templates where owner_id = ${ownerId} order by updated_at desc
+  const rows = await sql<{ id: string; name: string; updated_at: Date; favorite: boolean }[]>`
+    select id, name, updated_at, favorite from templates where owner_id = ${ownerId} order by updated_at desc
   `;
-  return rows.map((r) => ({ id: r.id, name: r.name, updatedAt: r.updated_at.toISOString() }));
+  return rows.map((r) => ({ id: r.id, name: r.name, updatedAt: r.updated_at.toISOString(), favorite: r.favorite }));
 }
 
 export async function createTemplate(
@@ -70,7 +72,7 @@ export async function createTemplate(
   const rows = await sql<TemplateRow[]>`
     insert into templates (id, owner_id, kind, name, document)
     values (${input.id}, ${input.ownerId}, ${input.kind}, ${input.name}, ${sql.json(jsonValue(sql, input.document))})
-    returning id, owner_id as "ownerId", kind, name, document
+    returning id, owner_id as "ownerId", kind, name, document, favorite
   `;
   return rows[0];
 }
@@ -79,15 +81,16 @@ export async function updateTemplate(
   sql: Sql,
   ownerId: string,
   id: string,
-  input: { name?: string; document?: unknown },
+  input: { name?: string; document?: unknown; favorite?: boolean },
 ): Promise<TemplateRow | null> {
   const rows = await sql<TemplateRow[]>`
     update templates set
       name = coalesce(${input.name ?? null}, name),
       document = coalesce(${input.document !== undefined ? sql.json(jsonValue(sql, input.document)) : null}, document),
+      favorite = coalesce(${input.favorite ?? null}, favorite),
       updated_at = now()
     where id = ${id} and owner_id = ${ownerId}
-    returning id, owner_id as "ownerId", kind, name, document
+    returning id, owner_id as "ownerId", kind, name, document, favorite
   `;
   return rows[0] ?? null;
 }

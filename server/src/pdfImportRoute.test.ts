@@ -12,7 +12,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     findApiKeyOwner: async (h) => (h === hashApiKey(KEY) ? { ownerId: OWNER } : null),
     findTemplate: async () => null,
     listTemplates: async () => [],
-    createTemplate: async (ownerId, { name, document }) => ({ id: "imported-tpl", ownerId, kind: "custom", name, document }),
+    createTemplate: async (ownerId, { name, document }) => ({ id: "imported-tpl", ownerId, kind: "custom", name, document, favorite: false }),
     updateTemplate: async () => null,
     deleteTemplate: async () => false,
     listApiKeys: async () => [],
@@ -141,7 +141,7 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
     deps({
       createTemplate: async (ownerId, { name, document }) => {
         createdDocument = document;
-        return { id: "imported-tpl", ownerId, kind: "custom", name, document };
+        return { id: "imported-tpl", ownerId, kind: "custom", name, document, favorite: false };
       },
     }),
     null,

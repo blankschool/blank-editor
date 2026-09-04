@@ -19,9 +19,9 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       return row && row.ownerId === ownerId ? row : null;
     },
     listTemplates: async (ownerId) =>
-      [...templates.values()].filter((t) => t.ownerId === ownerId).map((t) => ({ id: t.id, name: t.name, updatedAt: "2024-01-01T00:00:00.000Z" })),
+      [...templates.values()].filter((t) => t.ownerId === ownerId).map((t) => ({ id: t.id, name: t.name, updatedAt: "2024-01-01T00:00:00.000Z", favorite: t.favorite })),
     createTemplate: async (ownerId, { id, name, document }) => {
-      const row: TemplateRow = { id: id ?? `tpl-${templates.size + 1}`, ownerId, kind: "custom", name, document };
+      const row: TemplateRow = { id: id ?? `tpl-${templates.size + 1}`, ownerId, kind: "custom", name, document, favorite: false };
       templates.set(row.id, row);
       return row;
     },
@@ -270,11 +270,11 @@ test("editing after submission blocks stale approval until the editor submits a 
   const sourceDoc = { name: "Card", active: 0, pages: [{ id: "p1", w: 100, h: 100, bg: "#000", els: [
     { id: "title", type: "text", name: "titulo", text: "Original" },
   ] }] };
-  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: sourceDoc }]]);
+  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: sourceDoc, favorite: false }]]);
   const deps = makeDeps({
     findTemplate: async (ownerId, id) => rows.get(id)?.ownerId === ownerId ? rows.get(id)! : null,
     createTemplate: async (ownerId, input) => {
-      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       rows.set(row.id, row);
       return row;
     },
@@ -315,12 +315,12 @@ test("editing after submission blocks stale approval until the editor submits a 
 
 test("an API key can create a generation but cannot approve it", async () => {
   const generatedDesign = { name: "Card", active: 0, pages: [{ id: "p1", w: 100, h: 100, bg: "#000", els: [] }] };
-  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: generatedDesign }]]);
+  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: generatedDesign, favorite: false }]]);
   const deps = makeDeps({
     findApiKeyOwner: async () => ({ ownerId: OWNER_ID }),
     findTemplate: async (ownerId, id) => rows.get(id)?.ownerId === ownerId ? rows.get(id)! : null,
     createTemplate: async (ownerId, input) => {
-      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       rows.set(row.id, row);
       return row;
     },

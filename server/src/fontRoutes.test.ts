@@ -15,7 +15,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     findApiKeyOwner: async (h) => (h === hashApiKey(KEY) ? { ownerId: OWNER } : null),
     findTemplate: async () => null,
     listTemplates: async () => [],
-    createTemplate: async (ownerId, { name, document }) => ({ id: "t", ownerId, kind: "custom", name, document }),
+    createTemplate: async (ownerId, { name, document }) => ({ id: "t", ownerId, kind: "custom", name, document, favorite: false }),
     updateTemplate: async () => null,
     deleteTemplate: async () => false,
     listApiKeys: async () => [],

@@ -67,7 +67,7 @@ export interface AppDeps {
   findTemplate: (ownerId: string, id: string) => Promise<TemplateRow | null>;
   listTemplates: (ownerId: string) => Promise<TemplateSummary[]>;
   createTemplate: (ownerId: string, input: { id?: string; name: string; document: unknown }) => Promise<TemplateRow>;
-  updateTemplate: (ownerId: string, id: string, input: { name?: string; document?: unknown }) => Promise<TemplateRow | null>;
+  updateTemplate: (ownerId: string, id: string, input: { name?: string; document?: unknown; favorite?: boolean }) => Promise<TemplateRow | null>;
   deleteTemplate: (ownerId: string, id: string) => Promise<boolean>;
   listApiKeys: (ownerId: string) => Promise<ApiKeySummary[]>;
   createApiKey: (ownerId: string, name: string) => Promise<{ id: string; name: string; secret: string; createdAt: string }>;
@@ -775,7 +775,7 @@ export function buildApp(
           : undefined
         : publicRenderUrl(storage.client, row.id)
       : undefined;
-    return { id: row.id, name: row.name, document: row.document, downloadUrl };
+    return { id: row.id, name: row.name, document: row.document, downloadUrl, favorite: row.favorite };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/templates/:id/cover", async (request, reply) => {
@@ -795,7 +795,7 @@ export function buildApp(
     }
   });
 
-  app.put<{ Params: { id: string }; Body: { name?: string; document?: unknown } }>(
+  app.put<{ Params: { id: string }; Body: { name?: string; document?: unknown; favorite?: boolean } }>(
     "/api/v1/templates/:id",
     async (request, reply) => {
       const ownerId = await requireOwner(request, reply);
@@ -808,7 +808,7 @@ export function buildApp(
       if (request.body?.document !== undefined && before && hashJson(before.document) !== hashJson(row.document)) {
         await generations.markEdited(ownerId, row.id);
       }
-      return { id: row.id, name: row.name };
+      return { id: row.id, name: row.name, favorite: row.favorite };
     },
   );
 

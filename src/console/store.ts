@@ -49,7 +49,7 @@ export type Lang = "JavaScript" | "Python" | "cURL" | "PHP";
 
 export interface Layer { id: number; type: LayerType; name: string; value: string; }
 export interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
-export interface TemplateSummary { id: string; name: string; updatedAt: string; }
+export interface TemplateSummary { id: string; name: string; updatedAt: string; favorite: boolean; }
 
 /** Um modelo escolhido na tela Gerar — sempre um design já salvo da conta ("Meus"). Gerar só
  *  escreve em cima de um template que já existe, nunca inventa um layout do zero. */
@@ -984,6 +984,30 @@ export async function renameTemplateInline(id: string, name: string) {
   } catch {
     // Reverte: o card não pode continuar mostrando um nome que o servidor recusou.
     state.templates = state.templates.map((t) => (t.id === id ? { ...t, name: current.name } : t));
+    state.sync = "failed";
+  }
+  notify();
+}
+
+/** Otimista, igual `renameTemplateInline`: o coração já enche/esvazia no clique, e só
+ *  reverte se o servidor recusar — esperar a resposta pra mudar o ícone deixaria o clique
+ *  parecendo sem efeito por um instante. */
+export async function toggleTemplateFavorite(id: string) {
+  const current = state.templates.find((t) => t.id === id);
+  if (!current) return;
+  const next = !current.favorite;
+  state.templates = state.templates.map((t) => (t.id === id ? { ...t, favorite: next } : t));
+  notify();
+  try {
+    const res = await fetch(`/api/v1/templates/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ favorite: next }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    state.sync = "ok";
+  } catch {
+    state.templates = state.templates.map((t) => (t.id === id ? { ...t, favorite: current.favorite } : t));
     state.sync = "failed";
   }
   notify();

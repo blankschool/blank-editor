@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ImageOff, Pencil } from "lucide-react";
+import { ImageOff, Pencil, Star } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -18,6 +18,7 @@ import {
   renameTemplateInline,
   selectTemplate,
   startRenaming,
+  toggleTemplateFavorite,
   useConsole,
   type TemplateSummary,
 } from "./store";
@@ -137,8 +138,23 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
           {/* Quadrado: os artboards têm proporções diferentes (post 4:5, story 9:16, slide
               16:9) e o quadrado é o que menos desperdiça para todos eles ao mesmo tempo.
               Num tile 4:3 um post ficava com tarja nos dois lados e a miniatura minguava. */}
-          <div className="flex aspect-square items-center justify-center overflow-hidden bg-inset p-3">
+          <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-inset p-3">
             <Cover id={id} />
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleTemplateFavorite(id);
+              }}
+              title={template.favorite ? "Remover dos favoritos" : "Favoritar"}
+              aria-label={template.favorite ? `Remover ${name} dos favoritos` : `Favoritar ${name}`}
+              aria-pressed={template.favorite}
+              className={`absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 shadow-pop backdrop-blur transition-opacity ${
+                template.favorite ? "opacity-100 text-accent" : "opacity-0 text-faint hover:text-text group-hover:opacity-100 focus-visible:opacity-100"
+              }`}
+            >
+              <Star size={14} strokeWidth={1.8} fill={template.favorite ? "currentColor" : "none"} />
+            </button>
           </div>
           <div className="flex flex-col gap-1 px-3.5 py-3">
             <Name template={template} />
@@ -156,6 +172,9 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
           Renomear
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => duplicateTemplate(id, name)}>Duplicar</ContextMenuItem>
+        <ContextMenuItem onSelect={() => toggleTemplateFavorite(id)}>
+          {template.favorite ? "Remover dos favoritos" : "Favoritar"}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
           onSelect={() => {

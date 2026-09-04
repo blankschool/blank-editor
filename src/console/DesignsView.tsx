@@ -5,7 +5,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { goToView, loadTemplates, openNewDesign, recentTemplates, set, useConsole } from "./store";
 import { DesignCard } from "./DesignCard";
 
-const SORTS = [{ value: "Recentes" }, { value: "A-Z" }] as const;
+const SORTS = [{ value: "Recentes" }, { value: "A-Z" }, { value: "Favoritos" }] as const;
 
 const newDesign = openNewDesign;
 
@@ -109,7 +109,8 @@ export function DesignsView() {
   const searching = query.length > 0;
 
   const byName = [...s.templates].sort((a, b) => a.name.localeCompare(b.name));
-  const all = s.sort === "A-Z" ? byName : s.templates;
+  const favorites = s.templates.filter((t) => t.favorite);
+  const all = s.sort === "A-Z" ? byName : s.sort === "Favoritos" ? favorites : s.templates;
   const visible = searching ? all.filter((t) => t.name.toLowerCase().includes(query)) : all;
 
   const recent = recentTemplates(3);
@@ -119,10 +120,10 @@ export function DesignsView() {
   const recentIds = new Set(recent.map((t) => t.id));
   const rest = all.filter((t) => !recentIds.has(t.id));
 
-  // Em A-Z a faixa de recentes sai: uma lista alfabética a que faltam três itens
-  // arbitrários no topo não é uma lista alfabética. "Recentes" é a home com
-  // destaque; "A-Z" é navegar a coleção inteira de uma vez.
-  const heroLayout = !searching && s.sort !== "A-Z";
+  // Em A-Z e Favoritos a faixa de recentes sai: os dois já são uma lista filtrada/
+  // ordenada de propósito, e três itens arbitrários no topo brigariam com isso.
+  // "Recentes" é a home com destaque; os outros dois são navegar um subconjunto específico.
+  const heroLayout = !searching && s.sort === "Recentes";
 
   if (!s.templatesLoaded) {
     return <div className="p-5 font-mono text-xs text-faint">carregando…</div>;
@@ -144,13 +145,22 @@ export function DesignsView() {
           </span>
         </div>
         <div className="flex-1" />
-        {all.length > 1 && (
+        {/* Total de designs, não `all.length`: "Favoritos" filtra a lista, e se isso
+            escondesse o controle junto, filtrar pra zero favoritos trancaria a pessoa
+            nessa visão sem jeito de voltar pra "Recentes". */}
+        {s.templates.length > 1 && (
           <Segmented aria-label="Ordenar" value={s.sort} onValueChange={(v) => set("sort", v)} options={SORTS} />
         )}
       </div>
 
       {all.length === 0 ? (
-        s.sync === "failed" ? <LoadFailedState /> : <EmptyState />
+        s.sync === "failed" ? (
+          <LoadFailedState />
+        ) : s.sort === "Favoritos" && s.templates.length > 0 ? (
+          <div className="py-12 text-center text-[13px] text-faint">Nenhum design favoritado ainda.</div>
+        ) : (
+          <EmptyState />
+        )
       ) : searching ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visible.length ? (

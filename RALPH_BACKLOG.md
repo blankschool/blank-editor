@@ -114,7 +114,13 @@ usados em server/src/db.ts e supabase/migrations/*).
   devolve as diferenças campo a campo entre duas versões — utilitário sem UI
   própria ainda, mas pré-requisito de qualquer comparação de versão futura
   (item 4.1). Local sugerido: `src/docDiff.ts` + teste.
-- [ ] **2.5 Favoritar designs.** Campo `favorite: boolean` no template (banco:
+- [x] **2.5 Favoritar designs.** NÃO VERIFICADO VISUALMENTE — o servidor de
+  dev do usuário está com Supabase Auth real configurado (sem modo
+  `LOCAL_API_KEY`), e login precisa de credenciais que não tenho. Validado
+  por typecheck + suíte completa (188 server + 37 frontend) + revisão de
+  código seguindo o mesmo padrão já comprovado de `renameTemplateInline`
+  (otimista, reverte se o PUT falhar). Pedir pro usuário conferir na próxima
+  vez que abrir o console. Campo `favorite: boolean` no template (banco:
   nova coluna em `templates`, migration), rota
   `PUT /api/v1/templates/:id` já aceita patch parcial — estender pra aceitar
   `favorite`, toggle no `DesignsView.tsx`, filtro "Favoritos" na listagem.

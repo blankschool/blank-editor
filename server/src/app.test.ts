@@ -15,6 +15,7 @@ const TPL: TemplateRow = {
   ownerId: OWNER_ID,
   kind: "tweet",
   name: "Tweet",
+  favorite: false,
   document: { active: 0, pages: [{ w: 566, h: 120, bg: "#000", els: [] }] },
 };
 
@@ -23,8 +24,8 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     findApiKeyOwner: async (keyHash) => (keyHash === hashApiKey(VALID_KEY) ? { ownerId: OWNER_ID } : null),
     findTemplate: async (ownerId, id) => (id === TPL.id && ownerId === TPL.ownerId ? TPL : null),
     listTemplates: async (ownerId) =>
-      ownerId === OWNER_ID ? [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z" }] : [],
-    createTemplate: async (ownerId, { name, document }) => ({ id: "new-tpl", ownerId, kind: "custom", name, document }),
+      ownerId === OWNER_ID ? [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z", favorite: TPL.favorite }] : [],
+    createTemplate: async (ownerId, { name, document }) => ({ id: "new-tpl", ownerId, kind: "custom", name, document, favorite: false }),
     updateTemplate: async (ownerId, id, input) => (id === TPL.id && ownerId === TPL.ownerId ? { ...TPL, ...input } : null),
     deleteTemplate: async (ownerId, id) => id === TPL.id && ownerId === TPL.ownerId,
     listApiKeys: async (ownerId) =>
@@ -65,6 +66,7 @@ const CARROSSEL: TemplateRow = {
   ownerId: OWNER_ID,
   kind: "custom",
   name: "Carrossel",
+  favorite: false,
   document: {
     active: 0,
     pages: [
@@ -169,6 +171,7 @@ const NAMED_TPL: TemplateRow = {
   ownerId: OWNER_ID,
   kind: "custom",
   name: "Com camadas nomeadas",
+  favorite: false,
   document: {
     active: 0,
     pages: [{ w: 100, h: 100, bg: "#000", els: [{ id: "e1", type: "text", name: "titulo", text: "original" }] }],
@@ -246,7 +249,7 @@ test("GET /api/v1/templates lists templates", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "GET", url: "/api/v1/templates", headers: AUTH });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(JSON.parse(res.body), [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z" }]);
+  assert.deepEqual(JSON.parse(res.body), [{ id: TPL.id, name: TPL.name, updatedAt: "2024-01-01T00:00:00.000Z", favorite: false }]);
 });
 
 test("POST /api/v1/templates creates a template and 400s without a document", async () => {
@@ -263,7 +266,7 @@ test("GET /api/v1/templates/:id returns the document, 404s when missing", async 
   const app = buildApp(makeDeps());
   const ok = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}`, headers: AUTH });
   assert.equal(ok.statusCode, 200);
-  assert.deepEqual(JSON.parse(ok.body), { id: TPL.id, name: TPL.name, document: TPL.document });
+  assert.deepEqual(JSON.parse(ok.body), { id: TPL.id, name: TPL.name, document: TPL.document, favorite: false });
 
   const missing = await app.inject({ method: "GET", url: "/api/v1/templates/nope", headers: AUTH });
   assert.equal(missing.statusCode, 404);
@@ -283,6 +286,20 @@ test("PUT /api/v1/templates/:id updates, 404s when missing", async () => {
 
   const missing = await app.inject({ method: "PUT", url: "/api/v1/templates/nope", headers: AUTH, payload: { name: "x" } });
   assert.equal(missing.statusCode, 404);
+});
+
+test("PUT /api/v1/templates/:id toggles favorite without touching the document", async () => {
+  let updateInput: unknown;
+  const app = buildApp(makeDeps({
+    updateTemplate: async (ownerId, id, input) => {
+      updateInput = input;
+      return id === TPL.id && ownerId === TPL.ownerId ? { ...TPL, ...input } : null;
+    },
+  }));
+  const res = await app.inject({ method: "PUT", url: `/api/v1/templates/${TPL.id}`, headers: AUTH, payload: { favorite: true } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).favorite, true);
+  assert.deepEqual(updateInput, { favorite: true });
 });
 
 // --- Storage (fase 7) ---------------------------------------------------------
@@ -343,7 +360,7 @@ test("POST /api/v1/generations requires Storage before creating a design", async
   const app = buildApp(makeDeps({
     createTemplate: async (ownerId, { name, document }) => {
       created = true;
-      return { id: "generated", ownerId, kind: "custom", name, document };
+      return { id: "generated", ownerId, kind: "custom", name, document, favorite: false };
     },
   }));
   const res = await app.inject({
@@ -375,7 +392,7 @@ test("POST /api/v1/generations cannot clone a template owned by another account"
     findApiKeyOwner: async () => ({ ownerId: "other-owner" }),
     createTemplate: async (ownerId, { name, document }) => {
       created = true;
-      return { id: "generated", ownerId, kind: "custom", name, document };
+      return { id: "generated", ownerId, kind: "custom", name, document, favorite: false };
     },
   }), null, { client: makeFakeStorageClient() });
   const res = await app.inject({
@@ -431,7 +448,7 @@ test("POST /api/v1/generations creates and renders an editable design from a one
       return created?.id === id ? created : null;
     },
     createTemplate: async (ownerId, input) => {
-      created = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      created = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       return created;
     },
     renderTemplatePng: async (_document, _layers, pageIndex) => {
@@ -514,7 +531,7 @@ test("save:true keeps a generated design in private draft storage until approval
   const deps = makeDeps({
     findTemplate: async (ownerId, id) => templates.get(id)?.ownerId === ownerId ? templates.get(id)! : null,
     createTemplate: async (ownerId, input) => {
-      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       templates.set(row.id, row);
       return row;
     },
@@ -567,7 +584,7 @@ test("POST /api/v1/generations replays the same design without overwriting manua
     },
     createTemplate: async (ownerId, input) => {
       creates += 1;
-      stored = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      stored = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       return stored;
     },
     renderTemplatePng: async (document) => {
@@ -608,7 +625,7 @@ test("POST /api/v1/generations rejects reuse of an Idempotency-Key with a differ
   const deps = makeDeps({
     findTemplate: async (ownerId, id) => templates.get(id)?.ownerId === ownerId ? templates.get(id)! : null,
     createTemplate: async (ownerId, input) => {
-      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       templates.set(row.id, row);
       return row;
     },
@@ -648,7 +665,7 @@ test("POST /api/v1/generations acquires a requested stock image and persists its
     generations: repository,
     findTemplate: async (ownerId, id) => ownerId !== OWNER_ID ? null : id === source.id ? source : generated?.id === id ? generated : null,
     createTemplate: async (ownerId, input) => {
-      generated = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      generated = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
       return generated;
     },
   });
@@ -736,6 +753,7 @@ test("POST /api/v1/generations treats a concurrent idempotent insert as a replay
         ownerId,
         kind: "custom",
         name: "Primeiro vencedor",
+        favorite: false,
         document: {
           name: "Primeiro vencedor",
           active: 0,
