@@ -154,13 +154,18 @@ usados em server/src/db.ts e supabase/migrations/*).
 
 ## 3. Renderização e export
 
-- [ ] **3.1 Exportar HTML de uma versão / todas as telas numa página / copiar
-  markup.** Hoje `doExport` em `editor.ts` só faz PNG/JPG/PDF/JSON de UMA
-  página. Adicionar modos: HTML de uma versão específica (precisa do item 4.1
-  de histórico existir primeiro — depende), "todas as telas numa página HTML"
-  (não depende de nada, dá pra fazer já: gerar um HTML com todas as páginas do
-  doc atual empilhadas), "copiar markup" (serializa o doc atual pra um HTML
-  estático e copia pro clipboard). Fazer só a opção sem dependência primeiro.
+- [x] **3.1a Exportar todas as telas como uma página HTML.** Novo formato
+  "HTML" no seletor de exportar (`renderExport`/`doExport` em `editor.ts`):
+  renderiza cada página não-oculta com o `renderPageCanvas` que PNG/PDF já
+  usam, embute cada uma como `<img>` (data URI) numa página HTML estática só,
+  empilhadas. Reaproveita 100% do pipeline de render já testado (mesma
+  função que já gera PNG/PDF) — só a montagem final do HTML é nova.
+- [ ] **3.1b Exportar HTML de uma versão específica.** Depende do item 4.1
+  (histórico de versões) existir — não dá pra exportar "a versão 3" sem
+  versões nomeadas existirem ainda.
+- [ ] **3.1c Copiar markup pro clipboard.** Serializar o doc atual pra HTML
+  estático (mesmo formato do 3.1a) e copiar via `navigator.clipboard`, sem
+  baixar arquivo. Não depende de nada, só não foi feito ainda.
 - [ ] **3.2 Página pública `/t/:slug`.** Rota nova (server + frontend) que
   serve um HTML somente-leitura de um design por slug, sem precisar do
   console/editor — pré-requisito de compartilhamento (item 4.2). Precisa

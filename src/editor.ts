@@ -1935,7 +1935,7 @@ if (window.claude?.use) {
  *  roda como site publicado de verdade (sem `window.claude`), que é o deploy de produção deste
  *  projeto. O tipo MIME vem da extensão do arquivo porque `data` chega em três formas diferentes
  *  (string do JSON, Uint8Array do PDF, Blob já tipado do canvas) e só o nome é comum às três. */
-const DOWNLOAD_MIME_BY_EXT = { json: "application/json", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg" };
+const DOWNLOAD_MIME_BY_EXT = { json: "application/json", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", html: "text/html" };
 async function browserDownload({ filename, data }) {
   const ext = filename.split(".").pop().toLowerCase();
   const blob = data instanceof Blob ? data : new Blob([data], { type: DOWNLOAD_MIME_BY_EXT[ext] || "application/octet-stream" });
@@ -1953,7 +1953,7 @@ async function browserDownload({ filename, data }) {
 let expFmt = "png", expScale = 2;
 
 function renderExport() {
-  $("fmts").innerHTML = ["png", "jpg", "pdf", "json"].map((f) =>
+  $("fmts").innerHTML = ["png", "jpg", "pdf", "json", "html"].map((f) =>
     `<button class="fmt" data-fmt="${f}" aria-pressed="${expFmt === f}" title="Exportar como ${f.toUpperCase()}">${f.toUpperCase()}</button>`).join("");
   $("scales").innerHTML = [1, 2, 3].map((s) =>
     `<button data-scale="${s}" aria-pressed="${expScale === s}" title="Escala ${s}×">${s}×</button>`).join("");
@@ -2166,6 +2166,19 @@ async function doExport() {
         pgs.push({ bytes: b64ToBytes(b64), pw: c.width, ph: c.height, w: p.w, h: p.h });
       }
       await saver.save({ filename: `${name}.pdf`, data: buildPDF(pgs) });
+      toast("Salvo"); return;
+    }
+    if (expFmt === "html") {
+      // Uma página HTML estática com todas as telas empilhadas — pra abrir/compartilhar sem
+      // precisar do editor nem de um PDF, um arquivo só por design em vez de um por página.
+      const imgs = [];
+      for (const p of doc.pages.filter((p) => !p.hidden)) {
+        const c = await renderPageCanvas(p, expScale);
+        imgs.push(`<img src="${c.toDataURL("image/png")}" width="${p.w}" height="${p.h}" style="display:block;max-width:100%;height:auto;margin:0 auto 24px;box-shadow:0 1px 8px rgba(0,0,0,.15)">`);
+      }
+      const html = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${esc(name)}</title></head>` +
+        `<body style="margin:0;padding:24px;background:#f2f2f2">${imgs.join("")}</body></html>\n`;
+      await saver.save({ filename: `${name}.html`, data: html });
       toast("Salvo"); return;
     }
     const p = page();
