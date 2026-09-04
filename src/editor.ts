@@ -349,8 +349,16 @@ function elInner(e: any) {
     case "icon":
       return `<svg viewBox="${e.viewBox || "0 0 24 24"}" style="width:100%;height:100%;display:block"><path d="${e.path || ""}" fill="${e.fill}"/></svg>`;
     case "draw": {
-      const d = (e.pts || []).map((p, i) => `${i ? "L" : "M"}${p[0] * e.w},${p[1] * e.h}`).join(" ");
-      return `<svg viewBox="0 0 ${e.w} ${e.h}" style="width:100%;height:100%;overflow:visible"><path d="${d}" fill="none" stroke="${e.stroke}" stroke-width="${e.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const paths = [];
+      // `fillPath` is normalised 0..1 like `pts` — `transform="scale(w,h)"` blows it up to the
+      // element's current pixel size without touching a single coordinate in the string, so
+      // resizing the element never needs to rewrite `d`.
+      if (e.fillPath) paths.push(`<path d="${e.fillPath}" fill="${e.fill}" transform="scale(${e.w},${e.h})"/>`);
+      if (e.pts && e.pts.length) {
+        const d = e.pts.map((p, i) => `${i ? "L" : "M"}${p[0] * e.w},${p[1] * e.h}`).join(" ");
+        paths.push(`<path d="${d}" fill="none" stroke="${e.stroke}" stroke-width="${e.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`);
+      }
+      return `<svg viewBox="0 0 ${e.w} ${e.h}" style="width:100%;height:100%;overflow:visible">${paths.join("")}</svg>`;
     }
     case "text": {
       const st = [
@@ -1301,7 +1309,13 @@ function align(how) {
 }
 function flip(axis) {
   for (const e of selEls()) {
-    if (e.type === "draw") e.pts = e.pts.map((p) => axis === "h" ? [1 - p[0], p[1]] : [p[0], 1 - p[1]]);
+    // `e.pts` pode faltar num "draw" que só tem `fillPath` (sem stroke) — sem a guarda,
+    // mapear undefined quebrava o flip pra qualquer elemento assim.
+    if (e.type === "draw" && e.pts) e.pts = e.pts.map((p) => axis === "h" ? [1 - p[0], p[1]] : [p[0], 1 - p[1]]);
+    // `fillPath` (path SVG arbitrário) ainda não espelha o próprio desenho — precisaria
+    // reescrever cada par de coordenada dentro do `d`, não só mapear uma lista de pontos.
+    // Sem produtor real de fillPath ainda (fica pro item 1.3/1.7 do backlog quando formas
+    // vetoriais arbitrárias forem extraídas do PDF), não vale a complexidade agora.
     else e.rot = (e.rot + 180) % 360;
   }
   commit(); renderAll();
@@ -2069,9 +2083,18 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     x.restore();
   }
   else if (e.type === "draw") {
-    x.beginPath();
-    (e.pts || []).forEach((p, i) => { const px = p[0] * e.w, py = p[1] * e.h; i ? x.lineTo(px, py) : x.moveTo(px, py); });
-    x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.lineCap = "round"; x.lineJoin = "round"; x.stroke();
+    if (e.fillPath) {
+      x.save();
+      x.scale(e.w, e.h);
+      x.fillStyle = e.fill;
+      try { x.fill(new Path2D(e.fillPath)); } catch (err) { /* malformed path */ }
+      x.restore();
+    }
+    if (e.pts && e.pts.length) {
+      x.beginPath();
+      e.pts.forEach((p, i) => { const px = p[0] * e.w, py = p[1] * e.h; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+      x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.lineCap = "round"; x.lineJoin = "round"; x.stroke();
+    }
   }
   else if (e.type === "image" && srcOf(e)) {
     try {

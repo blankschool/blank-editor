@@ -92,11 +92,26 @@ usados em server/src/db.ts e supabase/migrations/*).
 
 ## 2. Modelo de documento (`src/types.ts`) e editor
 
-- [ ] **2.1 Path vetorial preenchido como elemento.** Hoje `type:"draw"` só
-  guarda uma polyline com stroke (sem preenchimento arbitrário). Adicionar
-  suporte a um `d` de path SVG preenchido (reaproveitando ou estendendo
-  `draw`), pra receber o que o item 1.3 extrai e pro editor desenhar formas
-  livres preenchidas manualmente.
+- [x] **2.1 Path vetorial preenchido como elemento.** Estendido `type:"draw"`
+  (não um tipo novo) com `El.fillPath?: string` — path SVG `d` normalizado
+  0..1 igual `pts` já é; `transform="scale(w,h)"` no SVG ao vivo e
+  `ctx.scale(w,h)` + `Path2D` no canvas de export escalam o desenho inteiro
+  sem tocar num número sequer do `d`, então redimensionar o elemento nunca
+  precisa reescrever a string. Técnica verificada isoladamente (SVG e canvas
+  lado a lado, mesma estrela, fora do app — o app real está atrás de login
+  que não tenho credencial) antes de aplicar. Independente de `pts`: um
+  elemento pode ter só fill, só stroke, ou os dois. `flip()` corrigido pra
+  não quebrar num "draw" só-fillPath (faltava guarda pra `e.pts` undefined);
+  espelhar o CONTEÚDO de um fillPath (reescrever cada coordenada do `d`)
+  ficou de fora por complexidade sem retorno ainda — cai no fallback de
+  girar 180°, mesmo comportamento que qualquer outro tipo de elemento já
+  tem. Fora de escopo de propósito: o render SVG do servidor
+  (`editableTweetTemplate.ts`, usado só pelas rotas de geração automática)
+  não suporta nem o `draw` com stroke que já existia — não é usado por
+  design importado de PDF, só por templates de geração simples (texto/
+  imagem/retângulo/elipse/linha). Desbloqueia os itens 1.3 (paths
+  arbitrários, além do retângulo puro já feito) e 1.7 (Type3) quando a
+  extração for construída.
 - [ ] **2.2 Texto rico (múltiplos estilos numa caixa).** `El.text` é uma
   string plana com um único font/size/weight/fill pra caixa inteira. Adicionar
   um campo opcional `runs?: Array<{text, weight?, italic?, fill?}>` que,

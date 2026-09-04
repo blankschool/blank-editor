@@ -88,6 +88,13 @@ export interface El {
 
   // draw — points normalised to 0..1 of the element box
   pts?: Array<[number, number]>;
+  /** draw — an arbitrary filled vector shape (icon, halftone dot, outlined-title glyph…),
+   *  as an SVG path `d` string in the SAME 0..1 normalised space as `pts`: renderers scale
+   *  the whole path by the element's current w/h (SVG `transform="scale(w,h)"`, canvas
+   *  `ctx.scale(w,h)`) rather than rescaling every coordinate in the string, so resizing the
+   *  element never needs to touch `d` itself. Independent of `pts` — an element can carry a
+   *  filled `fillPath`, a stroked `pts` polyline, or both. */
+  fillPath?: string;
 
   [k: string]: unknown;
 }
