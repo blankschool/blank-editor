@@ -286,10 +286,22 @@ habilitado, políticas por dono).
   de reusar exatamente os mesmos padrões já visualmente comprovados nesta
   sessão (`.tbtn`/`.sec`/`.empty`, `navigator.clipboard` do jeito que
   "Copiar markup"/"Copiar link" já usam) — build e typecheck limpos.
-- [ ] **4.5 Abas de múltiplos designs abertos.** Estado novo em
-  `src/console/store.ts` (`openTabs: Array<{id, name}>`), UI de abas no topo
-  do editor, persistir em localStorage (não em banco — é preferência de
-  sessão do navegador, não dado do design).
+- [x] **4.5 Abas de designs abertos recentemente — escopo reduzido
+  DELIBERADAMENTE.** Não é edição simultânea de múltiplos documentos: o
+  editor tem um `doc` global só, e dar a cada aba seu próprio estado
+  (undo/zoom/seleção) pediria reestruturar isso — arriscado demais pra fazer
+  sem poder testar ao vivo (login bloqueado). O que existe é mais perto de
+  histórico de navegação: uma tira de abas (`localStorage`, até 8, mais
+  recente primeiro) mostrando os últimos designs abertos NESTA sessão do
+  navegador, clicar troca pra aquele design (mesmo caminho de
+  `openTemplateById` que a lista de designs já usa), um "×" remove da tira
+  sem apagar o design. Só aparece com 2+ designs recentes. Limitação
+  conhecida: o nome guardado na aba não atualiza sozinho se o design for
+  renomeado depois — cosmético, o clique continua funcionando (usa id, não
+  nome). CSS verificado visualmente num mock estático fora do app (aba ativa
+  com sublinhado, texto cortando com reticências) — a lógica de
+  localStorage/clique não foi testada ao vivo (mesma limitação de login dos
+  itens anteriores).
 - [x] **4.6 Modo apresentação em tela cheia — JÁ EXISTIA.** Verificado:
   `enterPresent`/`exitPresent`/`renderPresentFrame` em `editor.ts` (~linha
   1812) já é uma feature completa e funcional — tela cheia de verdade

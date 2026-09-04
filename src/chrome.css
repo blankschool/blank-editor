@@ -61,6 +61,49 @@
 #view-editor .topbar .iconbtn { width: 36px; padding: 0; }
 #view-editor .topbar .primary { background: white; color: #242838; font-weight: 600; }
 #view-editor .topbar .primary:hover { background: #edf4ff; }
+
+/* Abas de designs abertos recentemente nesta sessão (item 4.5 do backlog) — preferência de
+ * navegador (localStorage), não dado do design; por isso mora fora do .topbar colorido, como
+ * uma tira neutra abaixo dele, parecida com abas de navegador. */
+#view-editor .recentTabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  overflow-x: auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+#view-editor .recentTabs[hidden] { display: none; }
+#view-editor .recentTab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+  padding: 6px 8px 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#view-editor .recentTab:hover { background: var(--surface-2); color: var(--text); }
+#view-editor .recentTab[aria-current="true"] { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+#view-editor .recentTab .recentTabClose {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 4px;
+  color: inherit;
+  opacity: .6;
+}
+#view-editor .recentTab .recentTabClose:hover { opacity: 1; background: var(--line); }
+
 #view-editor .topbar .docname {
   color: white;
   font-size: 13px;

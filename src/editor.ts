@@ -2721,14 +2721,70 @@ export function openTemplateDocument(templateDoc: Doc) {
   future = [];
   baseline = snap();
   void refreshGenerationReview();
+  if (doc.seedId) pushRecentDesign(doc.seedId, doc.name);
   if (editorMounted) {
     $("docname").value = doc.name;
     renderAll();
     syncHistory();
     buildThumbs();
     requestAnimationFrame(zoomFit);
+    renderRecentTabs();
   }
 }
+
+/* abas de designs abertos recentemente (item 4.5 do backlog) --------------
+ * Preferência de sessão do navegador, não dado do design — por isso vive em
+ * localStorage, não no banco. Escopo deliberadamente menor que "múltiplos
+ * documentos abertos ao mesmo tempo": o editor tem UM `doc` global só, e dar
+ * a cada aba seu próprio estado (undo, zoom, seleção) pediria reestruturar
+ * isso — arriscado demais pra fazer sem poder testar ao vivo. O que existe
+ * aqui é mais perto de "histórico recente" que vira atalho de navegação:
+ * clicar noutra aba faz o mesmo que abrir aquele design pela lista de
+ * designs, só que sem sair do editor. */
+const RECENT_TABS_KEY = "blank-editor-recent-tabs";
+const RECENT_TABS_MAX = 8;
+
+interface RecentTab { id: string; name: string; }
+
+function readRecentTabs(): RecentTab[] {
+  try {
+    const raw = localStorage.getItem(RECENT_TABS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((t) => t?.id && typeof t.name === "string") : [];
+  } catch { return []; }
+}
+
+function writeRecentTabs(tabs: RecentTab[]) {
+  try { localStorage.setItem(RECENT_TABS_KEY, JSON.stringify(tabs)); } catch { /* quota ou storage bloqueado */ }
+}
+
+function pushRecentDesign(id: string, name: string) {
+  const tabs = readRecentTabs().filter((t) => t.id !== id);
+  tabs.unshift({ id, name });
+  writeRecentTabs(tabs.slice(0, RECENT_TABS_MAX));
+}
+
+function renderRecentTabs() {
+  const el = $("recentTabs");
+  const tabs = readRecentTabs();
+  el.hidden = tabs.length < 2;
+  if (tabs.length < 2) return;
+  el.innerHTML = tabs.map((t) => `
+    <button class="recentTab" data-recent-open="${t.id}" aria-current="${t.id === doc.seedId}" title="${esc(t.name)}">
+      <span>${esc(t.name)}</span>
+      <span class="recentTabClose" data-recent-close="${t.id}" title="Remover da lista (não apaga o design)" role="button">×</span>
+    </button>`).join("");
+}
+$("recentTabs").addEventListener("click", (ev) => {
+  const closeBtn = (ev.target as HTMLElement).closest<HTMLElement>("[data-recent-close]");
+  if (closeBtn) {
+    writeRecentTabs(readRecentTabs().filter((t) => t.id !== closeBtn.dataset.recentClose));
+    renderRecentTabs();
+    return;
+  }
+  const openBtn = (ev.target as HTMLElement).closest<HTMLElement>("[data-recent-open]");
+  if (openBtn && openBtn.dataset.recentOpen !== doc.seedId) openTemplateById(openBtn.dataset.recentOpen!);
+});
 
 /** The document on the canvas right now, if it's a template (has a seedId) — null for the untitled/default design. */
 export function currentTemplateDocument(): Doc | null {
@@ -2757,7 +2813,7 @@ export function mountEditor() {
   applyStageBg();
   baseline = snap();
   $("docname").value = doc.name || "Untitled design";
-  renderRail(); renderPanel(); renderAll(); buildThumbs(); syncHistory();
+  renderRail(); renderPanel(); renderAll(); buildThumbs(); syncHistory(); renderRecentTabs();
   updatePagesModeButtons();
   requestAnimationFrame(zoomFit);
   document.fonts.ready.then(() => renderCanvas());
