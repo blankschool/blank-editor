@@ -42,8 +42,7 @@ export interface ExtractedTextElement {
 }
 
 /** Retângulo de cor sólida (preenchimento vetorial cujo desenho é só um `re` no PDF) que
- *  não é o fundo da página inteira — esse já virou `Page.bg`. Formas vetoriais mais
- *  complexas (path com curvas) ainda não têm elemento correspondente no editor. */
+ *  não é o fundo da página inteira — esse já virou `Page.bg`. */
 export interface ExtractedShapeElement {
   type: "rect";
   x: number;
@@ -54,7 +53,21 @@ export interface ExtractedShapeElement {
   opacity: number;
 }
 
-export type ExtractedPageElement = ExtractedTextElement | ExtractedShapeElement;
+/** Forma vetorial arbitrária (ícone, halftone, contorno de título) — linha/curva, não
+ *  retângulo puro. `fillPath` é um `d` de SVG normalizado 0..1 dentro de x/y/w/h (mesma
+ *  convenção de `El.fillPath` em src/types.ts). */
+export interface ExtractedPathElement {
+  type: "path";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fillPath: string;
+  fill: string;
+  opacity: number;
+}
+
+export type ExtractedPageElement = ExtractedTextElement | ExtractedShapeElement | ExtractedPathElement;
 
 export interface PythonExtractResult {
   fonts: ExtractedFont[];

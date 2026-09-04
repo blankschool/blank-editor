@@ -971,6 +971,15 @@ export function buildApp(
             fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
           };
         }
+        if (el.type === "path") {
+          return {
+            id: randomUUID(), type: "draw" as const, name: `desenho ${index + 1}`,
+            x: el.x, y: el.y, w: el.w, h: el.h,
+            rot: 0, opacity: el.opacity, locked: false, hidden: false,
+            fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
+            fillPath: el.fillPath,
+          };
+        }
         return {
           id: randomUUID(), type: "text" as const, name: `texto ${index + 1}`,
           x: el.x, y: el.y, w: el.w, h: el.h,

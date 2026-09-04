@@ -170,6 +170,9 @@ def constroi(entries, familia, estilo, destino):
                 desc=round((-o.sTypoDescender if typo else o.usWinDescent)/u, 5),
                 kb=round((destino / f"{stem}.woff2").stat().st_size/1024, 1))
 
+def hexcolor(rgb):
+    return "#%02x%02x%02x" % tuple(round(c * 255) for c in rgb)
+
 def detectar_fundo(page):
     """Cor de fundo real da página: o último preenchimento vetorial que cobre a página
     inteira (mesmo critério do extrator do pipeline de referência, canva-import/pipeline/
@@ -187,7 +190,7 @@ def detectar_fundo(page):
             encontrado = fill
     if encontrado is None:
         return None
-    return "#%02x%02x%02x" % tuple(round(c * 255) for c in encontrado)
+    return hexcolor(encontrado)
 
 def caixa_nao_rotacionada(x0, y0, x1, y1, ang_rad):
     """`bloco["bbox"]` do PyMuPDF é a caixa alinhada aos eixos que ENVOLVE o texto já
@@ -214,36 +217,85 @@ def caixa_nao_rotacionada(x0, y0, x1, y1, ang_rad):
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     return cx - w / 2, cy - h / 2, w, h
 
-def extrair_formas(page):
-    """Retângulos de cor sólida (fills vetoriais cujo desenho é só um `re`) que não sejam
-    o próprio fundo da página — esse já virou `bg` em `detectar_fundo`; repeti-lo como
-    elemento seria uma camada idêntica empilhada em cima de si mesma.
+def path_para_svg_d(desenho):
+    """Converte os `items` de um desenho do `get_drawings()` num `d` de SVG normalizado 0..1
+    dentro do próprio retângulo do desenho — o mesmo espaço que `El.fillPath` espera (ver
+    `src/types.ts`: os renderers escalam o path inteiro pelo w/h do elemento em vez de
+    reescrever coordenada por coordenada).
 
-    ESCOPO REDUZIDO DE PROPÓSITO: só retângulo puro. Um path vetorial arbitrário (ícone,
-    halftone, contorno de título — comum no Canva) mapeia pro mesmo `d` de `get_drawings()`,
-    mas o `El` do Blank Editor ainda não tem um tipo de "path preenchido arbitrário" (o
-    `draw` existente só guarda uma polyline com stroke, sem fill) — fica para quando esse
-    tipo existir; por enquanto essas formas continuam invisíveis na importação, do jeito
-    que já estavam antes deste método."""
+    Só liga/curva (`l`/`c`), que é o que sobra depois de tratar `re` puro à parte em
+    `extrair_formas` — um item de tipo diferente (quad, arco) faz a função devolver `None`:
+    melhor recusar o path inteiro do que desenhar ele com um pedaço faltando."""
+    r = desenho["rect"]
+    w, h = r.x1 - r.x0, r.y1 - r.y0
+    if w <= 1e-6 or h <= 1e-6:
+        return None
+    def n(p):
+        return ((p.x - r.x0) / w, (p.y - r.y0) / h)
+    partes = []
+    for i, item in enumerate(desenho.get("items", [])):
+        op = item[0]
+        if op == "l":
+            p0, p1 = item[1], item[2]
+            if i == 0:
+                x0, y0 = n(p0)
+                partes.append(f"M{x0:.5f},{y0:.5f}")
+            x1, y1 = n(p1)
+            partes.append(f"L{x1:.5f},{y1:.5f}")
+        elif op == "c":
+            p0, p1, p2, p3 = item[1], item[2], item[3], item[4]
+            if i == 0:
+                x0, y0 = n(p0)
+                partes.append(f"M{x0:.5f},{y0:.5f}")
+            x1, y1 = n(p1)
+            x2, y2 = n(p2)
+            x3, y3 = n(p3)
+            partes.append(f"C{x1:.5f},{y1:.5f} {x2:.5f},{y2:.5f} {x3:.5f},{y3:.5f}")
+        else:
+            return None
+    if not partes:
+        return None
+    return " ".join(partes) + " Z"
+
+def extrair_formas(page):
+    """Formas vetoriais de cor sólida que não sejam o próprio fundo da página — esse já virou
+    `bg` em `detectar_fundo`; repeti-lo como elemento seria uma camada idêntica empilhada em
+    cima de si mesma.
+
+    Dois formatos de saída: retângulo puro (`items == ["re"]`) vira `type:"rect"`, que mapeia
+    direto pro `El` tipo `rect` do editor sem mudança de render nenhuma; qualquer outra
+    combinação de linha/curva vira `type:"path"` com `fillPath` (ver `path_para_svg_d`),
+    mapeando pro `El` tipo `draw` com preenchimento (item 2.1 do backlog). Um desenho com
+    segmento não suportado (quad, arco) ou `even_odd` (preenchimento com furo, tipo a letra
+    "O") é ignorado — `El.fillPath` não carrega regra de preenchimento ainda, então um
+    even_odd sairia preenchido sólido, errado; melhor não importar essa forma do que importar
+    errada."""
     r = page.rect
     formas = []
     for d in page.get_drawings():
         fill = d.get("fill")
-        if not fill:
-            continue
-        comandos = [it[0] for it in d.get("items", [])]
-        if comandos != ["re"]:
+        if not fill or d.get("even_odd"):
             continue
         x0, y0, x1, y1 = d["rect"]
         cobre_pagina = x0 <= r.x0 + 1 and y0 <= r.y0 + 1 and x1 >= r.x1 - 1 and y1 >= r.y1 - 1
         if cobre_pagina:
             continue
+        comandos = [it[0] for it in d.get("items", [])]
+        opacity = round(d.get("fill_opacity", 1.0) or 1.0, 3)
+        if comandos == ["re"]:
+            formas.append(dict(
+                type="rect",
+                x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+                fill=hexcolor(fill), opacity=opacity,
+            ))
+            continue
+        caminho = path_para_svg_d(d)
+        if caminho is None:
+            continue
         formas.append(dict(
-            type="rect",
-            x=round(x0, 2), y=round(y0, 2),
-            w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-            fill="#%02x%02x%02x" % tuple(round(c * 255) for c in fill),
-            opacity=round(d.get("fill_opacity", 1.0) or 1.0, 3),
+            type="path",
+            x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+            fillPath=caminho, fill=hexcolor(fill), opacity=opacity,
         ))
     return formas
 
@@ -313,6 +365,12 @@ for pagina in doc:
             print(f"  {base}: sem ToUnicode, pulada"); continue
         por_familia_estilo.setdefault((familia, estilo), []).append((ttf, uni))
 
+destino.mkdir(parents=True, exist_ok=True)  # criado aqui pra existir mesmo sem fonte nenhuma
+                                             # pra reconstruir — `constroi()` só cria a pasta
+                                             # se rodar pelo menos uma vez; uma página sem
+                                             # texto (só forma/imagem) tinha `por_familia_estilo`
+                                             # vazio e nunca chegava lá, e o write_text logo
+                                             # abaixo falhava com "No such file or directory".
 resultado = []
 for (familia, estilo), entries in por_familia_estilo.items():
     resultado.append(constroi(entries, familia, estilo, destino))

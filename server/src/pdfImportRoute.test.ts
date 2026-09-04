@@ -64,6 +64,7 @@ const SAMPLE_RESULT: PdfImportResult = {
     bg: "#0a1f14",
     elements: [
       { type: "rect", x: 0, y: 0, w: 1080, h: 200, fill: "#222222", opacity: 1 },
+      { type: "path", x: 40, y: 40, w: 120, h: 120, fillPath: "M0,0.5 L1,0 L1,1 Z", fill: "#f0a500", opacity: 0.8 },
       { type: "text", x: 10, y: 20, w: 300, h: 60, text: "Título", font: "NYTFranklin", weight: 700, size: 48, fill: "#111111", rot: 0 },
       { type: "image", name: "Foto de fundo", x: 0, y: 0, w: 1080, h: 1350, imageId: "img-1" },
     ],
@@ -153,18 +154,22 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
 
   assert.equal(res.statusCode, 201);
   assert.deepEqual(res.json(), {
-    id: "imported-tpl", name: "carrossel", pageCount: 1, layerCount: 3, fontCount: 1, flaggedPages: [],
+    id: "imported-tpl", name: "carrossel", pageCount: 1, layerCount: 4, fontCount: 1, flaggedPages: [],
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = createdDocument as any;
   assert.equal(doc.pages.length, 1);
   assert.equal(doc.pages[0].bg, "#0a1f14");
-  assert.equal(doc.pages[0].els.length, 3);
-  const [rect, text, image] = doc.pages[0].els;
+  assert.equal(doc.pages[0].els.length, 4);
+  const [rect, path, text, image] = doc.pages[0].els;
   assert.equal(rect.type, "rect");
   assert.equal(rect.fill, "#222222");
   assert.equal(rect.w, 1080);
+  assert.equal(path.type, "draw");
+  assert.equal(path.fillPath, "M0,0.5 L1,0 L1,1 Z");
+  assert.equal(path.fill, "#f0a500");
+  assert.equal(path.opacity, 0.8);
   assert.equal(text.type, "text");
   assert.equal(text.text, "Título");
   assert.equal(text.font, "NYTFranklin");

@@ -23,22 +23,30 @@ usados em server/src/db.ts e supabase/migrations/*).
   grava fundo branco fixo. Detectar o fill que cobre a página inteira (via
   PyMuPDF `page.get_drawings()`, procurando um retângulo de preenchimento que
   cubra ~100% da página) e usar essa cor; manter branco só como fallback.
-- [x] **1.3 Formas vetoriais — retângulos de cor sólida.** Escopo reduzido
-  deliberadamente: só retângulo puro (`get_drawings()` com `items == ["re"]`),
-  que mapeia direto pro `El` tipo `rect` que já existe — sem mudança de
-  render nenhuma. Path arbitrário com curvas (ícones, halftone, contorno de
-  título) fica pendente do item 2.1 (o `draw` do editor só guarda polyline
-  com stroke, sem fill arbitrário) — quando esse tipo existir, retomar aqui.
-  Filtra o preenchimento que já virou `bg` da página, pra não duplicar como
-  camada. Ordem de pintura: forma atrás, imagem no meio, texto na frente
-  (forma e texto vêm ordenados corretamente do mesmo passo em Python; imagem
-  vem de um passo separado via poppler-utils, sem informação de ordem em
-  relação aos outros dois — heurística razoável, não garantia). Verificado
-  de ponta a ponta: PDF sintético com retângulo azul parcial (não cobre a
-  página) → 1 elemento `rect` com a cor certa (#1a3399), sem duplicar; PDF
-  com fill cobrindo a página inteira → vira só `bg`, zero elementos `rect`
-  redundantes; via `POST /api/v1/imports/pdf` real, o documento final tem
-  forma → imagem → texto na ordem certa, cor e posição batendo.
+- [x] **1.3 Formas vetoriais — retângulos + paths arbitrários.** Fase 1:
+  retângulo puro (`get_drawings()` com `items == ["re"]`), mapeia direto pro
+  `El` tipo `rect`. Fase 2 (depois do item 2.1 desbloquear): linha/curva
+  arbitrária vira `type:"path"` com `fillPath` normalizado 0..1
+  (`path_para_svg_d`, só M/L/C — um item não suportado como quad/arco, ou
+  `even_odd` set, faz a forma inteira ser ignorada em vez de importada
+  errada). As duas fases filtram o preenchimento que já virou `bg`, pra não
+  duplicar como camada. Ordem de pintura: forma atrás, imagem no meio, texto
+  na frente (forma e texto vêm ordenados corretamente do mesmo passo em
+  Python; imagem vem de um passo separado via poppler-utils, sem informação
+  de ordem em relação aos outros dois — heurística razoável, não garantia).
+
+  BUG REAL achado testando a fase 2 com um PDF só-forma (sem texto nenhum):
+  `destino.mkdir()` só rodava dentro de `constroi()`, que só executa se
+  houver pelo menos uma fonte pra reconstruir — uma página sem texto nunca
+  chamava `constroi()`, a pasta nunca era criada, e `fonts.json` falhava com
+  `FileNotFoundError`. Corrigido movendo o `mkdir` pra fora, incondicional.
+
+  Verificado de ponta a ponta: PDF com retângulo azul parcial → 1 `rect` com
+  a cor certa, sem duplicar; PDF com fill cobrindo a página inteira → vira
+  só `bg`; PDF com um "blob" de duas curvas bezier preenchidas (sem nenhum
+  texto) → 1 `type:"path"` com `fillPath` correto — renderizado num teste
+  visual isolado (fora do app, que está atrás de login) e conferido que sai
+  exatamente a forma de lente/olho esperada, na cor certa.
 - [ ] **1.4 Recorte de imagem em moldura (retangular ou circular). ADIADO —
   ver nota.** O PDF desenha a imagem maior e recorta via clip path — hoje
   isso não é detectado, a imagem inteira vira uma camada do tamanho errado.
@@ -83,12 +91,16 @@ usados em server/src/db.ts e supabase/migrations/*).
 - [ ] **1.7 Texto com contorno vetorial (fontes Type3).** Títulos com efeito
   de contorno no Canva usam fontes Type3 (glifo = procedimento de desenho, não
   contorno TrueType) — hoje esse texto some em silêncio (sem FontFile pra
-  extrair). CORREÇÃO à nota anterior: o item 1.3 só extrai retângulo puro
-  (`items == ["re"]`) de propósito — um glifo Type3 vira um `path` com curvas
-  (letras não são retângulos), então 1.3 NÃO cobre este caso ainda. Continua
-  bloqueado no item 2.1 (tipo de elemento pra path preenchido arbitrário no
-  editor) — sem ele, extrair esses paths não teria onde render dentro do
-  documento.
+  extrair). ATUALIZAÇÃO: os itens 2.1 (fillPath) e 1.3-fase-2 (extração de
+  path arbitrário via `get_drawings()`) já desbloquearam a parte técnica —
+  se o PyMuPDF resolve um glifo Type3 pro mesmo pipeline de `get_drawings()`
+  (plausível, não testado: não consegui montar um PDF sintético com fonte
+  Type3 de verdade via a API do PyMuPDF pra confirmar), cada glifo já viraria
+  um elemento `path` individual. NÃO TESTADO e provavelmente incompleto
+  mesmo se capturar: sairia como várias formas soltas, uma por letra, sem
+  agrupamento nem semântica de texto — bem diferente de um elemento de texto
+  editável. Precisa de um PDF real exportado do Canva com título de contorno
+  pra validar e decidir se vale a pena agrupar os glifos numa camada só.
 
 ## 2. Modelo de documento (`src/types.ts`) e editor
 

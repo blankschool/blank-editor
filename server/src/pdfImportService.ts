@@ -28,8 +28,7 @@ export type ImportedImageElement = {
   imageId: string;
 };
 
-/** Retângulo de cor sólida extraído do PDF (preenchimento vetorial de um `re` só). Path
- *  vetorial arbitrário (curvas) ainda não tem elemento correspondente aqui nem no editor. */
+/** Retângulo de cor sólida extraído do PDF (preenchimento vetorial de um `re` só). */
 export type ImportedShapeElement = {
   type: "rect";
   x: number;
@@ -40,7 +39,20 @@ export type ImportedShapeElement = {
   opacity: number;
 };
 
-export type ImportedElement = ImportedTextElement | ImportedImageElement | ImportedShapeElement;
+/** Forma vetorial arbitrária (linha/curva, não retângulo puro) — mapeia pro `El` tipo
+ *  `draw`+`fillPath` do editor (backlog item 2.1). */
+export type ImportedPathElement = {
+  type: "path";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fillPath: string;
+  fill: string;
+  opacity: number;
+};
+
+export type ImportedElement = ImportedTextElement | ImportedImageElement | ImportedShapeElement | ImportedPathElement;
 
 export interface ImportedPage {
   w: number;

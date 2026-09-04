@@ -88,7 +88,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
       // ambiguidade: formas e texto vêm do mesmo passo em Python (nessa ordem relativa,
       // já correta), mas imagem vem de um passo totalmente separado (poppler-utils), sem
       // informação de ordem de pintura entre as duas fontes de extração.
-      const shapeElements = pageElements.filter((el) => el.type === "rect");
+      const shapeElements = pageElements.filter((el) => el.type === "rect" || el.type === "path");
       const textElements = pageElements.filter((el) => el.type === "text");
       const imageElements: ImportedElement[] = imageResult.elements.map((el: ExtractedImageElement) => {
         const id = randomUUID();
