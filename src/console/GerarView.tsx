@@ -5,10 +5,12 @@ import {
   commitGerarPageEdit,
   goToView,
   openGeneratedInEditor,
+  regenerateGerarImage,
   runGerarGenerate,
   selectGerarSource,
   setGerarActivePage,
   setGerarImageValue,
+  setGerarImageStrategy,
   setGerarFixedVisibility,
   setGerarLayerValue,
   setGerarTheme,
@@ -87,9 +89,11 @@ function LayerField({ page, name, value }: { page: number; name: string; value: 
   );
 }
 
-/** A IA nunca escreve nas camadas de imagem (avatar/media) — ficam pra preencher à mão aqui,
- *  URL ou upload, mesmo mecanismo do Playground. Upload já grava sozinho; URL grava ao sair do campo. */
+/** Imagens chegam do provedor escolhido e continuam substituíveis à mão por URL ou upload.
+ * Upload já grava sozinho; URL grava ao sair do campo. */
 function ImageLayerField({ page, name, value }: { page: number; name: string; value: string }) {
+  const s = useConsole();
+  const regenerating = s.gerarRegenerating === `${page}:${name}`;
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-inset p-2.5">
       <div className="flex items-center gap-2">
@@ -120,6 +124,16 @@ function ImageLayerField({ page, name, value }: { page: number; name: string; va
             }}
           />
         </label>
+        <button
+          type="button"
+          title={`Gerar outra imagem usando ${s.gerarImageStrategy === "stock" ? "banco de fotos" : "IA"}`}
+          aria-label={`Gerar outra imagem para ${FIELD_LABELS[name] ?? name}`}
+          disabled={Boolean(s.gerarRegenerating)}
+          onClick={() => regenerateGerarImage(page, name)}
+          className="flex h-9 w-9 flex-none items-center justify-center rounded-sm border border-line text-muted hover:border-line-strong hover:text-text disabled:opacity-50"
+        >
+          <RefreshCw size={13} strokeWidth={1.5} className={regenerating ? "animate-spin" : ""} />
+        </button>
       </div>
     </div>
   );
@@ -169,6 +183,18 @@ export function GerarView() {
           rows={2}
           className="min-w-0 resize-none rounded-md border border-line bg-surface px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
         />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-faint">Fonte das imagens</span>
+          <Segmented
+            aria-label="Fonte das imagens"
+            value={s.gerarImageStrategy}
+            onValueChange={setGerarImageStrategy}
+            options={[
+              { value: "stock", label: "Banco de fotos", title: "Fotos licenciadas do Pexels" },
+              { value: "ai", label: "Gerar com IA", title: "Imagem criada para este post" },
+            ]}
+          />
+        </div>
         <Button size="lg" onClick={runGerarGenerate} disabled={!canGenerate} className="w-fit rounded-md text-sm">
           {s.gerarGenerating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} strokeWidth={1.8} />}
           {s.gerarGenerating ? "Gerando…" : "Gerar"}
@@ -197,7 +223,7 @@ export function GerarView() {
           <div className="flex flex-col gap-3">
             <span className="text-[13px] font-medium">Campos gerados</span>
             <span className="text-xs text-faint">Corrija à mão se quiser — grava sozinho ao sair do campo.</span>
-            <span className="text-xs leading-relaxed text-faint">Imagem vazia não aparece no preview. Adicione uma URL ou faça upload para exibi-la.</span>
+            <span className="text-xs leading-relaxed text-faint">As imagens são copiadas para o Blank. Você pode trocar a fonte, regenerar só este card, colar uma URL ou fazer upload.</span>
             <div className="flex flex-col gap-2.5 overflow-y-auto">
               {active && Object.entries(active.layers).map(([name, value]) => (
                 <LayerField key={name} page={active.page} name={name} value={value} />

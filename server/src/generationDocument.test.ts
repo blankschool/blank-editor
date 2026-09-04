@@ -60,6 +60,17 @@ test("a generated page rejects values that do not match the template layer type"
   );
 });
 
+test("a generated page rejects invalid scalar values instead of persisting them", () => {
+  assert.throws(
+    () => buildGeneratedDocument(SOURCE, "Inválido", [{ layers: { titulo: { text: 42 as unknown as string } } }]),
+    /titulo\.text must be a string/,
+  );
+  assert.throws(
+    () => buildGeneratedDocument(SOURCE, "Inválido", [{ layers: { faixa: { hide: "yes" as unknown as boolean } } }]),
+    /faixa\.hide must be a boolean/,
+  );
+});
+
 test("visibility overrides are persisted in the generated editable document", () => {
   const result = buildGeneratedDocument(SOURCE, "Sem faixa", [{ layers: { faixa: { hide: true } } }]);
 

@@ -8,6 +8,7 @@ export function createStorageClient(url: string, serviceRoleKey: string): Supaba
 }
 
 const RENDERS_BUCKET = "renders";
+const DRAFT_RENDERS_BUCKET = "draft-renders";
 const UPLOADS_BUCKET = "uploads";
 const FONTS_BUCKET = "fonts";
 const FONT_SFNT_BUCKET = "font-sfnt";
@@ -40,6 +41,74 @@ export async function uploadRenderedPng(
  *  link só resolve de verdade depois do primeiro render salvo). */
 export function publicRenderUrl(client: SupabaseClient, templateId: string, pageIndex = 0): string {
   return client.storage.from(RENDERS_BUCKET).getPublicUrl(renderPath(templateId, pageIndex)).data.publicUrl;
+}
+
+function versionedRenderPath(ownerId: string, generationId: string, version: number, pageIndex: number): string {
+  return `${ownerId}/${generationId}/versions/${version}/page-${pageIndex + 1}.png`;
+}
+
+/** Review previews are never public. A signed URL can be placed in the n8n response without
+ * turning an unapproved artifact into a permanent public download. */
+export async function uploadDraftRender(
+  client: SupabaseClient,
+  ownerId: string,
+  generationId: string,
+  version: number,
+  pageIndex: number,
+  png: Buffer,
+): Promise<void> {
+  const { error } = await client.storage.from(DRAFT_RENDERS_BUCKET).upload(
+    versionedRenderPath(ownerId, generationId, version, pageIndex),
+    png,
+    { contentType: "image/png", upsert: true },
+  );
+  if (error) throw error;
+}
+
+export async function signDraftRenderUrl(
+  client: SupabaseClient,
+  ownerId: string,
+  generationId: string,
+  version: number,
+  pageIndex: number,
+  expiresInSeconds = 3600,
+): Promise<string> {
+  const { data, error } = await client.storage.from(DRAFT_RENDERS_BUCKET).createSignedUrl(
+    versionedRenderPath(ownerId, generationId, version, pageIndex),
+    expiresInSeconds,
+  );
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+function approvedRenderPath(generationId: string, version: number, pageIndex: number): string {
+  return `approved/${generationId}/versions/${version}/page-${pageIndex + 1}.png`;
+}
+
+export async function uploadApprovedRender(
+  client: SupabaseClient,
+  generationId: string,
+  version: number,
+  pageIndex: number,
+  png: Buffer,
+): Promise<void> {
+  const { error } = await client.storage.from(RENDERS_BUCKET).upload(
+    approvedRenderPath(generationId, version, pageIndex),
+    png,
+    { contentType: "image/png", upsert: true },
+  );
+  if (error) throw error;
+}
+
+export function publicApprovedRenderUrl(
+  client: SupabaseClient,
+  generationId: string,
+  version: number,
+  pageIndex: number,
+): string {
+  return client.storage.from(RENDERS_BUCKET).getPublicUrl(
+    approvedRenderPath(generationId, version, pageIndex),
+  ).data.publicUrl;
 }
 
 /** Marca um `sfnt_path` como referência ao bucket privado de fontes, do mesmo jeito que

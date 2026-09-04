@@ -10,9 +10,23 @@ import { DEFAULT_FONT_FAMILY, pageCount, resolvePageIndex } from "./render/edita
 import { canarioDeFonte } from "./render/preflight.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
-import { PRIVATE_UPLOAD_PREFIX, publicRenderUrl, signPrivateUploadUrl, uploadFontFace, uploadRenderedPng, uploadUserPhoto } from "./storage.ts";
+import {
+  PRIVATE_UPLOAD_PREFIX,
+  publicApprovedRenderUrl,
+  publicRenderUrl,
+  signDraftRenderUrl,
+  signPrivateUploadUrl,
+  uploadApprovedRender,
+  uploadDraftRender,
+  uploadFontFace,
+  uploadRenderedPng,
+  uploadUserPhoto,
+} from "./storage.ts";
 import type { ApiKeyOwner, ApiKeySummary, FontFaceInput, FontFaceRow, TemplateRow, TemplateSummary } from "./db.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
+import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
+import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
+import { FlattenedPdfError, type ImportedPage, type ImportedFont, type ImportedImage, type PdfImportService } from "./pdfImportService.ts";
 import {
   clearSessionCookies,
   getAccessCookie,
@@ -62,6 +76,15 @@ export interface AppDeps {
   renderTemplatePng: typeof renderTemplatePng;
   upsertFontFace: (input: FontFaceInput) => Promise<FontFaceRow>;
   listFontFaces: (ownerId: string) => Promise<FontFaceRow[]>;
+  generations?: GenerationRepository;
+}
+
+export interface MediaDeps {
+  service: MediaAcquisitionService;
+}
+
+export interface PdfImportDeps {
+  service: PdfImportService;
 }
 
 interface RenderBody {
@@ -89,12 +112,19 @@ interface GenerationBody {
   template?: string;
   name?: string;
   pages?: GenerationPageInput[];
+  run_id?: string;
 }
 
-const BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+// 50MB: um carrossel de PDF exportado do Canva com várias fotos em alta resolução passa fácil
+// dos 10-15MB que bastavam para upload de uma foto/fonte avulsa.
+const BODY_LIMIT_BYTES = 50 * 1024 * 1024;
 
 function generatedDesignId(ownerId: string, idempotencyKey: string): string {
   return `generation-${createHash("sha256").update(`${ownerId}\0${idempotencyKey}`).digest("hex").slice(0, 32)}`;
+}
+
+function generationId(ownerId: string, idempotencyKey: string): string {
+  return `gen-${createHash("sha256").update(`${ownerId}\0${idempotencyKey}`).digest("hex").slice(0, 32)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,10 +137,17 @@ function looksLikeApiKey(token: string): boolean {
   return token.startsWith("blk_");
 }
 
-export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: StorageDeps | null = null): FastifyInstance {
+export function buildApp(
+  deps: AppDeps,
+  auth: AuthDeps | null = null,
+  storage: StorageDeps | null = null,
+  media: MediaDeps | null = null,
+  pdfImport: PdfImportDeps | null = null,
+): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
+  const generations = deps.generations ?? createMemoryGenerationRepository();
   app.register(fastifyCookie);
-  app.register(fastifyMultipart, { limits: { fileSize: 15 * 1024 * 1024 } });
+  app.register(fastifyMultipart, { limits: { fileSize: BODY_LIMIT_BYTES } });
 
   /**
    * Resolve quem está chamando, em três caminhos possíveis (nessa ordem):
@@ -121,10 +158,12 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
    * Os três caminhos resolvem pro mesmo formato (ownerId) — nenhuma rota trata os três de forma
    * diferente depois disso.
    */
-  async function requireOwner(request: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+  interface Principal { ownerId: string; actorId: string | null; kind: "human" | "api_key" }
+
+  async function requirePrincipal(request: FastifyRequest, reply: FastifyReply): Promise<Principal | null> {
     if (auth) {
       const bySession = await resolveSessionFromCookies(request, auth.client);
-      if (bySession) return bySession.ownerId;
+      if (bySession) return { ownerId: bySession.ownerId, actorId: bySession.ownerId, kind: "human" };
     }
 
     const token = extractBearerToken(request.headers.authorization);
@@ -139,16 +178,30 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
         reply.code(401).send({ error: "invalid or revoked API key" });
         return null;
       }
-      return owner.ownerId;
+      return { ownerId: owner.ownerId, actorId: null, kind: "api_key" };
     }
 
     if (auth) {
       const bySupabaseJwt = await verifyAccessToken(auth.client, token);
-      if (bySupabaseJwt) return bySupabaseJwt.ownerId;
+      if (bySupabaseJwt) return { ownerId: bySupabaseJwt.ownerId, actorId: bySupabaseJwt.ownerId, kind: "human" };
     }
 
     reply.code(401).send({ error: "invalid or revoked API key" });
     return null;
+  }
+
+  async function requireOwner(request: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+    return (await requirePrincipal(request, reply))?.ownerId ?? null;
+  }
+
+  async function requireHuman(request: FastifyRequest, reply: FastifyReply): Promise<Principal | null> {
+    const principal = await requirePrincipal(request, reply);
+    if (!principal) return null;
+    if (principal.kind !== "human" || !principal.actorId) {
+      reply.code(403).send({ error: "approval actions require an authenticated editor" });
+      return null;
+    }
+    return principal;
   }
 
   /** Faces registradas do dono, para o render resolver família que o documento não declara. */
@@ -199,11 +252,26 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     if (save) {
       const merged = applyLayerOverrides(row.document, parsedLayers, pageIndex);
       await deps.updateTemplate(ownerId, template, { document: merged });
+      const changed = hashJson(merged) !== hashJson(row.document);
+      const linkedGeneration = changed
+        ? await generations.markEdited(ownerId, template)
+        : await generations.findByDesign(ownerId, template);
       // O link público de download é um caminho determinístico (storage.ts) — só precisa do
-      // arquivo existir de verdade, o que só acontece depois de um save:true.
+      // arquivo existir de verdade, o que só acontece depois de um save:true. Gerações em
+      // revisão são a exceção: seus previews ficam no bucket privado até a aprovação.
       if (storage) {
         const resolvedIndex = resolvePageIndex(row.document, pageIndex) ?? 0;
-        await uploadRenderedPng(storage.client, template, resolvedIndex, png).catch(() => {
+        const upload = linkedGeneration
+          ? uploadDraftRender(
+            storage.client,
+            ownerId,
+            linkedGeneration.id,
+            linkedGeneration.currentVersion,
+            resolvedIndex,
+            png,
+          )
+          : uploadRenderedPng(storage.client, template, resolvedIndex, png);
+        await upload.catch(() => {
           // Falha de upload não derruba o render — a pessoa já tem o PNG na resposta; o link
           // público só fica indisponível até o próximo save:true bem-sucedido.
         });
@@ -213,20 +281,121 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     return reply.header("content-type", "image/png").send(png);
   });
 
+  interface ResolvedMedia {
+    page: number;
+    layerName: string;
+    request: MediaAssetRequest;
+    acquired: AcquiredMedia;
+    storageRef: string;
+  }
+
+  function parseMediaRequest(value: unknown, path: string): MediaAssetRequest {
+    if (!isRecord(value) || (value.strategy !== "stock" && value.strategy !== "ai")) {
+      throw new GenerationDocumentError(`${path}.asset.strategy must be stock or ai`);
+    }
+    for (const field of ["query", "prompt", "aspectRatio"] as const) {
+      if (value[field] !== undefined && typeof value[field] !== "string") {
+        throw new GenerationDocumentError(`${path}.asset.${field} must be a string`);
+      }
+    }
+    return {
+      strategy: value.strategy,
+      ...(typeof value.query === "string" ? { query: value.query } : {}),
+      ...(typeof value.prompt === "string" ? { prompt: value.prompt } : {}),
+      ...(typeof value.aspectRatio === "string" ? { aspectRatio: value.aspectRatio } : {}),
+    };
+  }
+
+  async function resolveGenerationMedia(
+    ownerId: string,
+    genId: string,
+    pages: readonly GenerationPageInput[],
+  ): Promise<{ pages: GenerationPageInput[]; assets: ResolvedMedia[] }> {
+    const resolved = structuredClone(Array.from(pages));
+    const requested = resolved.flatMap((page, pageIndex) => Object.entries(page.layers)
+      .filter(([, value]) => value.asset !== undefined)
+      .map(([layerName, value]) => ({
+        pageIndex,
+        layerName,
+        request: parseMediaRequest(value.asset, `pages[${pageIndex}].layers.${layerName}`),
+      })));
+    if (requested.length > 20) throw new GenerationDocumentError("a generation can acquire at most 20 images");
+    if (requested.length > 0 && !media) throw new GenerationDocumentError("media acquisition is not configured on this server");
+
+    const assets: ResolvedMedia[] = [];
+    // Deliberately serial: provider quotas are usually lower than render concurrency, and a
+    // five-card carousel should not burst five expensive image requests at once.
+    for (const item of requested) {
+      const mediaRequest = item.request;
+      const acquired = await media!.service.acquire(mediaRequest);
+      const filename = `${genId}-page-${item.pageIndex + 1}-${item.layerName}.${acquired.extension}`;
+      const storageRef = await uploadUserPhoto(storage!.client, ownerId, filename, acquired.contentType, acquired.bytes);
+      const { asset: _asset, ...layerValue } = resolved[item.pageIndex].layers[item.layerName];
+      resolved[item.pageIndex].layers[item.layerName] = { ...layerValue, image_url: storageRef };
+      assets.push({ page: item.pageIndex + 1, layerName: item.layerName, request: mediaRequest, acquired, storageRef });
+    }
+    return { pages: resolved, assets };
+  }
+
+  async function renderAllPages(ownerId: string, document: unknown): Promise<Buffer[]> {
+    const total = Array.isArray((document as { pages?: unknown[] })?.pages)
+      ? (document as { pages: unknown[] }).pages.length
+      : 0;
+    const faces = await facesDoRegistry(ownerId);
+    return Promise.all(Array.from({ length: total }, (_unused, index) =>
+      deps.renderTemplatePng(document, parseLayers({}), index, faces)));
+  }
+
+  async function generationPayload(run: GenerationRun, row: TemplateRow) {
+    const document = row.document as { pages?: unknown[] };
+    const total = Array.isArray(document.pages) ? document.pages.length : 0;
+    const approvedCurrent = run.reviewStatus === "approved" && run.approvedVersion === run.currentVersion;
+    const pages = await Promise.all(Array.from({ length: total }, async (_unused, index) => ({
+      page: index + 1,
+      pngUrl: approvedCurrent
+        ? publicApprovedRenderUrl(storage!.client, run.id, run.currentVersion, index)
+        : await signDraftRenderUrl(storage!.client, run.ownerId, run.id, run.currentVersion, index),
+    })));
+    return {
+      generation: {
+        id: run.id,
+        processingStatus: run.processingStatus,
+        reviewStatus: run.reviewStatus,
+        deliveryStatus: run.deliveryStatus,
+        version: run.currentVersion,
+        approvedVersion: run.approvedVersion,
+        canDownload: approvedCurrent,
+        statusPath: `/api/v1/generations/${encodeURIComponent(run.id)}`,
+        reviewPath: `/#/editor/${encodeURIComponent(row.id)}?review=1`,
+      },
+      design: {
+        id: row.id,
+        name: row.name,
+        pageCount: total,
+        editorPath: `/#/editor/${encodeURIComponent(row.id)}`,
+        reviewPath: `/#/editor/${encodeURIComponent(row.id)}?review=1`,
+        pages,
+      },
+    };
+  }
+
   app.post<{ Body: GenerationBody }>("/api/v1/generations", async (request, reply) => {
     if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
-    const ownerId = await requireOwner(request, reply);
-    if (!ownerId) return;
-    const idempotencyKey = request.headers["idempotency-key"];
-    if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    const principal = await requirePrincipal(request, reply);
+    if (!principal) return;
+    const { ownerId } = principal;
+    const rawKey = request.headers["idempotency-key"];
+    if (typeof rawKey !== "string" || !rawKey.trim()) {
       return reply.code(400).send({ error: "missing required header: Idempotency-Key" });
     }
+    const idempotencyKey = rawKey.trim();
     if (idempotencyKey.length > 200) return reply.code(400).send({ error: "Idempotency-Key must be at most 200 characters" });
 
-    const { template, name, pages } = request.body ?? {};
+    const { template, name, pages, run_id: runId } = request.body ?? {};
     if (!template || !name?.trim() || !Array.isArray(pages)) {
       return reply.code(400).send({ error: "missing required field: template, name, pages" });
     }
+    if (runId !== undefined && typeof runId !== "string") return reply.code(400).send({ error: "run_id must be a string" });
     if (pages.length < 1 || pages.length > 20) {
       return reply.code(400).send({ error: "pages must contain between 1 and 20 items" });
     }
@@ -238,31 +407,47 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
         if (!layerName || !isRecord(value)) {
           return reply.code(400).send({ error: `pages[${index}].layers.${layerName || "<empty>"} must be an object` });
         }
+        if (value.asset !== undefined && value.image_url !== undefined) {
+          return reply.code(400).send({ error: `pages[${index}].layers.${layerName} cannot contain both asset and image_url` });
+        }
       }
     }
 
-    const designId = generatedDesignId(ownerId, idempotencyKey.trim());
+    const requestHash = hashJson({ template, name: name.trim(), pages, run_id: runId ?? null });
+    const existingByKey = await generations.findByIdempotency(ownerId, idempotencyKey);
+    if (existingByKey && existingByKey.requestHash !== requestHash) {
+      return reply.code(409).send({
+        error: "IDEMPOTENCY_CONFLICT",
+        message: "this Idempotency-Key was already used with a different request body",
+        generationId: existingByKey.id,
+      });
+    }
+
+    const designId = generatedDesignId(ownerId, idempotencyKey);
+    const genId = generationId(ownerId, idempotencyKey);
     let row = await deps.findTemplate(ownerId, designId);
-    let replay = Boolean(row);
+    let run = existingByKey;
+    let replay = Boolean(row || run);
     let preRendered: Buffer[] | null = null;
+    let acquiredAssets: ResolvedMedia[] = [];
 
     if (!row) {
       const source = await deps.findTemplate(ownerId, template);
       if (!source) return reply.code(404).send({ error: `template not found: ${template}` });
-
       let document;
       try {
-        document = buildGeneratedDocument(source.document, name.trim(), pages);
+        // Validate names and layer types before making a paid/provider request.
+        buildGeneratedDocument(source.document, name.trim(), pages);
+        const resolved = await resolveGenerationMedia(ownerId, genId, pages);
+        acquiredAssets = resolved.assets;
+        document = buildGeneratedDocument(source.document, name.trim(), resolved.pages);
       } catch (err) {
-        if (err instanceof GenerationDocumentError) return reply.code(400).send({ error: err.message });
-        throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        return reply.code(err instanceof GenerationDocumentError ? 400 : 502).send({ error: message });
       }
       document.seedId = designId;
-
-      const faces = await facesDoRegistry(ownerId);
       try {
-        preRendered = await Promise.all(document.pages.map((_page, index) =>
-          deps.renderTemplatePng(document, parseLayers({}), index, faces)));
+        preRendered = await renderAllPages(ownerId, document);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return reply.code(400).send({ error: `render failed: ${message}` });
@@ -270,42 +455,292 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
       try {
         row = await deps.createTemplate(ownerId, { id: designId, name: name.trim(), document });
       } catch (createError) {
-        // Duas execuções podem chegar entre o find e o insert com a mesma chave.
-        // A constraint de templates escolhe a primeira; a segunda passa a ser um
-        // replay e renderiza o documento vencedor, sem reaplicar seu próprio body.
         const concurrentWinner = await deps.findTemplate(ownerId, designId);
         if (!concurrentWinner) throw createError;
         row = concurrentWinner;
         replay = true;
         preRendered = null;
+        acquiredAssets = [];
       }
     }
 
-    const document = row.document as { pages?: unknown[] };
-    const total = Array.isArray(document.pages) ? document.pages.length : 0;
-    const faces = await facesDoRegistry(ownerId);
-    let pngs: Buffer[];
+    if (!run) {
+      try {
+        run = await generations.createWithInitialVersion({
+          id: genId,
+          ownerId,
+          designId: row.id,
+          sourceTemplateId: template,
+          idempotencyKey,
+          requestHash,
+          runId: runId ?? null,
+          document: row.document,
+          documentChecksum: hashJson(row.document),
+          createdBy: principal.actorId,
+        });
+      } catch (createError) {
+        const concurrentWinner = await generations.findByIdempotency(ownerId, idempotencyKey);
+        if (!concurrentWinner) throw createError;
+        if (concurrentWinner.requestHash !== requestHash) {
+          return reply.code(409).send({ error: "IDEMPOTENCY_CONFLICT" });
+        }
+        run = concurrentWinner;
+        replay = true;
+      }
+    }
+
+    const currentVersion = await generations.findVersion(ownerId, run.id, run.currentVersion);
+    if (currentVersion && hashJson(row.document) !== currentVersion.documentChecksum && run.reviewStatus !== "draft") {
+      run = await generations.markEdited(ownerId, row.id) ?? run;
+    }
+    const renderDocument = run.reviewStatus === "approved" && run.approvedVersion === run.currentVersion && currentVersion
+      ? currentVersion.document
+      : row.document;
     try {
-      pngs = preRendered ?? await Promise.all(Array.from({ length: total }, (_unused, index) =>
-        deps.renderTemplatePng(row!.document, parseLayers({}), index, faces)));
-      await Promise.all(pngs.map((png, index) => uploadRenderedPng(storage.client, row!.id, index, png)));
+      const pngs = preRendered ?? await renderAllPages(ownerId, renderDocument);
+      await Promise.all(pngs.map((png, index) =>
+        uploadDraftRender(storage.client, ownerId, run!.id, run!.currentVersion, index, png)));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(502).send({ error: `could not publish generated renders: ${message}` });
     }
 
-    return reply.code(replay ? 200 : 201).send({
-      design: {
-        id: row.id,
-        name: row.name,
-        pageCount: total,
-        editorPath: `/#/editor/${encodeURIComponent(row.id)}`,
-        pages: Array.from({ length: total }, (_unused, index) => ({
-          page: index + 1,
-          pngUrl: publicRenderUrl(storage.client, row!.id, index),
-        })),
-      },
+    for (const asset of acquiredAssets) {
+      await generations.recordMediaAsset({
+        id: randomUUID(),
+        ownerId,
+        generationId: run.id,
+        version: run.currentVersion,
+        page: asset.page,
+        layerName: asset.layerName,
+        strategy: asset.request.strategy,
+        storageRef: asset.storageRef,
+        mimeType: asset.acquired.contentType,
+        width: asset.acquired.width,
+        height: asset.acquired.height,
+        provider: asset.acquired.provider,
+        externalId: asset.acquired.externalId,
+        author: asset.acquired.author,
+        attributionUrl: asset.acquired.attributionUrl,
+        licenseUrl: asset.acquired.licenseUrl,
+        prompt: asset.acquired.prompt,
+        model: asset.acquired.model,
+      });
+    }
+
+    return reply.code(replay ? 200 : 201).send(await generationPayload(run, row));
+  });
+
+  async function findOwnedGeneration(
+    ownerId: string,
+    generationId: string,
+    reply: FastifyReply,
+  ): Promise<{ run: GenerationRun; row: TemplateRow } | null> {
+    const run = await generations.findById(ownerId, generationId);
+    if (!run) {
+      reply.code(404).send({ error: `generation not found: ${generationId}` });
+      return null;
+    }
+    const row = await deps.findTemplate(ownerId, run.designId);
+    if (!row) {
+      reply.code(404).send({ error: `generated design not found: ${run.designId}` });
+      return null;
+    }
+    return { run, row };
+  }
+
+  app.get<{ Params: { designId: string } }>("/api/v1/generations/by-design/:designId", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const run = await generations.findByDesign(ownerId, request.params.designId);
+    if (!run) return reply.code(404).send({ error: `generation not found for design: ${request.params.designId}` });
+    const row = await deps.findTemplate(ownerId, run.designId);
+    if (!row) return reply.code(404).send({ error: `generated design not found: ${run.designId}` });
+    return generationPayload(run, row);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/generations/:id", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const found = await findOwnedGeneration(ownerId, request.params.id, reply);
+    if (!found) return;
+    return generationPayload(found.run, found.row);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/v1/generations/:id/submit", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const principal = await requireHuman(request, reply);
+    if (!principal) return;
+    const found = await findOwnedGeneration(principal.ownerId, request.params.id, reply);
+    if (!found) return;
+    const checksum = hashJson(found.row.document);
+    const submitted = await generations.submitVersion({
+      ownerId: principal.ownerId,
+      generationId: found.run.id,
+      document: found.row.document,
+      documentChecksum: checksum,
+      createdBy: principal.actorId!,
     });
+    try {
+      const pngs = await renderAllPages(principal.ownerId, found.row.document);
+      await Promise.all(pngs.map((png, index) =>
+        uploadDraftRender(storage.client, principal.ownerId, found.run.id, submitted.version.version, index, png)));
+    } catch (err) {
+      return reply.code(502).send({ error: `could not render review version: ${err instanceof Error ? err.message : String(err)}` });
+    }
+    return generationPayload(submitted.generation, found.row);
+  });
+
+  app.post<{ Params: { id: string }; Body: { version?: number } }>(
+    "/api/v1/generations/:id/approve",
+    async (request, reply) => {
+      if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+      const principal = await requireHuman(request, reply);
+      if (!principal) return;
+      const found = await findOwnedGeneration(principal.ownerId, request.params.id, reply);
+      if (!found) return;
+      const expectedVersion = request.body?.version ?? found.run.currentVersion;
+      if (!Number.isInteger(expectedVersion) || expectedVersion !== found.run.currentVersion) {
+        return reply.code(409).send({ error: "STALE_VERSION", currentVersion: found.run.currentVersion });
+      }
+      const approvalReplay = found.run.reviewStatus === "approved" && found.run.approvedVersion === expectedVersion;
+      if (found.run.reviewStatus !== "pending" && !approvalReplay) {
+        return reply.code(409).send({ error: "generation is not awaiting approval", reviewStatus: found.run.reviewStatus });
+      }
+      const version = await generations.findVersion(principal.ownerId, found.run.id, expectedVersion);
+      if (!version) return reply.code(409).send({ error: "STALE_VERSION" });
+      if (hashJson(found.row.document) !== version.documentChecksum) {
+        await generations.markEdited(principal.ownerId, found.row.id);
+        return reply.code(409).send({ error: "STALE_VERSION", message: "the design changed after it was submitted" });
+      }
+
+      let pngs: Buffer[];
+      try {
+        pngs = await renderAllPages(principal.ownerId, version.document);
+        await Promise.all(pngs.map((png, index) =>
+          uploadApprovedRender(storage.client, found.run.id, version.version, index, png)));
+      } catch (err) {
+        return reply.code(502).send({ error: `could not publish approved renders: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      const approvedUrls = pngs.map((png, index) => ({
+        page: index + 1,
+        storagePath: publicApprovedRenderUrl(storage.client, found.run.id, version.version, index),
+        checksum: createHash("sha256").update(png).digest("hex"),
+      }));
+      const decision = approvalReplay ? { generation: found.run } : await generations.recordDecision({
+        ownerId: principal.ownerId,
+        generationId: found.run.id,
+        version: version.version,
+        action: "approved",
+        actorId: principal.actorId!,
+      });
+      await generations.recordApprovedRenders({
+        ownerId: principal.ownerId,
+        generationId: found.run.id,
+        version: version.version,
+        renders: approvedUrls,
+      });
+      return generationPayload(decision.generation, found.row);
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { version?: number; comment?: string; action?: "changes_requested" | "rejected" } }>(
+    "/api/v1/generations/:id/request-changes",
+    async (request, reply) => {
+      const principal = await requireHuman(request, reply);
+      if (!principal) return;
+      const found = await findOwnedGeneration(principal.ownerId, request.params.id, reply);
+      if (!found) return;
+      const version = request.body?.version ?? found.run.currentVersion;
+      const comment = request.body?.comment?.trim();
+      if (!comment) return reply.code(400).send({ error: "comment is required when requesting changes" });
+      if (version !== found.run.currentVersion || found.run.reviewStatus !== "pending") {
+        return reply.code(409).send({ error: "STALE_VERSION", currentVersion: found.run.currentVersion });
+      }
+      const action = request.body?.action === "rejected" ? "rejected" : "changes_requested";
+      const decision = await generations.recordDecision({
+        ownerId: principal.ownerId,
+        generationId: found.run.id,
+        version,
+        action,
+        comment,
+        actorId: principal.actorId!,
+      });
+      return { generation: decision.generation, approval: decision.approval };
+    },
+  );
+
+  app.post<{
+    Params: { id: string; page: string; layer: string };
+    Body: MediaAssetRequest;
+  }>("/api/v1/generations/:id/media/:page/:layer/regenerate", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    if (!media) return reply.code(501).send({ error: "media acquisition is not configured on this server" });
+    const principal = await requireHuman(request, reply);
+    if (!principal) return;
+    const found = await findOwnedGeneration(principal.ownerId, request.params.id, reply);
+    if (!found) return;
+    const page = Number(request.params.page);
+    const document = found.row.document as { pages?: Array<{ els?: Array<{ name?: string; type?: string }> }> };
+    if (!Number.isInteger(page) || page < 1 || page > (document.pages?.length ?? 0)) {
+      return reply.code(400).send({ error: "page is outside the design" });
+    }
+    const element = document.pages?.[page - 1]?.els?.find((item) => item.name === request.params.layer);
+    if (!element || element.type !== "image") {
+      return reply.code(400).send({ error: `unknown image layer: ${request.params.layer}` });
+    }
+    let mediaRequest: MediaAssetRequest;
+    try {
+      mediaRequest = parseMediaRequest(request.body, "body");
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+    let acquired: AcquiredMedia;
+    let storageRef: string;
+    try {
+      acquired = await media.service.acquire(mediaRequest);
+      storageRef = await uploadUserPhoto(
+        storage.client,
+        principal.ownerId,
+        `${found.run.id}-page-${page}-${request.params.layer}.${acquired.extension}`,
+        acquired.contentType,
+        acquired.bytes,
+      );
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+    const updatedDocument = applyLayerOverrides(
+      found.row.document,
+      parseLayers({ [request.params.layer]: { image_url: storageRef } }),
+      page - 1,
+    );
+    const updatedRow = await deps.updateTemplate(principal.ownerId, found.row.id, { document: updatedDocument });
+    if (!updatedRow) return reply.code(404).send({ error: `generated design not found: ${found.row.id}` });
+    const submitted = await generations.submitVersion({
+      ownerId: principal.ownerId,
+      generationId: found.run.id,
+      document: updatedDocument,
+      documentChecksum: hashJson(updatedDocument),
+      createdBy: principal.actorId!,
+    });
+    await generations.recordMediaAsset({
+      id: randomUUID(), ownerId: principal.ownerId, generationId: found.run.id,
+      version: submitted.version.version, page, layerName: request.params.layer,
+      strategy: mediaRequest.strategy, storageRef, mimeType: acquired.contentType,
+      width: acquired.width, height: acquired.height, provider: acquired.provider,
+      externalId: acquired.externalId, author: acquired.author, attributionUrl: acquired.attributionUrl,
+      licenseUrl: acquired.licenseUrl, prompt: acquired.prompt, model: acquired.model,
+    });
+    try {
+      const pngs = await renderAllPages(principal.ownerId, updatedDocument);
+      await Promise.all(pngs.map((png, index) =>
+        uploadDraftRender(storage.client, principal.ownerId, found.run.id, submitted.version.version, index, png)));
+    } catch (err) {
+      return reply.code(502).send({ error: `could not render regenerated media: ${err instanceof Error ? err.message : String(err)}` });
+    }
+    return generationPayload(submitted.generation, updatedRow);
   });
 
   app.get("/api/v1/templates", async (request, reply) => {
@@ -328,9 +763,18 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     if (!ownerId) return;
     const row = await deps.findTemplate(ownerId, request.params.id);
     if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
-    // Caminho determinístico (storage.ts) — existe sempre que Storage está configurado, mesmo
-    // que o arquivo em si só passe a existir depois do primeiro save:true.
-    const downloadUrl = storage ? publicRenderUrl(storage.client, row.id) : undefined;
+    // Designs comuns mantêm o link legado determinístico. Em uma geração gerenciada, nenhum
+    // caminho público é revelado antes de a versão atual ser aprovada; depois disso apontamos
+    // para o snapshot imutável aprovado, não para a cópia editável.
+    const managed = storage ? await generations.findByDesign(ownerId, row.id) : null;
+    const approvedCurrent = managed?.reviewStatus === "approved" && managed.approvedVersion === managed.currentVersion;
+    const downloadUrl = storage
+      ? managed
+        ? approvedCurrent
+          ? publicApprovedRenderUrl(storage.client, managed.id, managed.currentVersion, 0)
+          : undefined
+        : publicRenderUrl(storage.client, row.id)
+      : undefined;
     return { id: row.id, name: row.name, document: row.document, downloadUrl };
   });
 
@@ -356,8 +800,14 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
     async (request, reply) => {
       const ownerId = await requireOwner(request, reply);
       if (!ownerId) return;
+      const before = request.body?.document !== undefined
+        ? await deps.findTemplate(ownerId, request.params.id)
+        : null;
       const row = await deps.updateTemplate(ownerId, request.params.id, request.body ?? {});
       if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      if (request.body?.document !== undefined && before && hashJson(before.document) !== hashJson(row.document)) {
+        await generations.markEdited(ownerId, row.id);
+      }
       return { id: row.id, name: row.name };
     },
   );
@@ -455,6 +905,112 @@ export function buildApp(deps: AppDeps, auth: AuthDeps | null = null, storage: S
       sfntPath, woff2Path,
     });
     return reply.code(201).send(face);
+  });
+
+  // Sobe cada imagem extraída do PDF pro bucket privado do dono e devolve o mapa
+  // imageId -> src, na mesma referência que uma layer de imagem já usa (uploadUserPhoto).
+  async function uploadImportedImages(ownerId: string, images: ImportedImage[]): Promise<Map<string, string>> {
+    const bySrc = new Map<string, string>();
+    for (const image of images) {
+      const ext = image.contentType === "image/png" ? "png" : "jpg";
+      const src = await uploadUserPhoto(storage!.client, ownerId, `${image.id}.${ext}`, image.contentType, image.bytes);
+      bySrc.set(image.id, src);
+    }
+    return bySrc;
+  }
+
+  // Mesmo par uploadFontFace+upsertFontFace que POST /api/v1/fonts usa, só que chamado direto em
+  // vez de via HTTP — este código já roda com a identidade do dono, sem precisar de uma chave de
+  // API pra falar consigo mesmo. O sha256 é recalculado aqui pela mesma razão que em
+  // POST /api/v1/fonts: é a identidade da face, nunca aceita do que o PDF/microsserviço disser.
+  async function registerImportedFonts(ownerId: string, fonts: ImportedFont[]) {
+    return Promise.all(fonts.map(async (font) => {
+      const sha256 = createHash("sha256").update(font.ttf).digest("hex");
+      const { sfntPath, woff2Path } = await uploadFontFace(storage!.client, sha256, { ext: "ttf", bytes: font.ttf }, font.woff2);
+      await deps.upsertFontFace({
+        id: randomUUID(),
+        ownerId,
+        sha256,
+        internalFamily: font.familia,
+        postscriptName: font.postscriptName ?? null,
+        weight: font.peso,
+        style: font.estilo,
+        sfntPath,
+        woff2Path,
+      });
+      return { family: font.familia, weight: font.peso, sha256, woff2: woff2Path, ttf: sfntPath, glyphs: font.glifos };
+    }));
+  }
+
+  // Junta páginas+elementos do microsserviço num Doc do editor (src/types.ts). Cada El exige um
+  // conjunto de campos que a extração não tem motivo pra saber (rot/opacity/locked/...) — os
+  // mesmos defaults que canva-import.ts já usa para o caminho manual de importação.
+  function buildImportedPages(pages: ImportedPage[], imageSrcById: Map<string, string>) {
+    return pages.map((page) => ({
+      id: randomUUID(),
+      w: page.w,
+      h: page.h,
+      bg: "#ffffff",
+      els: page.elements.map((el, index) => {
+        if (el.type === "image") {
+          const src = imageSrcById.get(el.imageId);
+          if (!src) throw new Error(`imagem não encontrada para o elemento: ${el.imageId}`);
+          return {
+            id: randomUUID(), type: "image" as const, name: el.name,
+            x: el.x, y: el.y, w: el.w, h: el.h,
+            rot: 0, opacity: 1, locked: false, hidden: false,
+            fill: "", stroke: "", strokeWidth: 0, radius: 0,
+            src,
+          };
+        }
+        return {
+          id: randomUUID(), type: "text" as const, name: `texto ${index + 1}`,
+          x: el.x, y: el.y, w: el.w, h: el.h,
+          rot: el.rot, opacity: 1, locked: false, hidden: false,
+          fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
+          text: el.text, font: el.font, weight: el.weight, size: el.size,
+        };
+      }),
+    }));
+  }
+
+  // Síncrona (mesmo padrão de /api/v1/generations): o navegador espera até terminar, ~1min pra
+  // um carrossel — sem fila nem polling, porque a extração em si não é lenta o bastante pra
+  // justificar a complexidade de um job assíncrono.
+  app.post("/api/v1/imports/pdf", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    if (!pdfImport) return reply.code(501).send({ error: "PDF import is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+
+    const file = await request.file();
+    if (!file || file.fieldname !== "pdf") return reply.code(400).send({ error: "envie o campo 'pdf' como multipart" });
+    const bytes = await file.toBuffer();
+    if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") return reply.code(400).send({ error: "arquivo não é um PDF" });
+
+    let result;
+    try {
+      result = await pdfImport.service.importPdf(bytes);
+    } catch (err) {
+      if (err instanceof FlattenedPdfError) return reply.code(422).send({ error: err.message, codigo: "achatado" });
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+
+    const imageSrcById = await uploadImportedImages(ownerId, result.images);
+    const fonts = await registerImportedFonts(ownerId, result.fonts);
+    const pages = buildImportedPages(result.pages, imageSrcById);
+    const name = file.filename?.replace(/\.pdf$/i, "").trim() || "PDF importado";
+    const document = { name, active: 0, pages, ...(fonts.length ? { fonts } : {}) };
+
+    const row = await deps.createTemplate(ownerId, { name, document });
+    return reply.code(201).send({
+      id: row.id,
+      name: row.name,
+      pageCount: pages.length,
+      layerCount: pages.reduce((sum, page) => sum + page.els.length, 0),
+      fontCount: fonts.length,
+      flaggedPages: result.flaggedPages,
+    });
   });
 
   // Diagnóstico sob demanda: "este servidor consegue desenhar texto para mim?"

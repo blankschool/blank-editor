@@ -19,8 +19,8 @@ const DEV_ENTRIES: ReadonlyArray<{
   },
   {
     view: "import",
-    label: "Importar JSON",
-    hint: "Subir um documento que o editor já salvou como design novo.",
+    label: "Importar PDF",
+    hint: "Enviar um PDF exportado do Canva e receber um design editável.",
     icon: FileDown,
   },
   {

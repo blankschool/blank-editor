@@ -1,4 +1,12 @@
 import postgres from "postgres";
+import { randomUUID } from "node:crypto";
+import type {
+  ApprovalRecord,
+  DesignVersion,
+  GenerationRepository,
+  GenerationRun,
+  MediaAssetRecord,
+} from "./generationWorkflow.ts";
 
 export function createDb(connectionString: string) {
   return postgres(connectionString, { max: 5 });
@@ -198,4 +206,240 @@ export async function listFontFaces(sql: Sql, ownerId: string): Promise<FontFace
     where owner_id = ${ownerId}
     order by internal_family, weight
   `;
+}
+
+interface GenerationDbRow extends Omit<GenerationRun, "createdAt" | "updatedAt"> {
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface VersionDbRow extends Omit<DesignVersion, "createdAt"> {
+  createdAt: Date;
+}
+
+interface ApprovalDbRow extends Omit<ApprovalRecord, "createdAt"> {
+  createdAt: Date;
+}
+
+const GENERATION_COLUMNS = `
+  id, owner_id as "ownerId", design_id as "designId",
+  source_template_id as "sourceTemplateId", idempotency_key as "idempotencyKey",
+  request_hash as "requestHash", processing_status as "processingStatus",
+  review_status as "reviewStatus", delivery_status as "deliveryStatus",
+  current_version as "currentVersion", approved_version as "approvedVersion",
+  run_id as "runId", error, created_at as "createdAt", updated_at as "updatedAt"
+`;
+
+function mapGeneration(row: GenerationDbRow): GenerationRun {
+  return { ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
+}
+
+function mapVersion(row: VersionDbRow): DesignVersion {
+  return { ...row, createdAt: row.createdAt.toISOString() };
+}
+
+/** PostgreSQL implementation of the generation aggregate. Multi-row state changes are
+ * transactional so an approval can never exist without its outbox event and state update. */
+export function createPostgresGenerationRepository(sql: Sql): GenerationRepository {
+  return {
+    async findByIdempotency(ownerId, idempotencyKey) {
+      const rows = await sql<GenerationDbRow[]>`
+        select ${sql.unsafe(GENERATION_COLUMNS)} from generation_runs
+        where owner_id = ${ownerId} and idempotency_key = ${idempotencyKey}
+      `;
+      return rows[0] ? mapGeneration(rows[0]) : null;
+    },
+    async findById(ownerId, generationId) {
+      const rows = await sql<GenerationDbRow[]>`
+        select ${sql.unsafe(GENERATION_COLUMNS)} from generation_runs
+        where owner_id = ${ownerId} and id = ${generationId}
+      `;
+      return rows[0] ? mapGeneration(rows[0]) : null;
+    },
+    async findByDesign(ownerId, designId) {
+      const rows = await sql<GenerationDbRow[]>`
+        select ${sql.unsafe(GENERATION_COLUMNS)} from generation_runs
+        where owner_id = ${ownerId} and design_id = ${designId}
+      `;
+      return rows[0] ? mapGeneration(rows[0]) : null;
+    },
+    async findVersion(ownerId, generationId, version) {
+      const rows = await sql<VersionDbRow[]>`
+        select v.generation_id as "generationId", v.version, v.document,
+          v.document_checksum as "documentChecksum", v.created_by as "createdBy",
+          v.created_at as "createdAt"
+        from design_versions v
+        join generation_runs g on g.id = v.generation_id
+        where g.owner_id = ${ownerId} and v.generation_id = ${generationId} and v.version = ${version}
+      `;
+      return rows[0] ? mapVersion(rows[0]) : null;
+    },
+    async createWithInitialVersion(input) {
+      return sql.begin(async (tx) => {
+        const rows = await tx<GenerationDbRow[]>`
+          insert into generation_runs (
+            id, owner_id, design_id, source_template_id, idempotency_key, request_hash,
+            processing_status, review_status, delivery_status, current_version, run_id
+          ) values (
+            ${input.id}, ${input.ownerId}, ${input.designId}, ${input.sourceTemplateId},
+            ${input.idempotencyKey}, ${input.requestHash}, 'ready', 'pending', 'blocked', 1,
+            ${input.runId ?? null}
+          )
+          returning ${tx.unsafe(GENERATION_COLUMNS)}
+        `;
+        await tx`
+          insert into design_versions (
+            generation_id, version, owner_id, document, document_checksum, created_by
+          ) values (
+            ${input.id}, 1, ${input.ownerId}, ${tx.json(jsonValue(sql, input.document))},
+            ${input.documentChecksum}, ${input.createdBy ?? null}
+          )
+        `;
+        await tx`
+          insert into outbox_events (owner_id, generation_id, event_type, payload)
+          values (${input.ownerId}, ${input.id}, 'generation.awaiting_approval',
+            ${tx.json({ generationId: input.id, designId: input.designId, version: 1 })})
+        `;
+        return mapGeneration(rows[0]);
+      });
+    },
+    async markEdited(ownerId, designId) {
+      const rows = await sql<GenerationDbRow[]>`
+        update generation_runs set review_status = 'draft', delivery_status = 'blocked', updated_at = now()
+        where owner_id = ${ownerId} and design_id = ${designId}
+          and review_status <> 'draft'
+        returning ${sql.unsafe(GENERATION_COLUMNS)}
+      `;
+      if (rows[0]) return mapGeneration(rows[0]);
+      return this.findByDesign(ownerId, designId);
+    },
+    async submitVersion(input) {
+      return sql.begin(async (tx) => {
+        const locked = await tx<GenerationDbRow[]>`
+          select ${tx.unsafe(GENERATION_COLUMNS)} from generation_runs
+          where owner_id = ${input.ownerId} and id = ${input.generationId}
+          for update
+        `;
+        if (!locked[0]) throw new Error("generation not found");
+        const current = mapGeneration(locked[0]);
+        const existing = await tx<VersionDbRow[]>`
+          select generation_id as "generationId", version, document,
+            document_checksum as "documentChecksum", created_by as "createdBy", created_at as "createdAt"
+          from design_versions where generation_id = ${input.generationId} and version = ${current.currentVersion}
+        `;
+        const versionNumber = existing[0]?.documentChecksum === input.documentChecksum
+          ? current.currentVersion
+          : current.currentVersion + 1;
+        const versions = await tx<VersionDbRow[]>`
+          insert into design_versions (
+            generation_id, version, owner_id, document, document_checksum, created_by
+          ) values (
+            ${input.generationId}, ${versionNumber}, ${input.ownerId},
+            ${tx.json(jsonValue(sql, input.document))}, ${input.documentChecksum}, ${input.createdBy}
+          )
+          on conflict (generation_id, version) do update set
+            document = excluded.document,
+            document_checksum = excluded.document_checksum,
+            created_by = excluded.created_by,
+            created_at = now()
+          returning generation_id as "generationId", version, document,
+            document_checksum as "documentChecksum", created_by as "createdBy", created_at as "createdAt"
+        `;
+        const runs = await tx<GenerationDbRow[]>`
+          update generation_runs set current_version = ${versionNumber}, review_status = 'pending',
+            delivery_status = 'blocked', updated_at = now()
+          where owner_id = ${input.ownerId} and id = ${input.generationId}
+          returning ${tx.unsafe(GENERATION_COLUMNS)}
+        `;
+        await tx`
+          insert into outbox_events (owner_id, generation_id, event_type, payload)
+          values (${input.ownerId}, ${input.generationId}, 'generation.awaiting_approval',
+            ${tx.json({ generationId: input.generationId, version: versionNumber })})
+        `;
+        return { generation: mapGeneration(runs[0]), version: mapVersion(versions[0]) };
+      });
+    },
+    async recordDecision(input) {
+      return sql.begin(async (tx) => {
+        const status = input.action;
+        const delivery = input.action === "approved" ? "available" : "blocked";
+        const rows = await tx<GenerationDbRow[]>`
+          update generation_runs set review_status = ${status}, delivery_status = ${delivery},
+            approved_version = case when ${input.action} = 'approved' then ${input.version} else approved_version end,
+            updated_at = now()
+          where owner_id = ${input.ownerId} and id = ${input.generationId}
+          returning ${tx.unsafe(GENERATION_COLUMNS)}
+        `;
+        if (!rows[0]) throw new Error("generation not found");
+        const approvals = await tx<ApprovalDbRow[]>`
+          insert into approvals (id, generation_id, version, owner_id, action, comment, actor_id)
+          values (${randomUUID()}, ${input.generationId}, ${input.version}, ${input.ownerId},
+            ${input.action}, ${input.comment ?? null}, ${input.actorId})
+          returning id::text, generation_id as "generationId", version, action, comment,
+            actor_id as "actorId", created_at as "createdAt"
+        `;
+        const eventType = `generation.${input.action}`;
+        await tx`
+          insert into outbox_events (owner_id, generation_id, event_type, payload)
+          values (${input.ownerId}, ${input.generationId}, ${eventType},
+            ${tx.json({ generationId: input.generationId, version: input.version, action: input.action, comment: input.comment ?? null })})
+        `;
+        const approval = approvals[0];
+        return {
+          generation: mapGeneration(rows[0]),
+          approval: { ...approval, createdAt: approval.createdAt.toISOString() },
+        };
+      });
+    },
+    async recordMediaAsset(input) {
+      await sql.begin(async (tx) => {
+        await tx`
+          insert into media_assets (
+            id, owner_id, strategy, storage_ref, mime_type, width, height, provider,
+            external_id, author, attribution_url, license_url, prompt, model
+          ) values (
+            ${input.id}, ${input.ownerId}, ${input.strategy}, ${input.storageRef}, ${input.mimeType},
+            ${input.width}, ${input.height}, ${input.provider}, ${input.externalId}, ${input.author},
+            ${input.attributionUrl}, ${input.licenseUrl}, ${input.prompt}, ${input.model}
+          )
+        `;
+        await tx`
+          insert into generation_page_assets (generation_id, version, page, layer_name, asset_id)
+          values (${input.generationId}, ${input.version}, ${input.page}, ${input.layerName}, ${input.id})
+        `;
+      });
+    },
+    async recordApprovedRenders(input) {
+      await sql.begin(async (tx) => {
+        const owned = await tx`
+          select 1 from generation_runs where id = ${input.generationId} and owner_id = ${input.ownerId}
+        `;
+        if (!owned[0]) throw new Error("generation not found");
+        for (const render of input.renders) {
+          await tx`
+            insert into render_artifacts (
+              generation_id, version, page, format, storage_path, checksum, approved
+            ) values (
+              ${input.generationId}, ${input.version}, ${render.page}, 'png',
+              ${render.storagePath}, ${render.checksum}, true
+            )
+            on conflict (generation_id, version, page, format) do update set
+              storage_path = excluded.storage_path,
+              checksum = excluded.checksum,
+              approved = true,
+              created_at = now()
+          `;
+          await tx`
+            update intel.art_renders set
+              status = 'CONCLUIDO',
+              review_status = 'approved',
+              design_version = ${input.version},
+              approved_at = now(),
+              approved_png_url = ${render.storagePath}
+            where generation_id = ${input.generationId} and page = ${render.page}
+          `;
+        }
+      });
+    },
+  };
 }

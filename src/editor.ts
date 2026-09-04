@@ -207,6 +207,7 @@ function persist() {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
     saveTemplateLocally(doc);
     const synced = await syncTemplateToServer(doc);
+    if (synced && looksGenerated(doc.seedId)) void refreshGenerationReview();
     if (seq !== persistSeq) return;
     if (st) {
       st.textContent = synced ? "Salvo" : "Erro ao salvar";
@@ -1810,6 +1811,106 @@ $("present").addEventListener("click", (ev) => { if (ev.target === $("present"))
 
 
 /* ============================ export ============================ */
+interface GenerationReviewState {
+  id: string;
+  reviewStatus: "draft" | "pending" | "changes_requested" | "approved" | "rejected";
+  version: number;
+  approvedVersion: number | null;
+  canDownload: boolean;
+}
+
+let generationReview: GenerationReviewState | null = null;
+let reviewActionRunning = false;
+let legacyGeneratedDesign = false;
+
+const REVIEW_LABELS: Record<GenerationReviewState["reviewStatus"], string> = {
+  draft: "Rascunho",
+  pending: "Aguardando aprovação",
+  changes_requested: "Ajustes solicitados",
+  approved: "Aprovado",
+  rejected: "Rejeitado",
+};
+
+function looksGenerated(id: string | undefined): boolean {
+  return Boolean(id?.startsWith("generation-"));
+}
+
+function renderGenerationReview() {
+  const controls = $("reviewControls");
+  const managedGeneration = looksGenerated(doc.seedId) && !legacyGeneratedDesign;
+  controls.hidden = !managedGeneration;
+  $("exportBtn").hidden = managedGeneration && !generationReview?.canDownload;
+  if (!managedGeneration) return;
+  const status = $("reviewStatus");
+  status.textContent = generationReview ? REVIEW_LABELS[generationReview.reviewStatus] : "Carregando revisão…";
+  status.dataset.state = generationReview?.reviewStatus ?? "loading";
+  $("submitReviewBtn").hidden = !generationReview || !["draft", "changes_requested", "rejected"].includes(generationReview.reviewStatus);
+  $("approveBtn").hidden = generationReview?.reviewStatus !== "pending";
+  $("requestChangesBtn").hidden = generationReview?.reviewStatus !== "pending";
+  for (const id of ["submitReviewBtn", "approveBtn", "requestChangesBtn"]) $(id).disabled = reviewActionRunning;
+}
+
+async function refreshGenerationReview() {
+  const designId = doc.seedId;
+  generationReview = null;
+  legacyGeneratedDesign = false;
+  renderGenerationReview();
+  if (!looksGenerated(designId)) return;
+  try {
+    const response = await fetch(`/api/v1/generations/by-design/${encodeURIComponent(designId!)}`, { credentials: "include" });
+    if (response.status === 404) {
+      legacyGeneratedDesign = true;
+      renderGenerationReview();
+      return;
+    }
+    if (!response.ok) throw new Error("review unavailable");
+    const body = await response.json();
+    if (doc.seedId !== designId) return;
+    generationReview = body.generation as GenerationReviewState;
+  } catch {
+    if (doc.seedId === designId) toast("Não foi possível carregar o estado de aprovação.");
+  }
+  renderGenerationReview();
+}
+
+async function reviewAction(action: "submit" | "approve" | "request-changes") {
+  if (!generationReview || reviewActionRunning) return;
+  let comment: string | undefined;
+  if (action === "request-changes") {
+    comment = window.prompt("Quais ajustes precisam ser feitos?")?.trim();
+    if (!comment) return;
+  }
+  reviewActionRunning = true;
+  renderGenerationReview();
+  clearTimeout(persistTimer);
+  try {
+    if (!await syncTemplateToServer(doc)) throw new Error("Não foi possível salvar o design antes da decisão.");
+    const response = await fetch(`/api/v1/generations/${encodeURIComponent(generationReview.id)}/${action}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: generationReview.version, ...(comment ? { comment } : {}) }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (body.error === "STALE_VERSION") throw new Error("O design mudou. Envie a versão atual para aprovação primeiro.");
+      throw new Error(body.message || body.error || "Não foi possível atualizar a aprovação.");
+    }
+    await refreshGenerationReview();
+    toast(action === "approve" ? "Versão aprovada — downloads liberados." : action === "submit" ? "Enviado para aprovação." : "Ajustes solicitados.");
+  } catch (err) {
+    toast(err instanceof Error ? err.message : "Não foi possível atualizar a aprovação.");
+    await refreshGenerationReview();
+  } finally {
+    reviewActionRunning = false;
+    renderGenerationReview();
+  }
+}
+
+$("submitReviewBtn").addEventListener("click", () => void reviewAction("submit"));
+$("approveBtn").addEventListener("click", () => void reviewAction("approve"));
+$("requestChangesBtn").addEventListener("click", () => void reviewAction("request-changes"));
+
 let downloads = null;
 if (window.claude?.use) {
   window.claude.use("downloads").then((d) => { downloads = d; }).catch(() => {});
@@ -1823,7 +1924,14 @@ function renderExport() {
     `<button data-scale="${s}" aria-pressed="${expScale === s}" title="Escala ${s}×">${s}×</button>`).join("");
   $("scales").parentElement.style.display = (expFmt === "json") ? "none" : "";
 }
-$("exportBtn").addEventListener("click", () => { renderExport(); $("scrim").hidden = false; });
+$("exportBtn").addEventListener("click", () => {
+  if (looksGenerated(doc.seedId) && !legacyGeneratedDesign && !generationReview?.canDownload) {
+    toast("A versão precisa ser aprovada antes do download.");
+    return;
+  }
+  renderExport();
+  $("scrim").hidden = false;
+});
 $("expCancel").addEventListener("click", () => { $("scrim").hidden = true; });
 $("scrim").addEventListener("click", (e) => { if (e.target === $("scrim")) $("scrim").hidden = true; });
 $("scrim").addEventListener("click", (e) => {
@@ -1980,6 +2088,23 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
 }
 
 async function doExport() {
+  if (looksGenerated(doc.seedId) && !legacyGeneratedDesign) {
+    // A pessoa pode clicar em Exportar antes do autosave disparar. Salvar e reler o estado aqui
+    // fecha essa janela: uma edição feita depois da aprovação volta a rascunho antes de qualquer
+    // byte ser baixado.
+    clearTimeout(persistTimer);
+    if (!await syncTemplateToServer(doc)) {
+      $("scrim").hidden = true;
+      toast("Não foi possível confirmar a versão atual antes do download.");
+      return;
+    }
+    await refreshGenerationReview();
+    if (!generationReview?.canDownload) {
+      $("scrim").hidden = true;
+      toast("A versão precisa ser aprovada antes do download.");
+      return;
+    }
+  }
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
   $("scrim").hidden = true;
   if (!downloads) { toast("Download não está disponível nesta visualização."); return; }
@@ -2270,6 +2395,7 @@ export function openTemplateDocument(templateDoc: Doc) {
   past = [];
   future = [];
   baseline = snap();
+  void refreshGenerationReview();
   if (editorMounted) {
     $("docname").value = doc.name;
     renderAll();

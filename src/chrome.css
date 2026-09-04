@@ -286,3 +286,12 @@
 #view-editor .align-actions button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; padding: 10px 8px; height: 60px; font-size: 11px; border: 0; background: var(--surface-2); color: var(--text); }
 #view-editor .order-actions button:hover, #view-editor .align-actions button:hover { background: var(--accent-soft); }
 #view-editor .props .align-label { margin: 16px 0 8px; font-size: 12px; font-weight: 600; }
+/* Generation review lives in the editor toolbar so approval and export act on the exact
+   document the reviewer is looking at. Regular designs never show these controls. */
+.review-controls { display:flex; align-items:center; gap:6px; }
+.review-controls[hidden], .review-controls [hidden] { display:none; }
+#exportBtn[hidden] { display:none; }
+.review-status { padding:5px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:11px; white-space:nowrap; }
+.review-status[data-state="pending"] { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); background:var(--accent-soft); }
+.review-status[data-state="approved"] { color:#23a26d; border-color:color-mix(in srgb, #23a26d 45%, var(--line)); background:color-mix(in srgb, #23a26d 10%, transparent); }
+.review-status[data-state="changes_requested"], .review-status[data-state="rejected"] { color:var(--danger); }

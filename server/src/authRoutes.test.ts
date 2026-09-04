@@ -20,12 +20,18 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     },
     listTemplates: async (ownerId) =>
       [...templates.values()].filter((t) => t.ownerId === ownerId).map((t) => ({ id: t.id, name: t.name, updatedAt: "2024-01-01T00:00:00.000Z" })),
-    createTemplate: async (ownerId, { name, document }) => {
-      const row: TemplateRow = { id: `tpl-${templates.size + 1}`, ownerId, kind: "custom", name, document };
+    createTemplate: async (ownerId, { id, name, document }) => {
+      const row: TemplateRow = { id: id ?? `tpl-${templates.size + 1}`, ownerId, kind: "custom", name, document };
       templates.set(row.id, row);
       return row;
     },
-    updateTemplate: async () => null,
+    updateTemplate: async (ownerId, id, input) => {
+      const row = templates.get(id);
+      if (!row || row.ownerId !== ownerId) return null;
+      const updated = { ...row, name: input.name ?? row.name, document: input.document ?? row.document };
+      templates.set(id, updated);
+      return updated;
+    },
     deleteTemplate: async () => false,
     upsertFontFace: async (input) => ({
       id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
@@ -74,6 +80,19 @@ function makeAuth(overrides: Partial<AuthDeps> = {}): AuthDeps {
 
 function cookieHeader(res: { cookies: Array<{ name: string; value: string }> }): string {
   return res.cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+function makeFakeStorageClient() {
+  return {
+    storage: {
+      from: (bucket: string) => ({
+        upload: async () => ({ error: null }),
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://storage.test/public/${bucket}/${path}` } }),
+        createSignedUrl: async (path: string) => ({ data: { signedUrl: `https://storage.test/signed/${bucket}/${path}` }, error: null }),
+      }),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
 }
 
 // --- sem Supabase configurado -------------------------------------------------
@@ -204,6 +223,120 @@ test("a Supabase JWT passed as Bearer (the Edge Function path) resolves the same
     headers: { authorization: `Bearer ${FAKE_SESSION.access_token}` },
   });
   assert.equal(res.statusCode, 200);
+});
+
+test("an authenticated editor can approve the exact submitted version and unlock downloads", async () => {
+  const app = buildApp(makeDeps(), makeAuth(), { client: makeFakeStorageClient() });
+  const headers = { authorization: `Bearer ${FAKE_SESSION.access_token}` };
+  const source = await app.inject({
+    method: "POST", url: "/api/v1/templates", headers,
+    payload: { name: "Card", document: { name: "Card", active: 0, pages: [{ id: "p1", w: 100, h: 100, bg: "#000", els: [] }] } },
+  });
+  const sourceId = JSON.parse(source.body).id;
+  const generated = await app.inject({
+    method: "POST", url: "/api/v1/generations",
+    headers: { ...headers, "idempotency-key": "review-1" },
+    payload: { template: sourceId, name: "Gerado", pages: [{ layers: {} }] },
+  });
+  assert.equal(generated.statusCode, 201);
+  const generatedBody = JSON.parse(generated.body);
+  const generationId = generatedBody.generation.id;
+  const designId = generatedBody.design.id;
+
+  const beforeApproval = await app.inject({ method: "GET", url: `/api/v1/templates/${designId}`, headers });
+  assert.equal("downloadUrl" in JSON.parse(beforeApproval.body), false);
+
+  const approved = await app.inject({
+    method: "POST", url: `/api/v1/generations/${generationId}/approve`, headers,
+    payload: { version: 1 },
+  });
+  assert.equal(approved.statusCode, 200);
+  const body = JSON.parse(approved.body);
+  assert.equal(body.generation.reviewStatus, "approved");
+  assert.equal(body.generation.canDownload, true);
+  assert.match(body.design.pages[0].pngUrl, /\/renders\/approved\/.*\/versions\/1\/page-1\.png$/);
+  const afterApproval = await app.inject({ method: "GET", url: `/api/v1/templates/${designId}`, headers });
+  assert.match(JSON.parse(afterApproval.body).downloadUrl, /\/renders\/approved\/.*\/versions\/1\/page-1\.png$/);
+
+  const replay = await app.inject({
+    method: "POST", url: `/api/v1/generations/${generationId}/approve`, headers,
+    payload: { version: 1 },
+  });
+  assert.equal(replay.statusCode, 200);
+  assert.equal(JSON.parse(replay.body).generation.approvedVersion, 1);
+});
+
+test("editing after submission blocks stale approval until the editor submits a new version", async () => {
+  const sourceDoc = { name: "Card", active: 0, pages: [{ id: "p1", w: 100, h: 100, bg: "#000", els: [
+    { id: "title", type: "text", name: "titulo", text: "Original" },
+  ] }] };
+  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: sourceDoc }]]);
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => rows.get(id)?.ownerId === ownerId ? rows.get(id)! : null,
+    createTemplate: async (ownerId, input) => {
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      rows.set(row.id, row);
+      return row;
+    },
+    updateTemplate: async (ownerId, id, input) => {
+      const row = rows.get(id);
+      if (!row || row.ownerId !== ownerId) return null;
+      const updated = { ...row, name: input.name ?? row.name, document: input.document ?? row.document };
+      rows.set(id, updated);
+      return updated;
+    },
+  });
+  const app = buildApp(deps, makeAuth(), { client: makeFakeStorageClient() });
+  const headers = { authorization: `Bearer ${FAKE_SESSION.access_token}` };
+  const created = await app.inject({
+    method: "POST", url: "/api/v1/generations", headers: { ...headers, "idempotency-key": "stale-review" },
+    payload: { template: "source", name: "Gerado", pages: [{ layers: { titulo: { text: "Versão 1" } } }] },
+  });
+  const payload = JSON.parse(created.body);
+  const generationId = payload.generation.id;
+  const designId = payload.design.id;
+  const changed = structuredClone(rows.get(designId)!.document) as typeof sourceDoc;
+  changed.pages[0].els[0].text = "Versão 2";
+  await app.inject({ method: "PUT", url: `/api/v1/templates/${designId}`, headers, payload: { document: changed } });
+
+  const stale = await app.inject({
+    method: "POST", url: `/api/v1/generations/${generationId}/approve`, headers, payload: { version: 1 },
+  });
+  assert.equal(stale.statusCode, 409);
+
+  const submitted = await app.inject({ method: "POST", url: `/api/v1/generations/${generationId}/submit`, headers });
+  assert.equal(JSON.parse(submitted.body).generation.version, 2);
+  const approved = await app.inject({
+    method: "POST", url: `/api/v1/generations/${generationId}/approve`, headers, payload: { version: 2 },
+  });
+  assert.equal(approved.statusCode, 200);
+  assert.equal(JSON.parse(approved.body).generation.approvedVersion, 2);
+});
+
+test("an API key can create a generation but cannot approve it", async () => {
+  const generatedDesign = { name: "Card", active: 0, pages: [{ id: "p1", w: 100, h: 100, bg: "#000", els: [] }] };
+  const rows = new Map<string, TemplateRow>([["source", { id: "source", ownerId: OWNER_ID, kind: "custom", name: "Card", document: generatedDesign }]]);
+  const deps = makeDeps({
+    findApiKeyOwner: async () => ({ ownerId: OWNER_ID }),
+    findTemplate: async (ownerId, id) => rows.get(id)?.ownerId === ownerId ? rows.get(id)! : null,
+    createTemplate: async (ownerId, input) => {
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      rows.set(row.id, row);
+      return row;
+    },
+  });
+  const app = buildApp(deps, makeAuth(), { client: makeFakeStorageClient() });
+  const headers = { authorization: "Bearer blk_live_automation", "idempotency-key": "api-key-review" };
+  const created = await app.inject({
+    method: "POST", url: "/api/v1/generations", headers,
+    payload: { template: "source", name: "Gerado", pages: [{ layers: {} }] },
+  });
+  const generationId = JSON.parse(created.body).generation.id;
+  const approval = await app.inject({
+    method: "POST", url: `/api/v1/generations/${generationId}/approve`,
+    headers: { authorization: headers.authorization }, payload: { version: 1 },
+  });
+  assert.equal(approval.statusCode, 403);
 });
 
 test("template/key routes still 401 with no cookie and no Authorization header, even with auth configured", async () => {

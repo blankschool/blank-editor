@@ -146,6 +146,13 @@ tipo enviado.
       "layers": {
         "titulo": { "text": "Uma tese forte" },
         "corpo": { "text": "O argumento deste card." },
+        "imagem": {
+          "asset": {
+            "strategy": "stock",
+            "query": "professora brasileira em sala de aula",
+            "aspectRatio": "4:5"
+          }
+        },
         "numero": { "text": "1/5" },
         "cta": { "text": "" }
       }
@@ -154,10 +161,35 @@ tipo enviado.
 }
 ```
 
-A resposta traz o novo ID, `editorPath` e um PNG público por página. O n8n deve
+A estratégia de imagem é sempre explícita: `stock` pesquisa no Pexels e `ai`
+gera uma imagem pela OpenAI. Não existe fallback silencioso entre as duas. O
+servidor copia os bytes para o Storage privado do Blank e registra fornecedor,
+autor/licença ou prompt/modelo; `PEXELS_API_KEY` e `OPENAI_API_KEY` ficam apenas
+no ambiente do servidor.
+
+A resposta traz `generation.id`, os três estados da geração, `reviewPath`, o
+novo design e uma URL assinada de preview por página. O preview ainda não é um
+download público. O n8n deve
 guardar a API key numa credencial, enviar `run_id` (ou o ID da execução) como
 `Idempotency-Key` e montar a URL de edição como
-`https://blank-editor.ickanz.easypanel.host${editorPath}`.
+`https://blank-editor.ickanz.easypanel.host${reviewPath}`. Reutilizar a mesma
+chave com outro corpo retorna `409 IDEMPOTENCY_CONFLICT`.
+
+### Aprovação e download
+
+O documento em `templates` é a cópia editável. `design_versions` guarda os
+snapshots imutáveis submetidos para revisão. Qualquer editor autenticado pode
+usar:
+
+- `POST /api/v1/generations/:id/submit` para enviar a versão atual;
+- `POST /api/v1/generations/:id/approve` para aprovar a versão informada;
+- `POST /api/v1/generations/:id/request-changes` com comentário obrigatório;
+- `POST /api/v1/generations/:id/media/:page/:layer/regenerate` para trocar só
+  a foto escolhida usando `stock` ou `ai`.
+
+O editor esconde a exportação enquanto `canDownload` for falso. Aprovar
+renderiza o snapshot e publica URLs versionadas; editar depois volta a cópia
+atual para `draft`, bloqueia seu download e preserva a versão aprovada anterior.
 
 ## Publicar
 

@@ -1,116 +1,101 @@
 import { useRef } from "react";
-import { FileDown } from "lucide-react";
+import { CheckCircle2, FileWarning, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { DevViewHeader } from "./AccountView";
-import { JSON_PLACEHOLDER, importTemplateJson, set, useConsole } from "./store";
+import { importTemplatePdf, openTemplateById, set, useConsole } from "./store";
 
 /**
- * Só JSON.
- *
- * Esta tela tinha quatro abas — JSON, Imagens, Fontes, Apps (Canva/Figma). Três
- * delas não importavam nada: escreviam uma string em `state.lastAdded` e
- * pronto, sem upload, sem OAuth, sem endpoint do outro lado. Eram maquete. Como
- * a tela agora vive em Conta → Desenvolvedor e se chama "Importar JSON", manter
- * três importadores falsos ali era juntar o pior dos dois lados: superfície de
- * demo dentro da área técnica. Saíram — estão no histórico do git se voltarem a
- * fazer sentido com backend por trás.
+ * Substitui o antigo "Importar JSON": em vez de colar o formato interno do
+ * editor, a pessoa envia o PDF que o Canva exportou (Compartilhar → Baixar →
+ * "PDF para impressão" — não "PDF Padrão", que sai achatado) e recebe de
+ * volta um design editável de verdade — texto, imagens e fontes já
+ * reconstruídos, sem passo manual nenhum.
  */
-function JsonModal() {
+export function ImportView() {
   const s = useConsole();
   const fileInput = useRef<HTMLInputElement>(null);
+  const busy = s.pdfImportStatus === "processando";
 
   return (
-    <Dialog open={s.jsonModalOpen} onOpenChange={(open) => set("jsonModalOpen", open)}>
-      <DialogContent className="max-w-[640px]">
-        <DialogTitle className="flex items-center gap-2.5 pr-8 text-[17px]">
-          <FileDown size={20} strokeWidth={1.8} className="flex-none" />
-          Importar JSON
-        </DialogTitle>
+    <div className="flex max-w-[620px] flex-col gap-5 p-5">
+      <DevViewHeader title="Importar PDF" />
 
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-line bg-inset p-5 text-center hover:border-line-strong"
-        >
-          <span className="text-[13px] text-muted">Clique para escolher um arquivo .json</span>
-          <span className="font-mono text-[11px] text-faint">ou cole o conteúdo abaixo</span>
-        </button>
+      <div className="flex flex-col gap-3.5 rounded-lg border border-line bg-surface p-4.5">
+        <span className="text-xs leading-relaxed text-faint">
+          Um PDF exportado do Canva (Compartilhar → Baixar →{" "}
+          <code className="font-mono text-[11px] text-muted">PDF para impressão</code>). Texto, imagens
+          e fontes chegam já editáveis, num design novo.
+        </span>
+
         <input
           ref={fileInput}
           type="file"
-          accept="application/json,.json"
+          accept="application/pdf,.pdf"
           hidden
-          onChange={async (event) => {
+          onChange={(event) => {
             const file = event.target.files?.[0];
-            if (!file) return;
-            set("jsonError", null);
-            set("jsonDraft", await file.text());
-            // Zera o input: escolher o MESMO arquivo de novo tem que disparar change outra vez.
-            event.target.value = "";
+            event.target.value = ""; // escolher o MESMO arquivo de novo tem que disparar change outra vez
+            if (file) importTemplatePdf(file);
           }}
         />
 
-        <Textarea
-          aria-label="Documento JSON"
-          spellCheck={false}
-          value={s.jsonDraft}
-          placeholder={JSON_PLACEHOLDER}
-          onChange={(e) => {
-            set("jsonError", null);
-            set("jsonDraft", e.target.value);
-          }}
-          className="min-h-[260px] resize-y"
-        />
-        {s.jsonError && <span className="text-xs text-danger">{s.jsonError}</span>}
+        <Button
+          size="lg"
+          className="self-start"
+          disabled={busy}
+          onClick={() => fileInput.current?.click()}
+        >
+          {busy ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" /> : <Upload size={15} strokeWidth={1.8} />}
+          {busy ? "Extraindo o PDF…" : "Escolher PDF"}
+        </Button>
 
-        <DialogFooter>
-          <span className="flex-1 font-mono text-[11px] text-faint">
-            {s.jsonDraft.trim() ? "pronto para importar" : "nada colado ainda"}
-          </span>
-          <Button variant="outline" size="lg" onClick={() => set("jsonModalOpen", false)}>
-            Cancelar
-          </Button>
-          <Button size="lg" disabled={!s.jsonDraft.trim()} onClick={importTemplateJson}>
-            <FileDown size={15} strokeWidth={1.8} />
-            Importar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
+        {s.pdfImportStatus === "erro" && s.pdfImportError && (
+          <div className="flex items-start gap-2 rounded-md border border-danger/30 bg-danger/5 p-3 text-xs text-danger">
+            <FileWarning size={15} strokeWidth={1.8} className="mt-0.5 flex-none" />
+            <div className="flex flex-col gap-1">
+              <span>{s.pdfImportError.message}</span>
+              {s.pdfImportError.codigo === "achatado" && (
+                <span className="text-faint">
+                  Reexporte do Canva usando Compartilhar → Baixar → "PDF para impressão" (não "PDF Padrão"),
+                  que exporta cada página achatada como uma imagem única.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
-export function ImportView() {
-  const s = useConsole();
+        {s.pdfImportStatus === "pronto" && s.pdfImportResult && (
+          <div className="flex flex-col gap-2.5 rounded-md border border-line bg-inset p-3.5 text-xs">
+            <div className="flex items-center gap-2 text-muted">
+              <CheckCircle2 size={15} strokeWidth={1.8} className="flex-none text-accent" />
+              <span>
+                “{s.pdfImportResult.name}” importado: {s.pdfImportResult.pageCount}{" "}
+                {s.pdfImportResult.pageCount === 1 ? "página" : "páginas"}, {s.pdfImportResult.layerCount}{" "}
+                {s.pdfImportResult.layerCount === 1 ? "camada" : "camadas"}
+                {s.pdfImportResult.fontCount > 0
+                  ? `, ${s.pdfImportResult.fontCount} ${s.pdfImportResult.fontCount === 1 ? "fonte" : "fontes"}`
+                  : ""}.
+              </span>
+            </div>
+            {s.pdfImportResult.flaggedPages.length > 0 && (
+              <span className="text-faint">
+                {s.pdfImportResult.flaggedPages.length === 1 ? "A página" : "As páginas"}{" "}
+                {s.pdfImportResult.flaggedPages.join(", ")} veio achatada (sem texto/camadas) — confira se algo
+                ficou faltando.
+              </span>
+            )}
+            <Button
+              size="default"
+              className="self-start"
+              onClick={() => s.pdfImportResult && openTemplateById(s.pdfImportResult.id)}
+            >
+              Abrir no editor
+            </Button>
+          </div>
+        )}
 
-  return (
-    <>
-      <div className="flex max-w-[620px] flex-col gap-5 p-5">
-        <DevViewHeader title="Importar JSON" />
-
-        <div className="flex flex-col gap-3.5 rounded-lg border border-line bg-surface p-4.5">
-          <span className="text-xs leading-relaxed text-faint">
-            Um arquivo .json no mesmo formato que o editor salva — um documento com{" "}
-            <code className="font-mono text-[11px] text-muted">pages</code>. Ele entra como design novo, já
-            editável no canvas.
-          </span>
-          <Button
-            size="lg"
-            className="self-start"
-            onClick={() => {
-              set("jsonError", null);
-              set("jsonModalOpen", true);
-            }}
-          >
-            <FileDown size={15} strokeWidth={1.8} />
-            Escolher arquivo ou colar
-          </Button>
-          {s.lastAdded && <span className="text-xs text-faint">{s.lastAdded}</span>}
-        </div>
+        {s.lastAdded && s.pdfImportStatus === "idle" && <span className="text-xs text-faint">{s.lastAdded}</span>}
       </div>
-      <JsonModal />
-    </>
+    </div>
   );
 }

@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { buildApp, type AppDeps, type AuthDeps, type StorageDeps } from "./app.ts";
+import { buildApp, type AppDeps, type AuthDeps, type MediaDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
 import {
   createDb,
+  createPostgresGenerationRepository,
   createApiKey,
   createTemplate,
   deleteApiKey,
@@ -22,6 +23,8 @@ import {
 import { createLocalDeps } from "./local.ts";
 import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.ts";
 import { configureFontStorage } from "./render/fontCache.ts";
+import { createMediaAcquisitionService } from "./mediaAcquisition.ts";
+import { createHttpPdfImportService } from "./pdfImportService.ts";
 
 // Só em dev: `.env` não existe em produção (env vars vêm injetadas pelo runtime lá), e não faz
 // sentido nenhum exigir esse arquivo pra rodar o servidor de verdade — daí o existsSync antes.
@@ -33,6 +36,11 @@ const LOCAL_API_KEY = process.env.LOCAL_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL;
+const PDF_IMPORT_SERVICE_URL = process.env.PDF_IMPORT_SERVICE_URL;
+const PDF_IMPORT_SERVICE_SECRET = process.env.PDF_IMPORT_SERVICE_SECRET;
 
 if (!DATABASE_URL && !LOCAL_API_KEY) {
   console.error("DATABASE_URL is required in production; use LOCAL_API_KEY for local development");
@@ -43,6 +51,7 @@ let deps: AppDeps;
 if (DATABASE_URL) {
   const sql = createDb(DATABASE_URL);
   deps = {
+    generations: createPostgresGenerationRepository(sql),
     findApiKeyOwner: (keyHash) => findApiKeyOwner(sql, keyHash),
     findTemplate: (ownerId, id) => findTemplate(sql, ownerId, id),
     listTemplates: (ownerId) => listTemplates(sql, ownerId),
@@ -64,6 +73,19 @@ if (DATABASE_URL) {
   };
 } else {
   deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);
+}
+
+let media: MediaDeps | null = null;
+if (PEXELS_API_KEY || OPENAI_API_KEY) {
+  media = {
+    service: createMediaAcquisitionService({
+      pexelsApiKey: PEXELS_API_KEY,
+      openAiApiKey: OPENAI_API_KEY,
+      openAiImageModel: OPENAI_IMAGE_MODEL,
+    }),
+  };
+} else if (DATABASE_URL) {
+  console.warn("PEXELS_API_KEY/OPENAI_API_KEY not set — automated stock/AI images are disabled");
 }
 
 // Auth do console (fase 3 do plano de migração) — só existe quando um projeto Supabase de
@@ -92,7 +114,19 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   console.warn("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — Storage (uploads, download links) is disabled");
 }
 
-const app = buildApp(deps, auth, storage);
+// Importar PDF (Conta → Desenvolvedor → Importar): fala com o `pdf-import-service`, um
+// microsserviço próprio (Docker separado) que faz a extração de imagem/fonte/texto. Sem a URL
+// configurada, a rota responde 501 — não tem pra onde mandar o PDF.
+let pdfImport: PdfImportDeps | null = null;
+if (PDF_IMPORT_SERVICE_URL) {
+  pdfImport = {
+    service: createHttpPdfImportService({ serviceUrl: PDF_IMPORT_SERVICE_URL, secret: PDF_IMPORT_SERVICE_SECRET }),
+  };
+} else if (DATABASE_URL) {
+  console.warn("PDF_IMPORT_SERVICE_URL not set — POST /api/v1/imports/pdf will respond 501");
+}
+
+const app = buildApp(deps, auth, storage, media, pdfImport);
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })

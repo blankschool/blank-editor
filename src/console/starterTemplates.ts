@@ -220,12 +220,13 @@ export const STARTERS: readonly Starter[] = [
     ratio: "4 / 5",
     sizeLabel: "1080 × 1350",
     pages: 1,
-    fields: ["titulo", "corpo", "numero", "cta"],
+    fields: ["imagem", "titulo", "corpo", "numero", "cta"],
     build: () => ({
       name: "Card para automação",
       active: 0,
       pages: [
         page("automation-1", 1080, 1350, [
+          ...photo("imagem", { x: 0, y: 0, w: 1080, h: 520 }),
           el("rect", "marcador-fundo", { x: 72, y: 72, w: 182, h: 64, radius: 32, fill: ACCENT }),
           text("numero", {
             x: 72, y: 88, w: 182, h: 36,
@@ -233,14 +234,14 @@ export const STARTERS: readonly Starter[] = [
             size: 26, weight: 700, align: "center",
           }),
           text("titulo", {
-            x: 72, y: 210, w: 936, h: 250,
+            x: 72, y: 590, w: 936, h: 190,
             text: "Título do card",
-            size: 84, weight: 700, lh: 1.08,
+            size: 72, weight: 700, lh: 1.08,
           }),
           text("corpo", {
-            x: 72, y: 520, w: 936, h: 520,
+            x: 72, y: 820, w: 936, h: 280,
             text: "Corpo do card. O n8n troca este conteúdo para cada item do roteiro.",
-            size: 42, lh: 1.45, fill: MUTED,
+            size: 38, lh: 1.4, fill: MUTED,
           }),
           text("cta", {
             x: 72, y: 1194, w: 936, h: 64,

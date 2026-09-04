@@ -46,20 +46,17 @@ const VIEW_ALIASES: Record<string, View> = { templates: "designs" };
 
 export type LayerType = "text" | "image";
 export type Lang = "JavaScript" | "Python" | "cURL" | "PHP";
-export type ImpTab = "JSON" | "Imagens" | "Fontes" | "Apps";
-export type AppName = "Canva" | "Figma";
 
 export interface Layer { id: number; type: LayerType; name: string; value: string; }
 export interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
 export interface TemplateSummary { id: string; name: string; updatedAt: string; }
-export interface AppDoc { name: string; meta: string; }
 
 /** Um modelo escolhido na tela Gerar — sempre um design já salvo da conta ("Meus"). Gerar só
  *  escreve em cima de um template que já existe, nunca inventa um layout do zero. */
 export interface GerarSource { templateId: string; name: string }
-/** Uma página já gerada: o texto que a IA escreveu (editável), as camadas de imagem que ela
- *  nunca toca (preenchidas à mão aqui — URL ou upload, mesmo mecanismo do Playground) e o PNG
- *  resultante. */
+export type GerarImageStrategy = "stock" | "ai";
+/** Uma página já gerada: texto editável, imagens adquiridas pelo provedor escolhido (ainda
+ *  substituíveis por URL/upload) e o preview privado resultante. */
 export interface GerarPage {
   page: number;
   layers: Record<string, string>;
@@ -80,13 +77,13 @@ export interface State {
   collapsed: boolean;
   sort: string;
   period: string;
-  impTab: ImpTab;
-  importUrl: string;
-  jsonModalOpen: boolean;
   lastAdded: string;
-  app: AppName | null;
-  appUrl: string;
-  appDoc: string | null;
+  /** Estado do fluxo de upload de "Importar PDF" — idle até escolher um arquivo. A rota é
+   *  síncrona (bloqueia até terminar a extração), então não há um estágio "enviando" separado
+   *  de "processando": só existe o request em voo, ou o resultado dele. */
+  pdfImportStatus: "idle" | "processando" | "pronto" | "erro";
+  pdfImportError: { message: string; codigo?: "achatado" } | null;
+  pdfImportResult: { id: string; name: string; pageCount: number; layerCount: number; fontCount: number; flaggedPages: number[] } | null;
   tab: "preview" | "response";
   lang: Lang;
   /** Desligado por padrão: testar no Playground nunca sobrescreve um template sozinho. */
@@ -106,8 +103,6 @@ export interface State {
   newKeySecret: { id: string; secret: string } | null;
   templates: TemplateSummary[];
   templatesLoaded: boolean;
-  jsonDraft: string;
-  jsonError: string | null;
   namePrompt: { kind: "create-key" | "rename-template"; title: string; value: string; error: string | null; id?: string } | null;
   /** O seletor de modelo — o que "Novo design" abre agora, em vez de um canvas em branco. */
   newDesignOpen: boolean;
@@ -134,6 +129,7 @@ export interface State {
   /** O modelo escolhido pra gerar em cima — um starter ou um design salvo. */
   gerarSource: GerarSource | null;
   gerarTheme: string;
+  gerarImageStrategy: GerarImageStrategy;
   /**
    * O design (sempre novo, nunca o modelo/design de origem) que a geração escreve. Criado na
    * hora do primeiro "Gerar" pra esse `gerarSource`; `null` significa "ainda não gerou nada
@@ -144,6 +140,7 @@ export interface State {
   gerarDraftId: string | null;
   gerarDraftName: string;
   gerarGenerating: boolean;
+  gerarRegenerating: string | null;
   gerarError: string | null;
   gerarPages: GerarPage[];
   gerarActivePage: number;
@@ -160,13 +157,10 @@ export const state: State = {
   collapsed: false,
   sort: "Ordem",
   period: "Todos",
-  impTab: "JSON",
-  importUrl: "",
-  jsonModalOpen: false,
   lastAdded: "",
-  app: null,
-  appUrl: "",
-  appDoc: null,
+  pdfImportStatus: "idle",
+  pdfImportError: null,
+  pdfImportResult: null,
   tab: "preview",
   lang: "JavaScript",
   saveAsDesign: false,
@@ -185,8 +179,6 @@ export const state: State = {
   newKeySecret: null,
   templates: [],
   templatesLoaded: false,
-  jsonDraft: "",
-  jsonError: null,
   namePrompt: null,
   layersLoadedForId: null,
   templatePages: 1,
@@ -201,9 +193,11 @@ export const state: State = {
 
   gerarSource: null,
   gerarTheme: "",
+  gerarImageStrategy: "stock",
   gerarDraftId: null,
   gerarDraftName: "",
   gerarGenerating: false,
+  gerarRegenerating: null,
   gerarError: null,
   gerarPages: [],
   gerarActivePage: 1,
@@ -235,37 +229,6 @@ export function set<K extends keyof State>(key: K, value: State[K]) {
   state[key] = value;
   notify();
 }
-
-/* --------------------------- constantes UI -------------------------- */
-
-export const IMP_META: Record<string, { placeholder: string; accept: string }> = {
-  Imagens: { placeholder: "https://cdn.exemplo.com/foto.png", accept: "png · jpg · webp · svg" },
-  Fontes: { placeholder: "https://fonts.exemplo.com/familia.woff2", accept: "woff2 · woff · ttf · otf" },
-};
-
-export const APP_META: Record<AppName, { hint: string; placeholder: string; docs: AppDoc[] }> = {
-  Canva: {
-    hint: "Escolha um design da sua conta ou cole o link.",
-    placeholder: "https://www.canva.com/design/…",
-    docs: [
-      { name: "Carrossel BR Arena", meta: "4 páginas" },
-      { name: "Story Promo Setembro", meta: "2 páginas" },
-      { name: "Kit Marca 2026", meta: "11 páginas" },
-    ],
-  },
-  Figma: {
-    hint: "Cole o link do frame ou selecione um arquivo recente.",
-    placeholder: "https://figma.com/file/…?node-id=",
-    docs: [
-      { name: "Arena / Frame 12", meta: "1 frame" },
-      { name: "Social Kit / Carrossel", meta: "6 frames" },
-      { name: "Brand / Tokens", meta: "3 páginas" },
-    ],
-  },
-};
-
-export const JSON_PLACEHOLDER =
-  '{\n  "name": "Meu template",\n  "pages": [\n    { "w": 1080, "h": 1350, "bg": "#000000", "els": [] }\n  ]\n}';
 
 /* ------------------------------ rotas ------------------------------ */
 
@@ -738,6 +701,11 @@ export function setGerarTheme(value: string) {
   notify();
 }
 
+export function setGerarImageStrategy(value: GerarImageStrategy) {
+  state.gerarImageStrategy = value;
+  notify();
+}
+
 /** O JWT que a Edge Function precisa como Bearer — o navegador não lê o cookie httpOnly sozinho,
  *  então o servidor devolve o mesmo token de volta pra essa única finalidade (ver server/src/app.ts). */
 async function fetchAccessToken(): Promise<string> {
@@ -746,34 +714,6 @@ async function fetchAccessToken(): Promise<string> {
   const { accessToken } = await res.json();
   if (!accessToken) throw new Error("Sessão expirada — entre de novo.");
   return accessToken;
-}
-
-/** Garante que existe um design (sempre uma cópia nova — nunca o template de origem) pra gerar
- *  em cima, criando na primeira chamada e reaproveitando nas próximas (regenerar com um tema
- *  diferente reescreve o mesmo rascunho, até a pessoa confirmar com uma das duas saídas). */
-async function ensureGerarDraft(): Promise<string> {
-  if (state.gerarDraftId) {
-    await syncStoredGerarDraft(state.gerarDraftId);
-    return state.gerarDraftId;
-  }
-  const source = state.gerarSource;
-  if (!source) throw new Error("Escolha um modelo primeiro.");
-
-  const fetched = await fetch(`/api/v1/templates/${source.templateId}`);
-  if (!fetched.ok) throw new Error("Não deu para abrir esse design.");
-  const { document: sourceDocument } = await fetched.json();
-  const document = prepareGerarDraftDocument(sourceDocument);
-
-  const res = await fetch("/api/v1/templates", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: state.gerarDraftName, document }),
-  });
-  if (!res.ok) throw new Error("Não deu para criar o rascunho agora.");
-  const { id } = await res.json();
-  state.gerarDraftId = id;
-  state.templatesLoaded = false; // já aparece em Seus designs mesmo sem confirmar nada
-  return id;
 }
 
 /** Migra rascunhos que já estavam abertos quando o placeholder antigo ainda era usado. */
@@ -793,9 +733,8 @@ async function syncStoredGerarDraft(id: string, page = 1, fixed: readonly GerarF
   if (!saved.ok) throw new Error("Não deu para limpar as imagens vazias do rascunho.");
 }
 
-/** Tema → IA → render salvo, uma página de cada vez (a Edge Function faz as três coisas — ver
- *  supabase/functions/generate-design). Chamar de novo com um tema diferente reescreve o mesmo
- *  rascunho, não cria outro. */
+/** Tema → texto + imagens → novo design revisável. Cada clique ganha uma chave idempotente nova;
+ *  retries de transporte reutilizam a mesma geração dentro da Edge Function/Fastify. */
 export async function runGerarGenerate() {
   if (state.gerarGenerating || !state.gerarSource || !state.gerarTheme.trim()) return;
   state.gerarGenerating = true;
@@ -803,42 +742,44 @@ export async function runGerarGenerate() {
   notify();
 
   try {
-    const templateId = await ensureGerarDraft();
     const accessToken = await fetchAccessToken();
+    const idempotencyKey = crypto.randomUUID();
     const res = await fetch(`${FUNCTIONS_URL}/generate-design`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ templateId, theme: state.gerarTheme.trim() }),
+      body: JSON.stringify({
+        templateId: state.gerarSource.templateId,
+        name: state.gerarDraftName || state.gerarSource.name,
+        theme: state.gerarTheme.trim(),
+        imageStrategy: state.gerarImageStrategy,
+        idempotencyKey,
+      }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || "Não deu para gerar agora.");
-
-    state.gerarPages = (body.pages as Array<{ page: number; layers: Record<string, string>; imageBase64: string }>).map((p) => ({
-      page: p.page,
-      layers: p.layers,
-      images: {},
-      fixed: [],
-      previewUrl: `data:image/png;base64,${p.imageBase64}`,
-    }));
+    const templateId = body.design?.id as string | undefined;
+    if (!templateId) throw new Error("A geração não devolveu um design editável.");
+    state.gerarDraftId = templateId;
+    state.gerarDraftName = body.design?.name || state.gerarDraftName;
     state.gerarActivePage = 1;
-
-    // A IA só escreveu texto — as camadas de imagem (avatar/media) não vêm na resposta da Edge
-    // Function de propósito. Busca o documento salvo mais uma vez só pra saber quais existem e
-    // com que valor, pra dar pra preencher à mão do lado do preview.
     const tplRes = await fetch(`/api/v1/templates/${templateId}`);
-    if (tplRes.ok) {
-      const { document } = await tplRes.json();
-      const pages: Array<{ els?: Array<{ id?: string; name?: string; type?: string; src?: string; hidden?: boolean }> }> = document?.pages ?? [];
-      for (const gp of state.gerarPages) {
-        const els = pages[gp.page - 1]?.els ?? [];
-        gp.images = Object.fromEntries(
-          els.filter((el) => el.type === "image" && el.name)
-            .map((el) => [el.name as string, isBlankGerarImageSource(el.src) ? "" : el.src ?? ""]),
-        );
-        gp.fixed = listGerarFixedElements(document, gp.page - 1);
-      }
-      notify();
-    }
+    if (!tplRes.ok) throw new Error("O design foi criado, mas não pôde ser aberto para revisão.");
+    const { document } = await tplRes.json();
+    const pages: Array<{ els?: Array<{ id?: string; name?: string; type?: string; text?: string; src?: string; hidden?: boolean }> }> = document?.pages ?? [];
+    const previews = new Map<number, string>((body.design?.pages ?? []).map((item: { page: number; pngUrl: string }) => [item.page, item.pngUrl]));
+    state.gerarPages = pages.map((page, index) => ({
+      page: index + 1,
+      layers: Object.fromEntries((page.els ?? [])
+        .filter((el) => el.type === "text" && el.name)
+        .map((el) => [el.name as string, el.text ?? ""])),
+      images: Object.fromEntries((page.els ?? [])
+        .filter((el) => el.type === "image" && el.name)
+        .map((el) => [el.name as string, isBlankGerarImageSource(el.src) ? "" : el.src ?? ""])),
+      fixed: listGerarFixedElements(document, index),
+      previewUrl: previews.get(index + 1) ?? "",
+    }));
+    state.templatesLoaded = false;
+    notify();
   } catch (err) {
     state.gerarError = err instanceof Error ? err.message : "Não deu para gerar agora.";
   } finally {
@@ -887,6 +828,51 @@ export async function uploadGerarImage(page: number, name: string, file: File) {
   } catch { /* upload falhou — o campo continua com o que tinha antes */ }
 }
 
+/** Troca apenas a imagem nomeada da página atual. O endpoint cria uma nova versão pendente,
+ * portanto uma arte que já tinha sido aprovada volta para revisão sem perder o snapshot antigo. */
+export async function regenerateGerarImage(page: number, name: string) {
+  if (!state.gerarDraftId || state.gerarRegenerating) return;
+  state.gerarRegenerating = `${page}:${name}`;
+  state.gerarError = null;
+  notify();
+  try {
+    const status = await fetch(`/api/v1/generations/by-design/${encodeURIComponent(state.gerarDraftId)}`);
+    if (!status.ok) throw new Error("Este design ainda não está ligado a uma geração revisável.");
+    const current = await status.json();
+    const generationId = current.generation?.id;
+    if (!generationId) throw new Error("Geração não encontrada.");
+    const description = state.gerarTheme.trim() || state.gerarDraftName;
+    const result = await fetch(
+      `/api/v1/generations/${encodeURIComponent(generationId)}/media/${page}/${encodeURIComponent(name)}/regenerate`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          strategy: state.gerarImageStrategy,
+          ...(state.gerarImageStrategy === "stock" ? { query: description } : { prompt: description }),
+          aspectRatio: "4:5",
+        }),
+      },
+    );
+    const body = await result.json().catch(() => ({}));
+    if (!result.ok) throw new Error(body.error || "Não foi possível regenerar a imagem.");
+    const tplRes = await fetch(`/api/v1/templates/${encodeURIComponent(state.gerarDraftId)}`);
+    if (!tplRes.ok) throw new Error("A imagem foi gerada, mas o design não pôde ser atualizado.");
+    const { document } = await tplRes.json();
+    const element = document?.pages?.[page - 1]?.els?.find((item: { name?: string }) => item.name === name);
+    const target = state.gerarPages.find((item) => item.page === page);
+    if (target) {
+      target.images = { ...target.images, [name]: element?.src ?? "" };
+      target.previewUrl = body.design?.pages?.find((item: { page: number }) => item.page === page)?.pngUrl ?? target.previewUrl;
+    }
+  } catch (err) {
+    state.gerarError = err instanceof Error ? err.message : "Não foi possível regenerar a imagem.";
+  } finally {
+    state.gerarRegenerating = null;
+    notify();
+  }
+}
+
 /** Corrigir um campo à mão (texto ou imagem) re-renderiza e já grava aquela página — mesmo
  *  mecanismo do Playground com "Salvar como design" ligado, só que embutido, sem exigir chave
  *  de API da pessoa. */
@@ -927,35 +913,47 @@ export async function openGeneratedInEditor() {
   await openTemplateById(id);
 }
 
-/** Valida um JSON colado/enviado o suficiente para tentar abrir — o editor é o juiz real de usabilidade. */
-function parseTemplateJson(raw: string): { name: string; document: unknown } | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  const candidate = parsed as { name?: string; pages?: unknown[] } | null;
-  if (!candidate || !Array.isArray(candidate.pages) || candidate.pages.length === 0) return null;
-  return { name: candidate.name || "Design importado", document: candidate };
-}
+/**
+ * Envia um PDF exportado do Canva (Compartilhar → Baixar → "PDF para impressão") para
+ * POST /api/v1/imports/pdf, que faz a extração (imagens, fontes, texto vetorial) e já cria o
+ * design. Síncrono como a rota — a chamada só volta quando o design existir ou a extração
+ * tiver falhado, sem polling.
+ */
+export async function importTemplatePdf(file: File) {
+  state.pdfImportStatus = "processando";
+  state.pdfImportError = null;
+  state.pdfImportResult = null;
+  notify();
 
-export async function importTemplateJson() {
-  const parsed = parseTemplateJson(state.jsonDraft);
-  if (!parsed) { state.jsonError = "JSON inválido — precisa ter um array \"pages\" com pelo menos uma página."; notify(); return; }
-  state.jsonError = null;
-  const res = await fetch("/api/v1/templates", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(parsed),
-  });
-  if (!res.ok) { state.jsonError = "O servidor recusou esse documento."; notify(); return; }
-  const { id } = await res.json();
+  const form = new FormData();
+  form.append("pdf", file);
+
+  let res: Response;
+  try {
+    res = await fetch("/api/v1/imports/pdf", { method: "POST", body: form });
+  } catch {
+    state.pdfImportStatus = "erro";
+    state.pdfImportError = { message: "Falha de rede ao enviar o PDF." };
+    notify();
+    return;
+  }
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    state.pdfImportStatus = "erro";
+    state.pdfImportError = {
+      message: body.error || "O servidor recusou esse PDF.",
+      codigo: body.codigo === "achatado" ? "achatado" : undefined,
+    };
+    notify();
+    return;
+  }
+
   state.templatesLoaded = false;
-  state.jsonDraft = "";
-  state.jsonModalOpen = false;
-  state.lastAdded = `JSON importado como o design “${parsed.name}”.`;
-  await openTemplateById(id); // também atualiza a URL para #/editor/<id>
+  state.pdfImportStatus = "pronto";
+  state.pdfImportResult = body;
+  state.lastAdded = `PDF importado como o design “${body.name}”.`;
+  notify();
 }
 
 export function startRenaming(id: string | null) {
@@ -1017,9 +1015,8 @@ export async function duplicateTemplate(id: string, name: string) {
   await loadTemplates();
 }
 
-/** Abre o link público do último render salvo (fase 7 do plano de migração) numa aba nova —
- *  o link em si é determinístico (storage.ts), então só existe de verdade depois de um
- *  `save:true`; sem isso o servidor simplesmente não manda `downloadUrl` na resposta. */
+/** Abre o link público do último render salvo. Para gerações gerenciadas, o servidor omite
+ *  `downloadUrl` até a versão atual ser aprovada e então aponta para o snapshot aprovado. */
 export async function downloadTemplate(id: string) {
   const res = await fetch(`/api/v1/templates/${id}`);
   if (!res.ok) return;

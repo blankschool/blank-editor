@@ -1,16 +1,12 @@
 // Edge Function da tela "Gerar" (fase 12 do plano de migração): recebe um tema + o id de um
-// template que já existe (a tela sempre cria uma cópia em branco antes de chamar isto — nunca
-// sobrescreve o modelo/design de origem), pede pra OpenAI escrever o texto de cada campo
-// nomeado, e chama de volta o render do Fastify com `save:true` — o mesmo efeito de abrir o
-// template no editor e salvar, só que disparado por aqui. Devolve o PNG de cada página em
-// base64, pronto pra tela mostrar sem mais uma chamada.
+// template que já existe, pede pra OpenAI escrever texto e briefings visuais e então chama
+// POST /generations. O Fastify cria uma cópia editável, adquire cada imagem de forma explícita
+// (Pexels ou OpenAI), guarda os bytes no Storage e devolve previews privados para aprovação.
 //
 // Autenticação: repassa o mesmo Authorization (JWT do Supabase de quem está logado) que chegou
 // aqui pro Fastify — é a decisão tomada no planejamento: o render do Fastify aceita esse JWT
 // como alternativa à chave de API Bearer, exatamente pra esse caminho (uma Edge Function agindo
 // em nome de quem clicou "Gerar", sem guardar cópia da chave de API de ninguém).
-import { encodeBase64 } from "jsr:@std/encoding/base64";
-
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
@@ -39,33 +35,43 @@ interface TemplateDocument {
 
 interface PageSchema {
   page: number;
-  fields: string[];
+  textFields: string[];
+  imageFields: string[];
 }
 
-/** Só campos de texto — a IA escreve texto, nunca escolhe/gera foto (decisão do planejamento). */
 function schemaFor(document: TemplateDocument): PageSchema[] {
   return (document.pages ?? []).map((page, i) => ({
     page: i + 1,
-    fields: (page.els ?? [])
+    textFields: (page.els ?? [])
       .filter((el): el is TemplateElement & { name: string } => Boolean(el?.type === "text" && el.name))
+      .map((el) => el.name),
+    imageFields: (page.els ?? [])
+      .filter((el): el is TemplateElement & { name: string } => Boolean(el?.type === "image" && el.name))
       .map((el) => el.name),
   }));
 }
 
 function buildPrompt(theme: string, schema: PageSchema[]): string {
   const descricao = schema
-    .map(({ page, fields }) => `Página ${page}: campos [${fields.join(", ")}]`)
+    .map(({ page, textFields, imageFields }) =>
+      `Página ${page}: textos [${textFields.join(", ")}], imagens [${imageFields.join(", ")}]`)
     .join("\n");
   return (
     `Tema: "${theme}"\n\n` +
-    `Escreva o texto de cada campo abaixo, para cada página, em português do Brasil, tom direto. ` +
-    `Devolva só um objeto JSON: cada chave é o número da página (como string), cada valor é um ` +
-    `objeto com uma chave por campo listado.\n\n${descricao}\n\n` +
-    `Exemplo de formato (não copie o conteúdo, só a forma): {"1": {"titulo": "...", "subtitulo": "..."}}`
+    `Escreva os textos em português do Brasil, tom direto. Para cada camada de imagem, escreva ` +
+    `uma descrição visual concreta, sem texto dentro da imagem, adequada tanto para busca em banco ` +
+    `de fotos quanto para geração fotorealista. Devolva somente JSON no formato ` +
+    `{"1":{"text":{"titulo":"..."},"images":{"imagem":"descrição..."}}}. ` +
+    `Use exatamente os nomes listados.\n\n${descricao}`
   );
 }
 
-async function callOpenAI(apiKey: string, prompt: string): Promise<Record<string, Record<string, string>>> {
+interface CompletionPage {
+  text?: Record<string, string>;
+  images?: Record<string, string>;
+}
+
+async function callOpenAI(apiKey: string, prompt: string): Promise<Record<string, CompletionPage>> {
   const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -101,16 +107,24 @@ Deno.serve(async (req) => {
   if (!openaiKey) return json({ error: "OPENAI_API_KEY is not configured" }, 500);
   const fastifyUrl = Deno.env.get("FASTIFY_URL") ?? "http://host.docker.internal:8787";
 
-  let body: { templateId?: string; theme?: string };
+  let body: {
+    templateId?: string;
+    theme?: string;
+    name?: string;
+    idempotencyKey?: string;
+    imageStrategy?: "stock" | "ai";
+  };
   try {
     body = await req.json();
   } catch {
     return json({ error: "invalid JSON body" }, 400);
   }
-  const { templateId, theme } = body;
-  if (!templateId || !theme?.trim()) {
-    return json({ error: "missing required field: templateId, theme" }, 400);
+  const { templateId, theme, idempotencyKey } = body;
+  const imageStrategy = body.imageStrategy ?? "stock";
+  if (!templateId || !theme?.trim() || !idempotencyKey?.trim()) {
+    return json({ error: "missing required field: templateId, theme, idempotencyKey" }, 400);
   }
+  if (imageStrategy !== "stock" && imageStrategy !== "ai") return json({ error: "imageStrategy must be stock or ai" }, 400);
 
   const tplRes = await fetch(`${fastifyUrl}/api/v1/templates/${templateId}`, {
     headers: { authorization: authHeader },
@@ -122,42 +136,53 @@ Deno.serve(async (req) => {
   const tpl = await tplRes.json();
   const document = tpl.document as TemplateDocument;
   const schema = schemaFor(document);
-  const totalFields = schema.reduce((n, p) => n + p.fields.length, 0);
-  if (totalFields === 0) return json({ error: "this template has no named text fields for the AI to fill in" }, 400);
+  const totalFields = schema.reduce((n, p) => n + p.textFields.length + p.imageFields.length, 0);
+  if (totalFields === 0) return json({ error: "this template has no named text or image fields for the AI to fill in" }, 400);
 
-  let completion: Record<string, Record<string, string>>;
+  let completion: Record<string, CompletionPage>;
   try {
     completion = await callOpenAI(openaiKey, buildPrompt(theme, schema));
   } catch (err) {
     return json({ error: `OpenAI: ${err instanceof Error ? err.message : String(err)}` }, 502);
   }
 
-  const pages: Array<{ page: number; layers: Record<string, string>; imageBase64: string }> = [];
-  const multiPage = schema.length > 1;
-
-  for (const { page, fields } of schema) {
-    const layers: Record<string, { text: string }> = {};
-    const textValues: Record<string, string> = {};
-    for (const field of fields) {
-      const value = completion[String(page)]?.[field];
+  const pages = schema.map(({ page, textFields, imageFields }) => {
+    const layers: Record<string, unknown> = {};
+    for (const field of textFields) {
+      const value = completion[String(page)]?.text?.[field];
       if (typeof value === "string" && value.trim()) {
         layers[field] = { text: value };
-        textValues[field] = value;
       }
     }
-
-    const renderRes = await fetch(`${fastifyUrl}/api/v1/render`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: authHeader },
-      body: JSON.stringify({ template: templateId, ...(multiPage ? { page } : {}), layers, save: true }),
-    });
-    if (!renderRes.ok) {
-      const errBody = await renderRes.json().catch(() => ({}));
-      return json({ error: `render failed on page ${page}: ${errBody.error ?? renderRes.statusText}` }, 400);
+    for (const field of imageFields) {
+      const description = completion[String(page)]?.images?.[field] || theme;
+      layers[field] = {
+        asset: {
+          strategy: imageStrategy,
+          ...(imageStrategy === "stock" ? { query: description } : { prompt: description }),
+          aspectRatio: "4:5",
+        },
+      };
     }
-    const pngBuffer = new Uint8Array(await renderRes.arrayBuffer());
-    pages.push({ page, layers: textValues, imageBase64: encodeBase64(pngBuffer) });
-  }
+    return { page, layers };
+  });
 
-  return json({ templateId, pages });
+  const generationRes = await fetch(`${fastifyUrl}/api/v1/generations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: authHeader,
+      "idempotency-key": idempotencyKey.trim(),
+    },
+    body: JSON.stringify({
+      template: templateId,
+      name: body.name?.trim() || theme.trim().slice(0, 80),
+      pages,
+    }),
+  });
+  const generation = await generationRes.json().catch(() => ({}));
+  if (!generationRes.ok) {
+    return json({ error: generation.error ?? generation.message ?? "generation failed" }, generationRes.status);
+  }
+  return json({ ...generation, generatedFields: completion }, generationRes.status);
 });

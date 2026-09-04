@@ -42,6 +42,12 @@
     <button class="tbtn ghost iconbtn" id="redoBtn" title="Refazer (⌘⇧Z)" disabled>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8H7.5C5.01472 8 3 10.0147 3 12.5C3 14.9853 5.01472 17 7.5 17H13"/><path d="M14 12L17 8L14 4"/></svg>
     </button>
+    <div class="review-controls" id="reviewControls" hidden>
+      <span class="review-status" id="reviewStatus" role="status"></span>
+      <button class="tbtn ghost" id="requestChangesBtn" hidden>Solicitar ajustes</button>
+      <button class="tbtn ghost" id="submitReviewBtn" hidden>Enviar para aprovação</button>
+      <button class="tbtn primary" id="approveBtn" hidden>Aprovar</button>
+    </div>
     <button class="tbtn primary" id="exportBtn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></svg>
       Exportar

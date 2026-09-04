@@ -47,7 +47,7 @@ function EmptyState() {
         <Plus size={15} strokeWidth={2} />
         Criar meu primeiro design
       </Button>
-      {/* Importar JSON continua existindo, mas como saída secundária e em texto —
+      {/* Importar PDF continua existindo, mas como saída secundária e em texto —
           era jargão de programador ocupando o lugar da ação principal. */}
       <button
         type="button"
@@ -55,7 +55,7 @@ function EmptyState() {
         className="flex items-center gap-1.5 text-[11px] text-faint hover:text-muted"
       >
         <Upload size={12} strokeWidth={1.5} />
-        ou importar um JSON que você já tem
+        ou importar um PDF do Canva
       </button>
     </div>
   );

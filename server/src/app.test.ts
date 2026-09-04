@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildApp, type AppDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import type { TemplateRow } from "./db.ts";
+import { createMemoryGenerationRepository } from "./generationWorkflow.ts";
 
 const VALID_KEY = "blk_live_test";
 const OWNER_ID = "owner-1";
@@ -297,6 +298,10 @@ function makeFakeStorageClient() {
           return { error: null };
         },
         getPublicUrl: (path: string) => ({ data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}` } }),
+        createSignedUrl: async (path: string) => ({
+          data: { signedUrl: `https://fake.supabase.co/storage/v1/object/sign/${bucket}/${path}?token=test` },
+          error: null,
+        }),
         download: async (path: string) => {
           const data = uploaded.get(`${bucket}/${path}`);
           if (!data) return { data: null, error: new Error("not found") };
@@ -477,8 +482,8 @@ test("POST /api/v1/generations creates and renders an editable design from a one
       pageCount: 2,
       editorPath: `/#/editor/${created!.id}`,
       pages: [
-        { page: 1, pngUrl: `https://fake.supabase.co/storage/v1/object/public/renders/${created!.id}/page-1.png` },
-        { page: 2, pngUrl: `https://fake.supabase.co/storage/v1/object/public/renders/${created!.id}/page-2.png` },
+        { page: 1, pngUrl: `https://fake.supabase.co/storage/v1/object/sign/draft-renders/${OWNER_ID}/${body.generation.id}/versions/1/page-1.png?token=test` },
+        { page: 2, pngUrl: `https://fake.supabase.co/storage/v1/object/sign/draft-renders/${OWNER_ID}/${body.generation.id}/versions/1/page-2.png?token=test` },
       ],
     },
     stored: {
@@ -491,6 +496,52 @@ test("POST /api/v1/generations creates and renders an editable design from a one
     },
     renderedPages: [0, 1],
   });
+});
+
+test("save:true keeps a generated design in private draft storage until approval", async () => {
+  const templates = new Map<string, TemplateRow>([[TPL.id, TPL]]);
+  const uploadedBuckets: string[] = [];
+  const storage = {
+    storage: {
+      from: (bucket: string) => ({
+        upload: async () => { uploadedBuckets.push(bucket); return { error: null }; },
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://storage.test/public/${bucket}/${path}` } }),
+        createSignedUrl: async (path: string) => ({ data: { signedUrl: `https://storage.test/signed/${bucket}/${path}` }, error: null }),
+      }),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => templates.get(id)?.ownerId === ownerId ? templates.get(id)! : null,
+    createTemplate: async (ownerId, input) => {
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      templates.set(row.id, row);
+      return row;
+    },
+    updateTemplate: async (ownerId, id, input) => {
+      const row = templates.get(id);
+      if (!row || row.ownerId !== ownerId) return null;
+      const updated = { ...row, name: input.name ?? row.name, document: input.document ?? row.document };
+      templates.set(id, updated);
+      return updated;
+    },
+  });
+  const app = buildApp(deps, null, { client: storage });
+  const generated = await app.inject({
+    method: "POST", url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "private-edit" },
+    payload: { template: TPL.id, name: "Gerado", pages: [{ layers: {} }] },
+  });
+  const designId = JSON.parse(generated.body).design.id;
+  uploadedBuckets.length = 0;
+
+  const rendered = await app.inject({
+    method: "POST", url: "/api/v1/render", headers: AUTH,
+    payload: { template: designId, layers: {}, save: true },
+  });
+
+  assert.equal(rendered.statusCode, 200);
+  assert.deepEqual(uploadedBuckets, ["draft-renders"]);
 });
 
 test("POST /api/v1/generations replays the same design without overwriting manual edits", async () => {
@@ -550,6 +601,113 @@ test("POST /api/v1/generations replays the same design without overwriting manua
     creates: 1,
     renderedTitles: ["IA", "Edição manual"],
   });
+});
+
+test("POST /api/v1/generations rejects reuse of an Idempotency-Key with a different body", async () => {
+  const templates = new Map<string, TemplateRow>([[TPL.id, TPL]]);
+  const deps = makeDeps({
+    findTemplate: async (ownerId, id) => templates.get(id)?.ownerId === ownerId ? templates.get(id)! : null,
+    createTemplate: async (ownerId, input) => {
+      const row = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      templates.set(row.id, row);
+      return row;
+    },
+  });
+  const app = buildApp(deps, null, { client: makeFakeStorageClient() });
+  const first = await app.inject({
+    method: "POST", url: "/api/v1/generations", headers: { ...AUTH, "idempotency-key": "same-key" },
+    payload: { template: TPL.id, name: "Primeiro", pages: [{ layers: {} }] },
+  });
+  const conflict = await app.inject({
+    method: "POST", url: "/api/v1/generations", headers: { ...AUTH, "idempotency-key": "same-key" },
+    payload: { template: TPL.id, name: "Mudou", pages: [{ layers: {} }] },
+  });
+  assert.equal(first.statusCode, 201);
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(JSON.parse(conflict.body).error, "IDEMPOTENCY_CONFLICT");
+});
+
+test("POST /api/v1/generations acquires a requested stock image and persists its private Storage ref", async () => {
+  const source: TemplateRow = {
+    ...TPL,
+    id: "image-card",
+    document: { name: "Card", active: 0, pages: [{ id: "p1", w: 1080, h: 1350, bg: "#000", els: [
+      { id: "photo", type: "image", name: "imagem", src: "" },
+    ] }] },
+  };
+  let generated: TemplateRow | null = null;
+  let requested: unknown = null;
+  let recordedProvider = "";
+  const repository = createMemoryGenerationRepository();
+  const originalRecord = repository.recordMediaAsset.bind(repository);
+  repository.recordMediaAsset = async (input) => {
+    recordedProvider = input.provider;
+    await originalRecord(input);
+  };
+  const deps = makeDeps({
+    generations: repository,
+    findTemplate: async (ownerId, id) => ownerId !== OWNER_ID ? null : id === source.id ? source : generated?.id === id ? generated : null,
+    createTemplate: async (ownerId, input) => {
+      generated = { id: input.id!, ownerId, kind: "custom", name: input.name, document: input.document };
+      return generated;
+    },
+  });
+  const app = buildApp(deps, null, { client: makeFakeStorageClient() }, { service: {
+    acquire: async (input) => {
+      requested = input;
+      return {
+        bytes: Buffer.from("image"), contentType: "image/jpeg" as const, extension: "jpg" as const,
+        width: 1200, height: 1500, provider: "pexels" as const, externalId: "42", author: "Ada",
+        attributionUrl: "https://pexels.test/photo/42", licenseUrl: "https://pexels.test/license",
+        prompt: "professora brasileira", model: null,
+      };
+    },
+  } });
+  const response = await app.inject({
+    method: "POST", url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "with-stock" },
+    payload: { template: source.id, name: "Com foto", pages: [{ layers: {
+      imagem: { asset: { strategy: "stock", query: "professora brasileira", aspectRatio: "4:5" } },
+    } }] },
+  });
+  const image = (generated!.document as { pages: Array<{ els: Array<{ src: string }> }> }).pages[0].els[0];
+  assert.equal(response.statusCode, 201);
+  assert.deepEqual(requested, { strategy: "stock", query: "professora brasileira", aspectRatio: "4:5" });
+  assert.match(image.src, /^supabase:\/\/uploads\/owner-1\//);
+  assert.equal(recordedProvider, "pexels");
+  assert.equal(JSON.parse(response.body).generation.reviewStatus, "pending");
+});
+
+test("POST /api/v1/generations validates every media request before calling a paid provider", async () => {
+  const source: TemplateRow = {
+    ...TPL,
+    id: "image-card-preflight",
+    document: { name: "Card", active: 0, pages: [{ id: "p1", w: 1080, h: 1350, bg: "#000", els: [
+      { id: "photo", type: "image", name: "imagem", src: "" },
+    ] }] },
+  };
+  let providerCalls = 0;
+  const app = buildApp(makeDeps({
+    findTemplate: async (ownerId, id) => ownerId === OWNER_ID && id === source.id ? source : null,
+  }), null, { client: makeFakeStorageClient() }, { service: {
+    acquire: async () => {
+      providerCalls += 1;
+      throw new Error("must not be reached");
+    },
+  } });
+
+  const response = await app.inject({
+    method: "POST", url: "/api/v1/generations",
+    headers: { ...AUTH, "idempotency-key": "invalid-second-media" },
+    payload: { template: source.id, name: "Com foto", pages: [
+      { layers: { imagem: { asset: { strategy: "stock", query: "válida" } } } },
+      { layers: { imagem: { asset: { strategy: "unsupported", query: "inválida" } } } },
+    ] },
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(providerCalls, 0);
+  assert.match(JSON.parse(response.body).error, /strategy must be stock or ai/);
 });
 
 test("POST /api/v1/generations treats a concurrent idempotent insert as a replay", async () => {

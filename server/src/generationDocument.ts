@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Layers } from "./render/layers.ts";
+import type { MediaAssetRequest } from "./mediaAcquisition.ts";
 
 interface GeneratedElement {
   id?: string;
@@ -25,7 +26,7 @@ export interface GeneratedDocument {
 }
 
 export interface GenerationPageInput {
-  layers: Layers;
+  layers: Record<string, Layers[string] & { asset?: MediaAssetRequest }>;
 }
 
 export class GenerationDocumentError extends Error {}
@@ -55,11 +56,23 @@ export function buildGeneratedDocument(
       if (!element) {
         throw new GenerationDocumentError(`page ${index + 1} has unknown layer: ${layerName}`);
       }
+      if (override.text !== undefined && typeof override.text !== "string") {
+        throw new GenerationDocumentError(`page ${index + 1} layer ${layerName}.text must be a string`);
+      }
+      if (override.image_url !== undefined && typeof override.image_url !== "string") {
+        throw new GenerationDocumentError(`page ${index + 1} layer ${layerName}.image_url must be a string`);
+      }
+      if (override.hide !== undefined && typeof override.hide !== "boolean") {
+        throw new GenerationDocumentError(`page ${index + 1} layer ${layerName}.hide must be a boolean`);
+      }
       if (override.text !== undefined && element.type !== "text") {
         throw new GenerationDocumentError(`page ${index + 1} layer ${layerName} does not accept text`);
       }
       if (override.image_url !== undefined && element.type !== "image") {
         throw new GenerationDocumentError(`page ${index + 1} layer ${layerName} does not accept image_url`);
+      }
+      if (override.asset !== undefined && element.type !== "image") {
+        throw new GenerationDocumentError(`page ${index + 1} layer ${layerName} does not accept asset`);
       }
     }
     page.id = randomUUID();
