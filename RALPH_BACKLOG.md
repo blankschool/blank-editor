@@ -39,13 +39,22 @@ usados em server/src/db.ts e supabase/migrations/*).
   com fill cobrindo a página inteira → vira só `bg`, zero elementos `rect`
   redundantes; via `POST /api/v1/imports/pdf` real, o documento final tem
   forma → imagem → texto na ordem certa, cor e posição batendo.
-- [ ] **1.4 Recorte de imagem em moldura (retangular ou circular).** O PDF
-  desenha a imagem maior e recorta via clip path — hoje isso não é detectado,
-  a imagem inteira vira uma camada do tamanho errado. Detectar via
-  `page.get_image_info()`/clip do content stream (PyMuPDF) e separar em
-  moldura (`x/y/w/h` do clip) + posição da foto dentro dela — mesmo conceito
-  de `img`/moldura do `importar.py` de referência. Círculo vira `radius` no
-  `El` de imagem quando a proporção bate.
+- [ ] **1.4 Recorte de imagem em moldura (retangular ou circular). ADIADO —
+  ver nota.** O PDF desenha a imagem maior e recorta via clip path — hoje
+  isso não é detectado, a imagem inteira vira uma camada do tamanho errado.
+  INVESTIGAÇÃO NECESSÁRIA antes de implementar: `page.get_drawings()`
+  (usado nos itens 1.2/1.3) só devolve desenhos vetoriais (fill/stroke), não
+  operações de imagem (`Do` de XObject) — não dá pra ler o clip de uma
+  imagem por ali. `page.get_image_info()` devolve o retângulo de colocação
+  da imagem, mas não confirmei se inclui o clip path ativo no momento do
+  `Do` (precisa testar com um PDF de verdade que tenha um `W`/`W*` antes do
+  `Do` da imagem — não consegui montar um PDF sintético assim rápido com
+  `fitz.Page.insert_image`, que não aceita clip). Alternativa se PyMuPDF não
+  expuser isso: usar o SVG que `pdftocairo` já gera (base do pipeline atual
+  em `extractImages.ts`/`pdfSource.ts`) e verificar se ele emite
+  `<clipPath>` envolvendo o `<use>` da imagem — inspecionar a saída de
+  `pdftocairo -svg` num PDF real com foto em moldura circular antes de
+  decidir a abordagem.
 - [x] **1.5 Rotação de texto em qualquer ângulo.** Achado bug real, não só
   limitação: `dir` vive na LINHA do `get_text("dict")`, não no span —
   `primeiro_span.get("dir", (1,0))` sempre batia no default e `rot` era
@@ -74,9 +83,12 @@ usados em server/src/db.ts e supabase/migrations/*).
 - [ ] **1.7 Texto com contorno vetorial (fontes Type3).** Títulos com efeito
   de contorno no Canva usam fontes Type3 (glifo = procedimento de desenho, não
   contorno TrueType) — hoje esse texto some em silêncio (sem FontFile pra
-  extrair). PyMuPDF expõe isso via `page.get_drawings()` também (o glifo virou
-  desenho vetorial) — não precisa de suporte a Type3 em si, só garantir que o
-  1.3 (formas vetoriais) capture esse caso.
+  extrair). CORREÇÃO à nota anterior: o item 1.3 só extrai retângulo puro
+  (`items == ["re"]`) de propósito — um glifo Type3 vira um `path` com curvas
+  (letras não são retângulos), então 1.3 NÃO cobre este caso ainda. Continua
+  bloqueado no item 2.1 (tipo de elemento pra path preenchido arbitrário no
+  editor) — sem ele, extrair esses paths não teria onde render dentro do
+  documento.
 
 ## 2. Modelo de documento (`src/types.ts`) e editor
 
@@ -98,7 +110,7 @@ usados em server/src/db.ts e supabase/migrations/*).
   distorce o enquadramento. Precisa de UI no editor pra arrastar a foto dentro
   do quadro (like Canva/Figma) — maior escopo, quebrar em: (a) campo no tipo +
   render respeitando o campo, (b) interação de arrastar no editor.
-- [ ] **2.4 Diff de documentos.** Função pura `diffDocs(a: Doc, b: Doc)` que
+- [x] **2.4 Diff de documentos.** Função pura `diffDocs(a: Doc, b: Doc)` que
   devolve as diferenças campo a campo entre duas versões — utilitário sem UI
   própria ainda, mas pré-requisito de qualquer comparação de versão futura
   (item 4.1). Local sugerido: `src/docDiff.ts` + teste.
