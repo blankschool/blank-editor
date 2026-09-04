@@ -3,7 +3,12 @@ import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
-import { fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer } from "./templateStore";
+import {
+  fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
+  listDesignVersionsFromServer, createDesignVersionOnServer, restoreDesignVersionOnServer, duplicateDesignVersionOnServer, deleteDesignVersionOnServer,
+  type DesignVersionSummary,
+} from "./templateStore";
+import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
 import { draggedLayerIds, reorderLayers, type LayerDropSide } from "./layerOrder";
 import { attachLayerDrag } from "./layerDrag";
@@ -2316,6 +2321,7 @@ function renderFileMenu() {
     item("rename", "Renomear"),
     item("resize", "Redimensionar páginas"),
     canManage ? item("duplicate", "Duplicar") : "",
+    canManage ? item("history", "Histórico de versões") : "",
     canManage ? item("copy-id", "Copiar ID") : "",
     item("open-json", "Abrir arquivo local…"),
     canManage ? `<div class="dropsep"></div>${item("delete", "Excluir", true)}` : "",
@@ -2348,6 +2354,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
     } catch { toast("Não foi possível duplicar."); }
     return;
   }
+  if (action === "history") { openHistory(); return; }
   if (action === "delete") {
     $("confirmMsg").textContent = `Excluir o template "${doc.name}"? Isso não pode ser desfeito.`;
     $("confirmScrim").hidden = false;
@@ -2371,6 +2378,95 @@ $("confirmGo").addEventListener("click", async () => {
     toast("Template excluído");
     location.hash = "/console/templates";
   } catch { toast("Não foi possível excluir."); }
+});
+
+/* histórico de versão (item 4.1 do backlog) */
+let historyVersions: DesignVersionSummary[] = [];
+
+async function refreshHistory() {
+  if (!doc.seedId) return;
+  try {
+    historyVersions = await listDesignVersionsFromServer(doc.seedId);
+  } catch {
+    historyVersions = [];
+    toast("Não foi possível carregar o histórico.");
+  }
+  renderHistoryList();
+}
+
+function renderHistoryList() {
+  const el = $("historyList");
+  if (!historyVersions.length) {
+    el.innerHTML = `<p class="phint">Nenhuma versão salva ainda.</p>`;
+    return;
+  }
+  el.innerHTML = historyVersions.map((v) => `
+    <div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div>
+        <strong style="display:block;font-size:13px">${esc(v.name)}</strong>
+        <span class="phint">${relativeTime(v.createdAt)}</span>
+      </div>
+      <div class="row" style="gap:6px">
+        <button class="tbtn ghost" data-hist-action="restore" data-hist-id="${v.id}" title="Substitui o design atual pelo conteúdo desta versão">Restaurar</button>
+        <button class="tbtn ghost" data-hist-action="duplicate" data-hist-id="${v.id}" title="Cria um design novo e independente a partir desta versão">Duplicar</button>
+        <button class="tbtn ghost danger" data-hist-action="delete" data-hist-id="${v.id}">Excluir</button>
+      </div>
+    </div>`).join("");
+}
+
+async function openHistory() {
+  if (!doc.seedId) return;
+  ($("historyNameInput") as HTMLInputElement).value = "";
+  $("historyScrim").hidden = false;
+  await refreshHistory();
+}
+
+$("historySave").addEventListener("click", async () => {
+  if (!doc.seedId) return;
+  const input = $("historyNameInput") as HTMLInputElement;
+  const name = input.value.trim();
+  if (!name) { toast("Dê um nome pra versão."); return; }
+  // Garante que o snapshot é o que está na tela AGORA, não a última cópia que o autosave já
+  // tinha mandado — mesma preocupação de `ensureCanDownload` (item 3.1c), aplicada aqui a
+  // "salvar versão" em vez de "exportar".
+  if (!await syncTemplateToServer(doc)) { toast("Não foi possível salvar antes de criar a versão."); return; }
+  try {
+    await createDesignVersionOnServer(doc.seedId, name);
+    input.value = "";
+    toast("Versão salva");
+    await refreshHistory();
+  } catch { toast("Não foi possível salvar a versão."); }
+});
+$("historyClose").addEventListener("click", () => { $("historyScrim").hidden = true; });
+$("historyScrim").addEventListener("click", (e) => { if (e.target === $("historyScrim")) $("historyScrim").hidden = true; });
+$("historyList").addEventListener("click", async (ev) => {
+  const b = (ev.target as HTMLElement).closest("[data-hist-action]");
+  if (!b || !doc.seedId) return;
+  const templateId = doc.seedId;
+  const versionId = b.getAttribute("data-hist-id")!;
+  const action = b.getAttribute("data-hist-action");
+  if (action === "restore") {
+    try {
+      await restoreDesignVersionOnServer(templateId, versionId);
+      $("historyScrim").hidden = true;
+      toast("Versão restaurada");
+      await openTemplateById(templateId);
+    } catch { toast("Não foi possível restaurar."); }
+  }
+  if (action === "duplicate") {
+    try {
+      const newId = await duplicateDesignVersionOnServer(templateId, versionId);
+      $("historyScrim").hidden = true;
+      toast("Versão duplicada como um novo design");
+      openTemplateById(newId);
+    } catch { toast("Não foi possível duplicar."); }
+  }
+  if (action === "delete") {
+    try {
+      await deleteDesignVersionOnServer(templateId, versionId);
+      await refreshHistory();
+    } catch { toast("Não foi possível excluir."); }
+  }
 });
 
 /* import / upload */

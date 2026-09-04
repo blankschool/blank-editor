@@ -22,7 +22,7 @@ import {
   uploadRenderedPng,
   uploadUserPhoto,
 } from "./storage.ts";
-import type { ApiKeyOwner, ApiKeySummary, FontFaceInput, FontFaceRow, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, DesignVersionRow, FontFaceInput, FontFaceRow, TemplateRow, TemplateSummary } from "./db.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
@@ -77,6 +77,10 @@ export interface AppDeps {
   upsertFontFace: (input: FontFaceInput) => Promise<FontFaceRow>;
   listFontFaces: (ownerId: string) => Promise<FontFaceRow[]>;
   generations?: GenerationRepository;
+  listDesignVersions: (ownerId: string, templateId: string) => Promise<DesignVersionRow[]>;
+  createDesignVersion: (ownerId: string, input: { templateId: string; name: string; document: unknown }) => Promise<DesignVersionRow>;
+  findDesignVersion: (ownerId: string, templateId: string, id: string) => Promise<DesignVersionRow | null>;
+  deleteDesignVersion: (ownerId: string, templateId: string, id: string) => Promise<boolean>;
 }
 
 export interface MediaDeps {
@@ -819,6 +823,78 @@ export function buildApp(
     if (!deleted) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
     return reply.code(204).send();
   });
+
+  // Histórico de versão nomeado (Editar → Histórico) — diferente do versionamento automático
+  // de gerações (generationWorkflow.ts): manual, iniciado pela pessoa, por template_id em vez
+  // de generation_id. Cada versão é um snapshot imutável; "restaurar" e "duplicar" nunca
+  // reescrevem a linha, só leem o document dela.
+  app.get<{ Params: { id: string } }>("/api/v1/templates/:id/versions", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const row = await deps.findTemplate(ownerId, request.params.id);
+    if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    return deps.listDesignVersions(ownerId, row.id);
+  });
+
+  app.post<{ Params: { id: string }; Body: { name?: string } }>(
+    "/api/v1/templates/:id/versions",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const name = request.body?.name?.trim();
+      if (!name) return reply.code(400).send({ error: "missing required field: name" });
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const version = await deps.createDesignVersion(ownerId, { templateId: row.id, name, document: row.document });
+      return reply.code(201).send(version);
+    },
+  );
+
+  app.post<{ Params: { id: string; versionId: string } }>(
+    "/api/v1/templates/:id/versions/:versionId/restore",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const version = await deps.findDesignVersion(ownerId, row.id, request.params.versionId);
+      if (!version) return reply.code(404).send({ error: `version not found: ${request.params.versionId}` });
+      const updated = await deps.updateTemplate(ownerId, row.id, { document: version.document });
+      if (!updated) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      await generations.markEdited(ownerId, row.id);
+      return { id: updated.id, name: updated.name };
+    },
+  );
+
+  app.post<{ Params: { id: string; versionId: string } }>(
+    "/api/v1/templates/:id/versions/:versionId/duplicate",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const version = await deps.findDesignVersion(ownerId, row.id, request.params.versionId);
+      if (!version) return reply.code(404).send({ error: `version not found: ${request.params.versionId}` });
+      // Duplicar uma versão cria um DESIGN NOVO e independente a partir daquele snapshot — não
+      // mexe no design original nem na própria versão. Mesmo padrão de "Duplicar" em um design
+      // inteiro (store.ts, duplicateTemplate), só que a partir de um ponto no passado.
+      const created = await deps.createTemplate(ownerId, { name: `${row.name} (${version.name})`, document: version.document });
+      return reply.code(201).send({ id: created.id, name: created.name });
+    },
+  );
+
+  app.delete<{ Params: { id: string; versionId: string } }>(
+    "/api/v1/templates/:id/versions/:versionId",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const deleted = await deps.deleteDesignVersion(ownerId, row.id, request.params.versionId);
+      if (!deleted) return reply.code(404).send({ error: `version not found: ${request.params.versionId}` });
+      return reply.code(204).send();
+    },
+  );
 
   // Foto pro avatar/media de um template — vai pro bucket privado, isolada por dono via
   // prefixo de caminho (uploadUserPhoto, storage.ts). Devolve uma referência

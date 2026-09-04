@@ -204,12 +204,29 @@ em toda `server/src/db.ts`, e escrever a migration em
 `supabase/migrations/000N_*.sql` seguindo o estilo das existentes (RLS
 habilitado, políticas por dono).
 
-- [ ] **4.1 Histórico de versões nomeado.** Tabela nova (`design_versions`:
-  id, template_id, owner_id, name, document, created_at), rotas
-  `POST/GET/PUT/DELETE /api/v1/templates/:id/versions`, painel no editor
-  (criar/restaurar/duplicar/excluir versão nomeada — diferente do
-  `generationWorkflow.ts` que já versiona gerações automáticas; isto é
-  manual, iniciado pela pessoa).
+- [x] **4.1 Histórico de versões nomeado.** Migration `0007_design_versions.sql`
+  (RLS por dono, sem policy de update — versão é snapshot imutável).
+  `db.ts`/`local.ts`/`server.ts` com os 4 métodos (list/create/find/delete),
+  rotas `GET/POST /api/v1/templates/:id/versions` +
+  `POST .../:versionId/restore` + `POST .../:versionId/duplicate` +
+  `DELETE .../:versionId`. Painel no editor via "Arquivo → Histórico de
+  versões" (modal novo, mesmo padrão de scrim do export/confirmar-exclusão).
+
+  BUG REAL achado escrevendo os testes: `listDesignVersions` ordenava por
+  `created_at desc` comparando string — duas versões criadas no mesmo
+  milissegundo (trivial num teste, mas também possível em uso real rápido)
+  empatam e a comparação de string não desempata direito. Corrigido pra usar
+  a ordem de inserção do Map (`.reverse()`) em vez de comparar timestamp, no
+  `local.ts` e no store de teste — o Postgres real fica com `order by
+  created_at desc` sem tiebreaker, risco desprezível lá (chamadas de rede
+  reais entre requests distintos, não um loop síncrono apertado).
+
+  Verificado de duas formas: 6 testes automatizados novos (criar, listar em
+  ordem, restaurar, duplicar, excluir, exige autenticação) E um teste manual
+  de ponta a ponta contra um servidor local de verdade rodando (não só
+  mocks) — criar 2 versões, editar o design, restaurar a versão 1 e
+  confirmar que o `bg` da página voltou ao valor original, duplicar como
+  design novo, excluir uma versão e confirmar que sumiu da listagem.
 - [ ] **4.2 Compartilhamento com link e permissões.** Depende do item 3.2.
   Tabela `design_shares` (template_id, visibility: "private"|"link", allow
   comments: bool, expires_at nullable). Rota

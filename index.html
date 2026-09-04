@@ -148,6 +148,20 @@
   </div>
 </div>
 
+<div class="scrim" id="historyScrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+    <h3 id="historyTitle">Histórico de versões</h3>
+    <div class="row" style="margin-bottom:14px">
+      <input id="historyNameInput" placeholder="Nome da versão (ex.: Antes da campanha)" style="flex:1">
+      <button class="tbtn primary" id="historySave">Salvar versão atual</button>
+    </div>
+    <div id="historyList"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="tbtn ghost" id="historyClose" style="flex:1">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="fileImgReplace" accept="image/*" hidden>

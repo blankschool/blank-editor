@@ -77,3 +77,44 @@ export async function deleteTemplateOnServer(id: string): Promise<void> {
   const res = await fetch(`/api/v1/templates/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("failed to delete template");
 }
+
+/* ------------------------- histórico de versão ------------------------- */
+
+export interface DesignVersionSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+export async function listDesignVersionsFromServer(templateId: string): Promise<DesignVersionSummary[]> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions`);
+  if (!res.ok) throw new Error("failed to list versions");
+  return res.json();
+}
+
+export async function createDesignVersionOnServer(templateId: string, name: string): Promise<DesignVersionSummary> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("failed to create version");
+  return res.json();
+}
+
+export async function restoreDesignVersionOnServer(templateId: string, versionId: string): Promise<void> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions/${versionId}/restore`, { method: "POST" });
+  if (!res.ok) throw new Error("failed to restore version");
+}
+
+export async function duplicateDesignVersionOnServer(templateId: string, versionId: string): Promise<string> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions/${versionId}/duplicate`, { method: "POST" });
+  if (!res.ok) throw new Error("failed to duplicate version");
+  const { id } = await res.json();
+  return id as string;
+}
+
+export async function deleteDesignVersionOnServer(templateId: string, versionId: string): Promise<void> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions/${versionId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("failed to delete version");
+}

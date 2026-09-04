@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, FontFaceRow, TemplateRow } from "./db.ts";
+import type { ApiKeySummary, DesignVersionRow, FontFaceRow, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -51,6 +51,7 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
   const apiKeys = new Map<string, StoredApiKey>();
   /** Faces por sha256: a mesma dedup que o `unique (owner_id, sha256)` do Postgres faz. */
   const fontFaces = new Map<string, FontFaceRow>();
+  const designVersions = new Map<string, DesignVersionRow>();
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -153,5 +154,33 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       return face;
     },
     listFontFaces: async () => [...fontFaces.values()],
+
+    // `.reverse()` da ordem de inserção do Map, não comparar `createdAt` — mesmo raciocínio de
+    // app.test.ts: duas versões criadas no mesmo milissegundo empatariam numa comparação de
+    // string de data, e o Map já preserva a ordem certa sem precisar disso.
+    listDesignVersions: async (ownerId, templateId) =>
+      [...designVersions.values()]
+        .filter((v) => v.ownerId === ownerId && v.templateId === templateId)
+        .reverse(),
+
+    createDesignVersion: async (ownerId, { templateId, name, document }) => {
+      const version: DesignVersionRow = {
+        id: randomUUID(), ownerId, templateId, name,
+        document: structuredClone(document), createdAt: new Date().toISOString(),
+      };
+      designVersions.set(version.id, version);
+      return version;
+    },
+
+    findDesignVersion: async (ownerId, templateId, id) => {
+      const v = designVersions.get(id);
+      return v && v.ownerId === ownerId && v.templateId === templateId ? v : null;
+    },
+
+    deleteDesignVersion: async (ownerId, templateId, id) => {
+      const v = designVersions.get(id);
+      if (!v || v.ownerId !== ownerId || v.templateId !== templateId) return false;
+      return designVersions.delete(id);
+    },
   };
 }

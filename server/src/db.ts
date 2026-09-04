@@ -100,6 +100,69 @@ export async function deleteTemplate(sql: Sql, ownerId: string, id: string): Pro
   return rows.length > 0;
 }
 
+/** Um snapshot nomeado e imutável do documento de um design — histórico de versão manual,
+ *  diferente do versionamento automático de gerações (generationWorkflow.ts, por generation_id). */
+export interface DesignVersionRow {
+  id: string;
+  templateId: string;
+  ownerId: string;
+  name: string;
+  document: unknown;
+  createdAt: string;
+}
+
+const DESIGN_VERSION_COLUMNS = `
+  id, template_id as "templateId", owner_id as "ownerId", name, document, created_at as "createdAt"
+`;
+
+export async function listDesignVersions(sql: Sql, ownerId: string, templateId: string): Promise<DesignVersionRow[]> {
+  const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
+    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from design_versions
+    where template_id = ${templateId} and owner_id = ${ownerId}
+    order by created_at desc
+  `;
+  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}
+
+export async function createDesignVersion(
+  sql: Sql,
+  input: { id: string; ownerId: string; templateId: string; name: string; document: unknown },
+): Promise<DesignVersionRow> {
+  const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
+    insert into design_versions (id, template_id, owner_id, name, document)
+    values (${input.id}, ${input.templateId}, ${input.ownerId}, ${input.name}, ${sql.json(jsonValue(sql, input.document))})
+    returning ${sql.unsafe(DESIGN_VERSION_COLUMNS)}
+  `;
+  const r = rows[0];
+  return { ...r, createdAt: r.createdAt.toISOString() };
+}
+
+/** `templateId` também entra no where — sem isso, o id da versão sozinho já seria suficiente
+ *  pra achar a linha, mas a rota chama isto como `/templates/:id/versions/:versionId`, e uma
+ *  versão pedida com o id de OUTRO design não devia existir daquele ponto de vista. */
+export async function findDesignVersion(
+  sql: Sql,
+  ownerId: string,
+  templateId: string,
+  id: string,
+): Promise<DesignVersionRow | null> {
+  const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
+    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from design_versions
+    where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
+  `;
+  const r = rows[0];
+  return r ? { ...r, createdAt: r.createdAt.toISOString() } : null;
+}
+
+export async function deleteDesignVersion(sql: Sql, ownerId: string, templateId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    delete from design_versions
+    where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
+    returning id
+  `;
+  return rows.length > 0;
+}
+
 /** Looks up the workspace that owns a (non-revoked) API key by its SHA-256 hash. */
 export async function findApiKeyOwner(sql: Sql, keyHash: string): Promise<ApiKeyOwner | null> {
   const rows = await sql<{ owner_id: string }[]>`

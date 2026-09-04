@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { buildApp, type AppDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
-import type { TemplateRow } from "./db.ts";
+import type { DesignVersionRow, TemplateRow } from "./db.ts";
 import { createMemoryGenerationRepository } from "./generationWorkflow.ts";
 
 const VALID_KEY = "blk_live_test";
@@ -19,8 +20,39 @@ const TPL: TemplateRow = {
   document: { active: 0, pages: [{ w: 566, h: 120, bg: "#000", els: [] }] },
 };
 
+/** Store em memória compartilhado entre os testes de histórico de versão — cada teste que
+ *  precisa dele passa sua própria instância via `overrides`, então não vaza estado entre testes. */
+function makeVersionStore() {
+  const versions = new Map<string, DesignVersionRow>();
+  return {
+    // `.reverse()` da ordem de inserção do Map, não comparar `createdAt`: duas versões criadas
+    // na mesma execução síncrona de teste (ou em qualquer chamada em lote de verdade) podem
+    // cair no mesmo milissegundo — string de data igual não tem como desempatar "qual foi
+    // depois", e o Map já sabe a ordem certa de graça.
+    listDesignVersions: async (ownerId: string, templateId: string) =>
+      [...versions.values()]
+        .filter((v) => v.ownerId === ownerId && v.templateId === templateId)
+        .reverse(),
+    createDesignVersion: async (ownerId: string, input: { templateId: string; name: string; document: unknown }) => {
+      const version: DesignVersionRow = { id: randomUUID(), ownerId, ...input, createdAt: new Date().toISOString() };
+      versions.set(version.id, version);
+      return version;
+    },
+    findDesignVersion: async (ownerId: string, templateId: string, id: string) => {
+      const v = versions.get(id);
+      return v && v.ownerId === ownerId && v.templateId === templateId ? v : null;
+    },
+    deleteDesignVersion: async (ownerId: string, templateId: string, id: string) => {
+      const v = versions.get(id);
+      if (!v || v.ownerId !== ownerId || v.templateId !== templateId) return false;
+      return versions.delete(id);
+    },
+  };
+}
+
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
+    ...makeVersionStore(),
     findApiKeyOwner: async (keyHash) => (keyHash === hashApiKey(VALID_KEY) ? { ownerId: OWNER_ID } : null),
     findTemplate: async (ownerId, id) => (id === TPL.id && ownerId === TPL.ownerId ? TPL : null),
     listTemplates: async (ownerId) =>
@@ -300,6 +332,102 @@ test("PUT /api/v1/templates/:id toggles favorite without touching the document",
   assert.equal(res.statusCode, 200);
   assert.equal(JSON.parse(res.body).favorite, true);
   assert.deepEqual(updateInput, { favorite: true });
+});
+
+// --- Histórico de versão (item 4.1 do backlog) ---------------------------------
+
+test("POST /api/v1/templates/:id/versions snapshots the current document under a name", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Antes da campanha" },
+  });
+  assert.equal(res.statusCode, 201);
+  const body = JSON.parse(res.body);
+  assert.equal(body.name, "Antes da campanha");
+  assert.deepEqual(body.document, TPL.document);
+
+  const missingName = await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: {} });
+  assert.equal(missingName.statusCode, 400);
+
+  const missingTemplate = await app.inject({
+    method: "POST", url: "/api/v1/templates/nope/versions", headers: AUTH, payload: { name: "x" },
+  });
+  assert.equal(missingTemplate.statusCode, 404);
+});
+
+test("GET /api/v1/templates/:id/versions lists what was created, most recent first", async () => {
+  const app = buildApp(makeDeps());
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Primeira" } });
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Segunda" } });
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH });
+  assert.equal(res.statusCode, 200);
+  const names = JSON.parse(res.body).map((v: { name: string }) => v.name);
+  assert.deepEqual(names, ["Segunda", "Primeira"]);
+});
+
+test("POST .../restore copies the version's document back into the template", async () => {
+  let updateInput: unknown;
+  const app = buildApp(makeDeps({
+    updateTemplate: async (ownerId, id, input) => {
+      updateInput = input;
+      return id === TPL.id && ownerId === TPL.ownerId ? { ...TPL, ...input } : null;
+    },
+  }));
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Snapshot" },
+  });
+  const versionId = JSON.parse(created.body).id;
+
+  const res = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions/${versionId}/restore`, headers: AUTH,
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(updateInput, { document: TPL.document });
+
+  const missing = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions/does-not-exist/restore`, headers: AUTH,
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
+test("POST .../duplicate creates a new, independent design from that snapshot", async () => {
+  let createInput: unknown;
+  const app = buildApp(makeDeps({
+    createTemplate: async (ownerId, input) => {
+      createInput = input;
+      return { id: "duplicated-tpl", ownerId, kind: "custom", name: input.name, document: input.document, favorite: false };
+    },
+  }));
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Congelada" },
+  });
+  const versionId = JSON.parse(created.body).id;
+
+  const res = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions/${versionId}/duplicate`, headers: AUTH,
+  });
+  assert.equal(res.statusCode, 201);
+  assert.equal(JSON.parse(res.body).id, "duplicated-tpl");
+  assert.deepEqual((createInput as { document: unknown }).document, TPL.document);
+});
+
+test("DELETE .../versions/:versionId removes it; a second delete 404s", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Descartável" },
+  });
+  const versionId = JSON.parse(created.body).id;
+
+  const first = await app.inject({ method: "DELETE", url: `/api/v1/templates/${TPL.id}/versions/${versionId}`, headers: AUTH });
+  assert.equal(first.statusCode, 204);
+  const second = await app.inject({ method: "DELETE", url: `/api/v1/templates/${TPL.id}/versions/${versionId}`, headers: AUTH });
+  assert.equal(second.statusCode, 404);
+});
+
+test("version-history routes require an authenticated owner, same as any other template route", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/versions` });
+  assert.equal(res.statusCode, 401);
 });
 
 // --- Storage (fase 7) ---------------------------------------------------------

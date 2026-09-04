@@ -33,6 +33,10 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       return updated;
     },
     deleteTemplate: async () => false,
+    listDesignVersions: async () => [],
+    createDesignVersion: async () => { throw new Error("not used in these tests"); },
+    findDesignVersion: async () => null,
+    deleteDesignVersion: async () => false,
     upsertFontFace: async (input) => ({
       id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
       postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,

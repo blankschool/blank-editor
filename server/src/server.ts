@@ -6,14 +6,18 @@ import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
 import {
   createDb,
+  createDesignVersion,
   createPostgresGenerationRepository,
   createApiKey,
   createTemplate,
   deleteApiKey,
+  deleteDesignVersion,
   deleteTemplate,
   findApiKeyOwner,
+  findDesignVersion,
   findTemplate,
   listApiKeys,
+  listDesignVersions,
   listFontFaces,
   listTemplates,
   revokeApiKey,
@@ -70,6 +74,10 @@ if (DATABASE_URL) {
     listFontFaces: (ownerId) => listFontFaces(sql, ownerId),
     deleteApiKey: (ownerId, id) => deleteApiKey(sql, ownerId, id),
     renderTemplatePng,
+    listDesignVersions: (ownerId, templateId) => listDesignVersions(sql, ownerId, templateId),
+    createDesignVersion: (ownerId, input) => createDesignVersion(sql, { id: randomUUID(), ownerId, ...input }),
+    findDesignVersion: (ownerId, templateId, id) => findDesignVersion(sql, ownerId, templateId, id),
+    deleteDesignVersion: (ownerId, templateId, id) => deleteDesignVersion(sql, ownerId, templateId, id),
   };
 } else {
   deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);
