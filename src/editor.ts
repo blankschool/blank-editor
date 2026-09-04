@@ -361,12 +361,27 @@ function elInner(e: any) {
       return `<svg viewBox="0 0 ${e.w} ${e.h}" style="width:100%;height:100%;overflow:visible">${paths.join("")}</svg>`;
     }
     case "text": {
+      // A base é o estilo do elemento — cada run só declara o que DIVERGE dela, então um run
+      // sem `weight`/`fill`/etc. herda naturalmente por estar dentro do mesmo <div>.
       const st = [
         `font-family:'${e.font}',Inter,system-ui,sans-serif`, `font-size:${e.size}px`,
         `font-weight:${e.weight}`, `font-style:${e.italic ? "italic" : "normal"}`,
         `text-decoration:${e.underline ? "underline" : "none"}`, `text-align:${e.align}`,
         `line-height:${e.lh}`, `letter-spacing:${e.ls}px`, `color:${e.fill}`,
       ].join(";");
+      if (e.runs && e.runs.length) {
+        const inner = e.runs.map((r) => {
+          const over = [
+            r.font ? `font-family:'${r.font}',Inter,system-ui,sans-serif` : "",
+            r.weight !== undefined ? `font-weight:${r.weight}` : "",
+            r.italic !== undefined ? `font-style:${r.italic ? "italic" : "normal"}` : "",
+            r.underline !== undefined ? `text-decoration:${r.underline ? "underline" : "none"}` : "",
+            r.fill ? `color:${r.fill}` : "",
+          ].filter(Boolean).join(";");
+          return `<span style="${over}">${esc(r.text)}</span>`;
+        }).join("");
+        return `<div class="txt" data-txt="${e.id}" style="${st}">${inner}</div>`;
+      }
       return `<div class="txt" data-txt="${e.id}" style="${st}">${esc(e.text)}</div>`;
     }
   }
@@ -2053,6 +2068,75 @@ function roundRect(x, w, h, r) {
   x.lineTo(r, h); x.quadraticCurveTo(0, h, 0, h - r);
   x.lineTo(0, r); x.quadraticCurveTo(0, 0, r, 0); x.closePath();
 }
+function richFont(e: any, run: any): string {
+  const weight = run.weight ?? e.weight;
+  const italic = run.italic ?? e.italic;
+  const font = run.font || e.font;
+  return `${italic ? "italic " : ""}${weight} ${e.size}px "${font}", Inter, system-ui, sans-serif`;
+}
+
+/** `runs` vira uma lista plana de tokens (uma palavra, ou `{break:true}` pra quebra de
+ *  parágrafo) — mesma convenção de `split(" ")` que o texto plano já usa (espaço duplo não é
+ *  preservado à risca, mesma limitação que sempre existiu). Cada palavra carrega o run de onde
+ *  veio, pra medir/desenhar com a fonte certa. */
+function tokenizeRuns(runs: any[]): any[] {
+  const tokens: any[] = [];
+  for (const run of runs) {
+    const paras = String(run.text).split("\n");
+    paras.forEach((para, pi) => {
+      if (pi > 0) tokens.push({ brk: true });
+      for (const word of para.split(" ")) {
+        if (word !== "") tokens.push({ text: word, run });
+      }
+    });
+  }
+  return tokens;
+}
+
+/** Desenha `e.runs` no canvas, com quebra de linha por palavra igual ao texto plano — só que
+ *  cada palavra mede/desenha com a fonte/cor do PRÓPRIO run, não uma fonte só pra caixa
+ *  inteira. Precisa remedir a largura de cada palavra (não só a linha inteira) porque uma
+ *  palavra em negrito no meio da frase é mais larga que a mesma palavra sem negrito — ela pode
+ *  empurrar a quebra de linha pra um ponto diferente do que o texto plano teria. */
+function drawRichText(x: CanvasRenderingContext2D, e: any) {
+  const tokens = tokenizeRuns(e.runs);
+  const spaceWidth = (run: any) => { x.font = richFont(e, run); return x.measureText(" ").width; };
+  const wordWidth = (tok: any) => { x.font = richFont(e, tok.run); return x.measureText(tok.text).width; };
+
+  const lines: any[][] = [[]];
+  let width = 0;
+  for (const tok of tokens) {
+    if (tok.brk) { lines.push([]); width = 0; continue; }
+    const line = lines[lines.length - 1];
+    const w = wordWidth(tok);
+    const sep = line.length ? spaceWidth(tok.run) : 0;
+    if (line.length && width + sep + w > e.w) {
+      lines.push([tok]);
+      width = w;
+    } else {
+      line.push(tok);
+      width += sep + w;
+    }
+  }
+
+  const lh = e.size * e.lh;
+  lines.forEach((line, i) => {
+    let lineWidth = 0;
+    line.forEach((tok, j) => { lineWidth += wordWidth(tok) + (j > 0 ? spaceWidth(tok.run) : 0); });
+    let cx = e.align === "center" ? (e.w - lineWidth) / 2 : e.align === "right" ? e.w - lineWidth : 0;
+    const ty = i * lh + (lh - e.size) / 2;
+    line.forEach((tok, j) => {
+      if (j > 0) cx += spaceWidth(tok.run);
+      x.font = richFont(e, tok.run);
+      x.fillStyle = tok.run.fill || e.fill;
+      x.fillText(tok.text, cx, ty);
+      const w = x.measureText(tok.text).width;
+      if (tok.run.underline) x.fillRect(cx, ty + e.size * 1.02, w, Math.max(1, e.size / 16));
+      cx += w;
+    });
+  });
+}
+
 async function drawEl(x: CanvasRenderingContext2D, e: any) {
   const stroke = () => { if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.stroke(); } };
   if (e.type === "rect") {
@@ -2116,9 +2200,10 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     } catch (err) { /* unreadable image, skip */ }
   }
   else if (e.type === "text") {
+    x.textBaseline = "top";
+    if (e.runs && e.runs.length) { drawRichText(x, e); return; }
     x.fillStyle = e.fill;
     x.font = `${e.italic ? "italic " : ""}${e.weight} ${e.size}px "${e.font}", Inter, system-ui, sans-serif`;
-    x.textBaseline = "top";
     const lh = e.size * e.lh;
     const lines = [];
     for (const para of String(e.text).split("\n")) {

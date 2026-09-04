@@ -124,12 +124,33 @@ usados em server/src/db.ts e supabase/migrations/*).
   imagem/retângulo/elipse/linha). Desbloqueia os itens 1.3 (paths
   arbitrários, além do retângulo puro já feito) e 1.7 (Type3) quando a
   extração for construída.
-- [ ] **2.2 Texto rico (múltiplos estilos numa caixa).** `El.text` é uma
-  string plana com um único font/size/weight/fill pra caixa inteira. Adicionar
-  um campo opcional `runs?: Array<{text, weight?, italic?, fill?}>` que,
-  quando presente, o renderer (canvas em `editor.ts` e o server em
-  `render/renderTweet.ts`) desenha por trecho em vez do texto inteiro num
-  estilo só. Retrocompatível: elemento sem `runs` continua igual a hoje.
+- [x] **2.2 Texto rico (múltiplos estilos numa caixa).** `El.runs?: TextRun[]`
+  (src/types.ts) — cada run só declara o que diverge do estilo base do
+  elemento (weight/italic/underline/fill/font), herdando o resto. Tamanho de
+  fonte fica de fora de propósito: misturar `size` por run reabriria o
+  problema de reflow com altura de linha variável, bem mais difícil que só
+  desenhar cor/peso/estilo diferentes.
+
+  Retrocompatível: elemento sem `runs` renderiza exatamente como antes (os
+  dois caminhos, plano e rico, continuam lado a lado nos dois renderers).
+  DOM ao vivo: cada run vira um `<span>` dentro do mesmo `<div>`, o navegador
+  quebra linha sozinho, herdando o que o span não sobrescreve. Canvas de
+  export: bem mais delicado — quebra de linha por PALAVRA tem que remedir
+  cada palavra com a fonte do PRÓPRIO run (uma palavra em negrito é mais
+  larga, pode empurrar a quebra pra outro ponto que o texto plano não
+  preveria), então virou `tokenizeRuns`+`drawRichText` novos em vez de só
+  estender o loop existente.
+
+  Fora de escopo de propósito: o render SVG do servidor
+  (`editableTweetTemplate.ts`) não recebe `runs` — mesmo raciocínio do
+  fillPath (item 2.1), essa rota é só pra templates de geração automática
+  simples, não pra design importado/editado à mão.
+
+  Verificado isoladamente (canvas e DOM lado a lado, fora do app atrás de
+  login): frase com palavra em negrito + palavra vermelha sublinhada no
+  meio — quebra de linha correta respeitando a largura da caixa, negrito
+  visivelmente mais grosso, cor e sublinhado só no trecho certo, os dois
+  renderers produzindo o mesmo resultado visual.
 - [ ] **2.3 Recorte/reenquadramento de foto independente da moldura.** Guardar
   no `El` de imagem um crop próprio (`imgX/imgY/imgW/imgH` relativos à foto
   original, ou equivalente) em vez de recalcular "cover" a cada render —sem

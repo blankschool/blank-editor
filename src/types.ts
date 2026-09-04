@@ -34,6 +34,18 @@ export interface Clip {
   h: number;
 }
 
+/** One styled run within a rich-text `El.runs` sequence. Every field is an override of the
+ *  parent element's own value — absent means "use the element's weight/italic/etc." — so a
+ *  plain run in an otherwise-styled headline doesn't need to repeat the base style. */
+export interface TextRun {
+  text: string;
+  weight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  fill?: string;
+  font?: string;
+}
+
 export interface El {
   id: string;
   type: ElType;
@@ -78,6 +90,15 @@ export interface El {
   /** Line height as a multiple of font size. */
   lh?: number;
   ls?: number;
+  /** Mixed styling within one text box (a bold word mid-headline, a colored phrase…). When
+   *  present, renderers draw `runs` end-to-end instead of the plain `text` string — `text`
+   *  stays populated too (the concatenation of every run, in order) so anything that only
+   *  reads plain text (search, the JSON export, an older reader) keeps working. Every run
+   *  shares the element's `size` — mixed font SIZE within one box isn't supported, only
+   *  weight/style/color/underline/font per run, which covers what a "bold word" actually
+   *  needs without the much harder problem of re-flowing wrapped lines whose own height varies
+   *  word to word. */
+  runs?: TextRun[];
 
   // image — a data URI, or "@key" pointing into Doc.assets
   src?: string;
