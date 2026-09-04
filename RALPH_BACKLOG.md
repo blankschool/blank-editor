@@ -13,7 +13,7 @@ usados em server/src/db.ts e supabase/migrations/*).
 
 ## 1. Pipeline de importar PDF — bugs e capacidades faltando
 
-- [ ] **1.1 Bug: fontes não unidas entre páginas.** `pdf-import-service/scripts/canva-pdf-fonts.py`
+- [x] **1.1 Bug: fontes não unidas entre páginas.** `pdf-import-service/scripts/canva-pdf-fonts.py`
   reconstrói cada família a partir da PRIMEIRA página só (`vistos.add`) e pula
   as demais. Um carrossel onde a página 2 usa uma letra ausente na página 1
   perde essa letra na fonte final. Corrigir: unir os subsets de `ToUnicode`

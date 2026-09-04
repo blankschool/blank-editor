@@ -72,26 +72,37 @@ def to_unicode(doc, xref):
                 out[lo+i] = chr(d+i)
     return out
 
-def constroi(ttf_bytes, uni, familia, estilo, destino):
-    f = TTFont(io.BytesIO(ttf_bytes))
-    upem = f["head"].unitsPerEm
-    order, gset, hm = f.getGlyphOrder(), f.getGlyphSet(), f["hmtx"].metrics
-
+def constroi(entries, familia, estilo, destino):
+    """`entries` é uma lista de (ttf_bytes, uni) — um par por página que usa esta
+    (familia, estilo). Cada página do PDF do Canva embute seu PRÓPRIO subset Identity-H,
+    contendo só os glifos que aquela página usa — sem unir os subsets, uma família que
+    aparece na página 1 só com "ABC" e na página 3 com "XYZ" perderia X/Y/Z (a página 3
+    ficaria muda: a fonte final "não tem" essas letras, `extrair_texto` já filtra por
+    glifo disponível em outro lugar, então o efeito visível seria texto ausente, sem erro
+    nenhum). Método adaptado de `build()` em canva-import/pipeline/mergefonts.py do repo
+    blank-editor-313c0b78, que resolve o mesmo problema pro pipeline de referência."""
+    base_font, upem = None, None
     glyphs, adv, lsb = {}, {}, {}
-    for cid, ch in uni.items():
-        if cid >= len(order) or len(ch) != 1 or ch in glyphs:
-            continue
-        src = order[cid]
-        # Glifos acentuados são compostos e referenciam componentes por índice,
-        # que não sobrevive à cópia entre fontes — decompor evita remapear.
-        rec = DecomposingRecordingPen(gset)
-        gset[src].draw(rec)
-        pen = TTGlyphPen(None)
-        rec.replay(pen)
-        glyphs[ch] = pen.glyph()
-        # o lsb tem que vir junto: com lsb=0 o rasterizador desloca o contorno
-        # e o texto sai mais estreito
-        adv[ch], lsb[ch] = hm[src]
+    for ttf_bytes, uni in entries:
+        f = TTFont(io.BytesIO(ttf_bytes))
+        if base_font is None:
+            base_font, upem = f, f["head"].unitsPerEm
+        order, gset, hm = f.getGlyphOrder(), f.getGlyphSet(), f["hmtx"].metrics
+        for cid, ch in uni.items():
+            if cid >= len(order) or len(ch) != 1 or ch in glyphs:
+                continue
+            src = order[cid]
+            # Glifos acentuados são compostos e referenciam componentes por índice,
+            # que não sobrevive à cópia entre fontes — decompor evita remapear.
+            rec = DecomposingRecordingPen(gset)
+            gset[src].draw(rec)
+            pen = TTGlyphPen(None)
+            rec.replay(pen)
+            glyphs[ch] = pen.glyph()
+            # o lsb tem que vir junto: com lsb=0 o rasterizador desloca o contorno
+            # e o texto sai mais estreito
+            adv[ch], lsb[ch] = hm[src]
+    f = base_font
 
     chars = sorted(glyphs)
     gname = lambda c: "u%04X" % ord(c)
@@ -207,14 +218,12 @@ def extrair_texto(page, peso_por_estilo):
 
 pdf, destino = sys.argv[1], Path(sys.argv[2])
 doc = fitz.open(pdf)
-resultado = []
-vistos = set()  # (familia, estilo) já reconstruída — uma fonte repetida em varias paginas do
-                 # carrossel so precisa ser montada uma vez.
+# Junta os subsets de TODAS as páginas por (familia, estilo) antes de reconstruir — ver o
+# docstring de `constroi` pro porquê de não bastar pegar a primeira página que aparecer.
+por_familia_estilo = {}
 for pagina in doc:
     for xref, ext, tipo, base, nome, enc in pagina.get_fonts(full=False):
         familia, estilo = parte(base.split("+")[-1])
-        if (familia, estilo) in vistos:
-            continue
         dados = doc.extract_font(xref)
         ttf = dados[3]
         if not ttf:
@@ -222,12 +231,16 @@ for pagina in doc:
         uni = to_unicode(doc, xref)
         if not uni:
             print(f"  {base}: sem ToUnicode, pulada"); continue
-        vistos.add((familia, estilo))
-        resultado.append(constroi(ttf, uni, familia, estilo, destino))
-        r = resultado[-1]
-        aviso = "  [embedding restrito]" if r["os2_fs_type"] & 0x000E else ""
-        print(f"  {r['familia']:14} {r['estilo']:10} peso {r['peso']:3}  {r['glifos']:2} glifos  "
-              f"{r['kb']:5.1f} KB  fsType 0x{r['os2_fs_type']:04x}{aviso}")
+        por_familia_estilo.setdefault((familia, estilo), []).append((ttf, uni))
+
+resultado = []
+for (familia, estilo), entries in por_familia_estilo.items():
+    resultado.append(constroi(entries, familia, estilo, destino))
+    r = resultado[-1]
+    aviso = "  [embedding restrito]" if r["os2_fs_type"] & 0x000E else ""
+    print(f"  {r['familia']:14} {r['estilo']:10} peso {r['peso']:3}  {r['glifos']:2} glifos  "
+          f"{r['kb']:5.1f} KB  fsType 0x{r['os2_fs_type']:04x}{aviso}"
+          f"{'  (' + str(len(entries)) + ' páginas)' if len(entries) > 1 else ''}")
 (destino / "fonts.json").write_text(json.dumps(resultado, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 peso_por_estilo = {(r["familia"], r["estilo"]): r["peso"] for r in resultado}
