@@ -163,6 +163,52 @@ export async function deleteDesignVersion(sql: Sql, ownerId: string, templateId:
   return rows.length > 0;
 }
 
+export type ShareVisibility = "private" | "link";
+
+/** `visibility` de um design pro dono — sempre existe uma resposta ("private" quando não há
+ *  linha nenhuma ainda), pra quem chama nunca precisar tratar "nunca configurado" como um
+ *  terceiro estado. */
+export async function getDesignShareVisibility(sql: Sql, ownerId: string, templateId: string): Promise<ShareVisibility> {
+  const rows = await sql<{ visibility: ShareVisibility }[]>`
+    select visibility from design_shares where template_id = ${templateId} and owner_id = ${ownerId}
+  `;
+  return rows[0]?.visibility ?? "private";
+}
+
+export async function setDesignShareVisibility(
+  sql: Sql,
+  ownerId: string,
+  templateId: string,
+  visibility: ShareVisibility,
+): Promise<void> {
+  await sql`
+    insert into design_shares (template_id, owner_id, visibility)
+    values (${templateId}, ${ownerId}, ${visibility})
+    on conflict (template_id) do update set visibility = excluded.visibility, updated_at = now()
+  `;
+}
+
+/** Visibilidade de um design, sem saber quem é o dono — usado pela própria rota pública antes de
+ *  decidir se serve o documento (ver `findTemplatePublic`). "private" quando não há linha, igual
+ *  ao lookup com dono. */
+export async function getPublicShareVisibility(sql: Sql, templateId: string): Promise<ShareVisibility> {
+  const rows = await sql<{ visibility: ShareVisibility }[]>`
+    select visibility from design_shares where template_id = ${templateId}
+  `;
+  return rows[0]?.visibility ?? "private";
+}
+
+/** Só pra rota pública: SEM `owner_id` no where — de propósito, é o único lookup do arquivo que
+ *  não isola por dono, porque o visitante anônimo não tem um. A garantia de acesso aqui não é
+ *  "esse dono pode ver isso", é "esse design está marcado como link público" — conferido
+ *  separado, em `getDesignShareVisibility`/join, antes de qualquer documento sair daqui. */
+export async function findTemplatePublic(sql: Sql, id: string): Promise<TemplateRow | null> {
+  const rows = await sql<TemplateRow[]>`
+    select id, owner_id as "ownerId", kind, name, document, favorite from templates where id = ${id}
+  `;
+  return rows[0] ?? null;
+}
+
 /** Looks up the workspace that owns a (non-revoked) API key by its SHA-256 hash. */
 export async function findApiKeyOwner(sql: Sql, keyHash: string): Promise<ApiKeyOwner | null> {
   const rows = await sql<{ owner_id: string }[]>`

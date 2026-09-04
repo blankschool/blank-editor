@@ -22,7 +22,7 @@ import {
   uploadRenderedPng,
   uploadUserPhoto,
 } from "./storage.ts";
-import type { ApiKeyOwner, ApiKeySummary, DesignVersionRow, FontFaceInput, FontFaceRow, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
@@ -81,6 +81,10 @@ export interface AppDeps {
   createDesignVersion: (ownerId: string, input: { templateId: string; name: string; document: unknown }) => Promise<DesignVersionRow>;
   findDesignVersion: (ownerId: string, templateId: string, id: string) => Promise<DesignVersionRow | null>;
   deleteDesignVersion: (ownerId: string, templateId: string, id: string) => Promise<boolean>;
+  getDesignShareVisibility: (ownerId: string, templateId: string) => Promise<ShareVisibility>;
+  setDesignShareVisibility: (ownerId: string, templateId: string, visibility: ShareVisibility) => Promise<void>;
+  getPublicShareVisibility: (templateId: string) => Promise<ShareVisibility>;
+  findTemplatePublic: (id: string) => Promise<TemplateRow | null>;
 }
 
 export interface MediaDeps {
@@ -895,6 +899,90 @@ export function buildApp(
       return reply.code(204).send();
     },
   );
+
+  // Compartilhamento (Editar → Compartilhar): "private" por padrão — sempre existiu antes de
+  // qualquer coisa ficar pública, nunca o contrário. As duas rotas abaixo são do DONO
+  // (requireOwner); a leitura anônima vive só nas rotas /api/v1/public/* mais abaixo, que
+  // conferem a visibilidade ANTES de qualquer documento sair — nunca herdam a autenticação
+  // daqui.
+  // O app inteiro roteia por hash (`location.hash = "/" + rota`, ver src/router.ts) — não existe
+  // rota de servidor pra `/p/:id` de verdade, então o link só funciona como `/#/p/:id`: o
+  // navegador sempre carrega o mesmo index.html, e é o hash que diz pro SPA mostrar a visão
+  // pública em vez de console/editor.
+  function publicShareUrl(id: string): string {
+    return `/#/p/${encodeURIComponent(id)}`;
+  }
+
+  app.get<{ Params: { id: string } }>("/api/v1/templates/:id/share", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const row = await deps.findTemplate(ownerId, request.params.id);
+    if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    const visibility = await deps.getDesignShareVisibility(ownerId, row.id);
+    return { visibility, publicUrl: visibility === "link" ? publicShareUrl(row.id) : null };
+  });
+
+  app.post<{ Params: { id: string }; Body: { visibility?: string } }>(
+    "/api/v1/templates/:id/share",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const visibility = request.body?.visibility;
+      if (visibility !== "private" && visibility !== "link") {
+        return reply.code(400).send({ error: 'visibility must be "private" or "link"' });
+      }
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      await deps.setDesignShareVisibility(ownerId, row.id, visibility);
+      return { visibility, publicUrl: visibility === "link" ? publicShareUrl(row.id) : null };
+    },
+  );
+
+  // --- Leitura pública, sem autenticação nenhuma (Editar → Compartilhar → link) --------------
+  // Nenhuma rota daqui pra baixo chama requireOwner/requirePrincipal — de propósito, é assim
+  // que um visitante anônimo com o link consegue ver o design. A única porta de entrada é
+  // `getPublicShareVisibility`: quem não está marcado "link" responde 404 igual a design
+  // inexistente, pra não revelar "existe mas é privado" pra quem está só adivinhando ids.
+  async function requirePublicTemplate(id: string, reply: FastifyReply): Promise<TemplateRow | null> {
+    const visibility = await deps.getPublicShareVisibility(id);
+    if (visibility !== "link") {
+      reply.code(404).send({ error: `design not found: ${id}` });
+      return null;
+    }
+    const row = await deps.findTemplatePublic(id);
+    if (!row) {
+      reply.code(404).send({ error: `design not found: ${id}` });
+      return null;
+    }
+    return row;
+  }
+
+  app.get<{ Params: { id: string } }>("/api/v1/public/designs/:id", async (request, reply) => {
+    const row = await requirePublicTemplate(request.params.id, reply);
+    if (!row) return;
+    return { id: row.id, name: row.name, pageCount: pageCount(row.document) };
+  });
+
+  app.get<{ Params: { id: string; page: string } }>("/api/v1/public/designs/:id/page/:page", async (request, reply) => {
+    const row = await requirePublicTemplate(request.params.id, reply);
+    if (!row) return;
+    const page = Number(request.params.page);
+    const total = pageCount(row.document);
+    if (!Number.isInteger(page) || page < 1 || page > total) {
+      return reply.code(400).send({ error: `page must be an integer between 1 and ${total}` });
+    }
+    try {
+      // Faces do dono, não de quem está vendo (que não tem dono nenhum) — o design carrega a
+      // fonte que precisa em `Doc.fonts` quando importado de um PDF; faces extras do dono só
+      // importam pra um design que ainda depende de fonte registrada fora do documento.
+      const faces = await facesDoRegistry(row.ownerId);
+      const png = await deps.renderTemplatePng(row.document, parseLayers({}), page - 1, faces);
+      return reply.header("content-type", "image/png").header("cache-control", "public, max-age=60").send(png);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: message });
+    }
+  });
 
   // Foto pro avatar/media de um template — vai pro bucket privado, isolada por dono via
   // prefixo de caminho (uploadUserPhoto, storage.ts). Devolve uma referência

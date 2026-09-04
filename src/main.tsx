@@ -13,6 +13,7 @@ import { initTheme } from "./theme";
 import { ConsoleApp } from "./console/ConsoleApp";
 import { openConsole } from "./console/store";
 import { LoginApp } from "./login/LoginApp";
+import { PublicView } from "./public/PublicView";
 import { bootSession } from "./session";
 
 initTheme();
@@ -25,10 +26,12 @@ const views = {
   login: document.getElementById("view-login")!,
   console: document.getElementById("view-console")!,
   editor: document.getElementById("view-editor")!,
+  p: document.getElementById("view-p")!,
 };
 
 createRoot(views.login).render(<LoginApp />);
 createRoot(views.console).render(<ConsoleApp />);
+createRoot(views.p).render(<PublicView />);
 
 document.getElementById("backToConsole")?.addEventListener("click", () => navigate("console"));
 

@@ -16,11 +16,15 @@ import {
   findApiKeyOwner,
   findDesignVersion,
   findTemplate,
+  findTemplatePublic,
+  getDesignShareVisibility,
+  getPublicShareVisibility,
   listApiKeys,
   listDesignVersions,
   listFontFaces,
   listTemplates,
   revokeApiKey,
+  setDesignShareVisibility,
   updateTemplate,
   upsertFontFace,
 } from "./db.ts";
@@ -78,6 +82,10 @@ if (DATABASE_URL) {
     createDesignVersion: (ownerId, input) => createDesignVersion(sql, { id: randomUUID(), ownerId, ...input }),
     findDesignVersion: (ownerId, templateId, id) => findDesignVersion(sql, ownerId, templateId, id),
     deleteDesignVersion: (ownerId, templateId, id) => deleteDesignVersion(sql, ownerId, templateId, id),
+    getDesignShareVisibility: (ownerId, templateId) => getDesignShareVisibility(sql, ownerId, templateId),
+    setDesignShareVisibility: (ownerId, templateId, visibility) => setDesignShareVisibility(sql, ownerId, templateId, visibility),
+    getPublicShareVisibility: (templateId) => getPublicShareVisibility(sql, templateId),
+    findTemplatePublic: (id) => findTemplatePublic(sql, id),
   };
 } else {
   deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);

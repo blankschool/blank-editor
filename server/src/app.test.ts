@@ -50,9 +50,29 @@ function makeVersionStore() {
   };
 }
 
+/** Mesmo espírito de `makeVersionStore`: instância nova por `makeDeps()`, sem vazar estado
+ *  entre testes. Não confere dono contra `templates` de propósito — os testes de share não
+ *  mexem em `findTemplate`, então bastaria isolar por ownerId mesmo, e o teste "outro dono não
+ *  vê nada" cobre a garantia que importa. */
+function makeShareStore() {
+  const shares = new Map<string, { ownerId: string; visibility: "private" | "link" }>();
+  return {
+    getDesignShareVisibility: async (ownerId: string, templateId: string) => {
+      const row = shares.get(templateId);
+      return row && row.ownerId === ownerId ? row.visibility : "private" as const;
+    },
+    setDesignShareVisibility: async (ownerId: string, templateId: string, visibility: "private" | "link") => {
+      shares.set(templateId, { ownerId, visibility });
+    },
+    getPublicShareVisibility: async (templateId: string) => shares.get(templateId)?.visibility ?? "private" as const,
+    findTemplatePublic: async (id: string) => (id === TPL.id ? TPL : null),
+  };
+}
+
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
     ...makeVersionStore(),
+    ...makeShareStore(),
     findApiKeyOwner: async (keyHash) => (keyHash === hashApiKey(VALID_KEY) ? { ownerId: OWNER_ID } : null),
     findTemplate: async (ownerId, id) => (id === TPL.id && ownerId === TPL.ownerId ? TPL : null),
     listTemplates: async (ownerId) =>
@@ -428,6 +448,74 @@ test("version-history routes require an authenticated owner, same as any other t
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/versions` });
   assert.equal(res.statusCode, 401);
+});
+
+// --- Compartilhamento (item 3.2 + 4.2 do backlog) -------------------------------
+
+test("GET /api/v1/templates/:id/share defaults to private with no publicUrl", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { visibility: "private", publicUrl: null });
+});
+
+test("POST /api/v1/templates/:id/share turns on a public link, rejects a bogus visibility", async () => {
+  const app = buildApp(makeDeps());
+  const bad = await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "public" } });
+  assert.equal(bad.statusCode, 400);
+
+  const ok = await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "link" } });
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(JSON.parse(ok.body), { visibility: "link", publicUrl: `/#/p/${TPL.id}` });
+
+  const after = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH });
+  assert.equal(JSON.parse(after.body).visibility, "link");
+});
+
+test("GET /api/v1/public/designs/:id 404s while private, works once shared, 404s again once turned back off", async () => {
+  const app = buildApp(makeDeps());
+  const beforeSharing = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}` });
+  assert.equal(beforeSharing.statusCode, 404);
+
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "link" } });
+  const shared = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}` });
+  assert.equal(shared.statusCode, 200);
+  assert.deepEqual(JSON.parse(shared.body), { id: TPL.id, name: TPL.name, pageCount: 1 });
+
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "private" } });
+  const afterUnsharing = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}` });
+  assert.equal(afterUnsharing.statusCode, 404);
+});
+
+test("GET /api/v1/public/designs/:id never requires auth — no session, no API key, still works once shared", async () => {
+  const app = buildApp(makeDeps());
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "link" } });
+  const res = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}` }); // sem AUTH de propósito
+  assert.equal(res.statusCode, 200);
+});
+
+test("an unknown id 404s the same way whether or not it's actually shared — doesn't leak existence", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/public/designs/nope" });
+  assert.equal(res.statusCode, 404);
+});
+
+test("GET /api/v1/public/designs/:id/page/:page renders a PNG once shared, 400s outside the page range", async () => {
+  const app = buildApp(makeDeps());
+  await app.inject({ method: "POST", url: `/api/v1/templates/${TPL.id}/share`, headers: AUTH, payload: { visibility: "link" } });
+
+  const ok = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}/page/1` });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.headers["content-type"], "image/png");
+
+  const outOfRange = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}/page/2` });
+  assert.equal(outOfRange.statusCode, 400);
+});
+
+test("GET /api/v1/public/designs/:id/page/:page 404s while the design is private", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: `/api/v1/public/designs/${TPL.id}/page/1` });
+  assert.equal(res.statusCode, 404);
 });
 
 // --- Storage (fase 7) ---------------------------------------------------------

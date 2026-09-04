@@ -8,9 +8,9 @@
  */
 import { getSessionStatus, hasSession, onSessionChange } from "./session";
 
-export type Route = "login" | "console" | "editor";
+export type Route = "login" | "console" | "editor" | "p";
 
-const ROUTES: Route[] = ["login", "console", "editor"];
+const ROUTES: Route[] = ["login", "console", "editor", "p"];
 // Bare/unknown hash defaults to console — but the gate below gets the final say:
 // an unauthenticated visitor lands on login regardless, and this default only
 // matters for someone who's already signed in.

@@ -118,3 +118,26 @@ export async function deleteDesignVersionOnServer(templateId: string, versionId:
   const res = await fetch(`/api/v1/templates/${templateId}/versions/${versionId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("failed to delete version");
 }
+
+/* ----------------------------- compartilhar ----------------------------- */
+
+export interface ShareStatus {
+  visibility: "private" | "link";
+  publicUrl: string | null;
+}
+
+export async function getShareStatus(templateId: string): Promise<ShareStatus> {
+  const res = await fetch(`/api/v1/templates/${templateId}/share`);
+  if (!res.ok) throw new Error("failed to get share status");
+  return res.json();
+}
+
+export async function setShareVisibility(templateId: string, visibility: "private" | "link"): Promise<ShareStatus> {
+  const res = await fetch(`/api/v1/templates/${templateId}/share`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ visibility }),
+  });
+  if (!res.ok) throw new Error("failed to set share visibility");
+  return res.json();
+}

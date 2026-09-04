@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, DesignVersionRow, FontFaceRow, TemplateRow } from "./db.ts";
+import type { ApiKeySummary, DesignVersionRow, FontFaceRow, ShareVisibility, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -52,6 +52,7 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
   /** Faces por sha256: a mesma dedup que o `unique (owner_id, sha256)` do Postgres faz. */
   const fontFaces = new Map<string, FontFaceRow>();
   const designVersions = new Map<string, DesignVersionRow>();
+  const shares = new Map<string, ShareVisibility>();
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -182,5 +183,18 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       if (!v || v.ownerId !== ownerId || v.templateId !== templateId) return false;
       return designVersions.delete(id);
     },
+
+    getDesignShareVisibility: async (ownerId, templateId) => {
+      const row = templates.get(templateId);
+      if (!row || row.ownerId !== ownerId) return "private";
+      return shares.get(templateId) ?? "private";
+    },
+    setDesignShareVisibility: async (ownerId, templateId, visibility) => {
+      const row = templates.get(templateId);
+      if (!row || row.ownerId !== ownerId) return;
+      shares.set(templateId, visibility);
+    },
+    getPublicShareVisibility: async (templateId) => shares.get(templateId) ?? "private",
+    findTemplatePublic: async (id) => templates.get(id) ?? null,
   };
 }

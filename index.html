@@ -19,6 +19,7 @@
 <style>@keyframes be-spin { to { transform: rotate(360deg); } }</style>
 <div id="view-login" style="display:none; height:100%"></div>
 <div id="view-console" style="display:none; height:100%"></div>
+<div id="view-p" style="display:none; height:100%"></div>
 <div id="view-editor" style="display:none; height:100%">
 <div class="app">
   <header class="topbar" id="topbar">
@@ -144,6 +145,24 @@
     <div class="row">
       <button class="tbtn ghost" id="confirmCancel" style="flex:1">Cancelar</button>
       <button class="tbtn primary" id="confirmGo" style="flex:1;background:var(--danger)">Excluir</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="shareScrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <h3 id="shareTitle">Compartilhar</h3>
+    <p class="phint" style="margin-bottom:14px">Um link público mostra este design somente-leitura — sem editor, sem login.</p>
+    <div class="row" style="margin-bottom:14px;gap:8px">
+      <button class="tbtn" id="shareOff" style="flex:1">Privado</button>
+      <button class="tbtn" id="shareOn" style="flex:1">Link público</button>
+    </div>
+    <div id="shareLinkRow" class="row" style="gap:8px;margin-bottom:14px" hidden>
+      <input id="shareLinkInput" readonly style="flex:1">
+      <button class="tbtn ghost" id="shareCopyLink">Copiar</button>
+    </div>
+    <div class="row">
+      <button class="tbtn ghost" id="shareClose" style="flex:1">Fechar</button>
     </div>
   </div>
 </div>

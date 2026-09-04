@@ -37,6 +37,10 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     createDesignVersion: async () => { throw new Error("not used in these tests"); },
     findDesignVersion: async () => null,
     deleteDesignVersion: async () => false,
+    getDesignShareVisibility: async () => "private",
+    setDesignShareVisibility: async () => {},
+    getPublicShareVisibility: async () => "private",
+    findTemplatePublic: async () => null,
     upsertFontFace: async (input) => ({
       id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
       postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,

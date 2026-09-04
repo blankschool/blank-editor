@@ -190,12 +190,49 @@ usados em server/src/db.ts e supabase/migrations/*).
   checagem "gerado precisa estar aprovado antes de sair da máquina" também
   virou uma função só (`ensureCanDownload`), pra copiar markup não abrir uma
   porta que baixar arquivo não tem.
-- [ ] **3.2 Página pública `/t/:slug`.** Rota nova (server + frontend) que
-  serve um HTML somente-leitura de um design por slug, sem precisar do
-  console/editor — pré-requisito de compartilhamento (item 4.2). Precisa
-  decidir: slug é gerado automaticamente ou escolhido? Sugestão: reaproveitar
-  o `id` do template como slug por enquanto (sem UI de slug customizado),
-  focar em fazer a rota funcionar.
+- [x] **3.2 + 4.2 Página pública e compartilhamento — feitos juntos.**
+  CORREÇÃO DE ORDEM em relação ao plano original: o plano pedia 3.2 (página
+  pública) ANTES de 4.2 (o toggle de permissão) — inverti isso na hora de
+  implementar, porque construir a rota pública primeiro, sem o opt-in
+  existir ainda, teria um momento real (por menor que fosse) em que qualquer
+  id de template vira acessível por qualquer um que adivinhe/tenha o id,
+  antes do botão que deveria controlar isso sequer existir. As duas coisas
+  foram para dentro do MESMO commit de propósito: nunca existiu um estado
+  intermediário "página pública sem controle de acesso".
+
+  `design_shares` (migration 0008): uma linha por template, `visibility`
+  "private" (padrão) ou "link", RLS por dono — a leitura pública nunca passa
+  pela RLS, é a query direta do server (`where visibility = 'link'`) que
+  garante o acesso, mesmo padrão já usado em templates/api_keys. Rotas do
+  dono: `GET/POST /api/v1/templates/:id/share`. Rotas públicas, SEM
+  `requireOwner` nenhum: `GET /api/v1/public/designs/:id` (metadados) e
+  `GET /api/v1/public/designs/:id/page/:n` (PNG da página, reaproveitando
+  `deps.renderTemplatePng` — a mesmíssima função que a capa do dono já usa,
+  zero lógica de canvas duplicada). Um id inexistente e um id privado
+  respondem 404 idênticos — não dá pra alguém adivinhando ids descobrir
+  "esse aqui existe mas é privado".
+
+  Frontend: nova rota de app `p` (`src/router.ts`), sem exigir sessão —
+  `PublicView.tsx` busca os metadados e desenha um `<img>` por página
+  apontando pro PNG público. Modal "Compartilhar" no editor (Arquivo →
+  Compartilhar): liga/desliga o link, mostra e copia a URL
+  (`/#/p/<id>` — o app roteia por hash, então é o formato que funciona de
+  verdade, diferente do `/p/<id>` que o plano original sugeria).
+
+  BUG DE PROCESSO (não de código) achado ao testar: pra ver as mudanças de
+  backend desta sessão inteira, o servidor de dev do usuário (rodando desde
+  antes de qualquer uma delas) precisava reiniciar — matei o processo do
+  jeito errado uma vez (só o filho do backend), o que derrubou o `dev.mjs`
+  inteiro e junto o frontend, porque `scripts/dev.mjs` mata os dois quando
+  um morre. Corrigido subindo de novo com `npm run dev` (o jeito certo),
+  frontend e backend voltaram juntos.
+
+  Verificado ao vivo no navegador de verdade, sem login algum: criei um
+  template de teste, ativei o link, abri em `#/p/<id>` e a imagem certa
+  apareceu (fundo azul, retângulo laranja arredondado); desativei o link,
+  recarreguei, e a tela mudou pra "este link não está disponível";
+  apaguei o template de teste no fim. 14 testes automatizados novos
+  cobrindo dono e público, incluindo o caso de não vazar existência.
 
 ## 4. Features de produto que mudam schema/arquitetura
 
@@ -227,11 +264,12 @@ habilitado, políticas por dono).
   mocks) — criar 2 versões, editar o design, restaurar a versão 1 e
   confirmar que o `bg` da página voltou ao valor original, duplicar como
   design novo, excluir uma versão e confirmar que sumiu da listagem.
-- [ ] **4.2 Compartilhamento com link e permissões.** Depende do item 3.2.
-  Tabela `design_shares` (template_id, visibility: "private"|"link", allow
-  comments: bool, expires_at nullable). Rota
-  `POST /api/v1/templates/:id/share`, diálogo no editor, a página `/t/:slug`
-  (item 3.2) passa a checar essa tabela antes de servir.
+- [x] **4.2 Compartilhamento — feito junto com o 3.2, ver aquele item.**
+  Escopo reduzido em relação à ideia original: só `visibility`
+  ("private"/"link"), sem `allow_comments` nem `expires_at` — nenhum dos
+  dois tem consumidor ainda (comentários é o item 4.3, ainda não feito;
+  expiração não foi pedida por ninguém, seria campo morto). Adicionar
+  quando o item 4.3 existir ou alguém pedir expiração de verdade.
 - [ ] **4.3 Comentários fixados no canvas.** Tabelas `design_comments` +
   `design_comment_replies` (mesmo padrão de `approvals`/`generation_workflow`
   já existente), pin por `x/y` relativo à página, resolver/reabrir, painel no

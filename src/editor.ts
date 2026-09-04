@@ -6,7 +6,7 @@ import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateD
 import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
   listDesignVersionsFromServer, createDesignVersionOnServer, restoreDesignVersionOnServer, duplicateDesignVersionOnServer, deleteDesignVersionOnServer,
-  type DesignVersionSummary,
+  getShareStatus, setShareVisibility, type DesignVersionSummary, type ShareStatus,
 } from "./templateStore";
 import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
@@ -2321,6 +2321,7 @@ function renderFileMenu() {
     item("rename", "Renomear"),
     item("resize", "Redimensionar páginas"),
     canManage ? item("duplicate", "Duplicar") : "",
+    canManage ? item("share", "Compartilhar") : "",
     canManage ? item("history", "Histórico de versões") : "",
     canManage ? item("copy-id", "Copiar ID") : "",
     item("open-json", "Abrir arquivo local…"),
@@ -2355,6 +2356,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
     return;
   }
   if (action === "history") { openHistory(); return; }
+  if (action === "share") { openShare(); return; }
   if (action === "delete") {
     $("confirmMsg").textContent = `Excluir o template "${doc.name}"? Isso não pode ser desfeito.`;
     $("confirmScrim").hidden = false;
@@ -2378,6 +2380,42 @@ $("confirmGo").addEventListener("click", async () => {
     toast("Template excluído");
     location.hash = "/console/templates";
   } catch { toast("Não foi possível excluir."); }
+});
+
+/* compartilhar (item 3.2 + 4.2 do backlog) */
+function renderShareModal(status: ShareStatus) {
+  $("shareOff").setAttribute("aria-pressed", String(status.visibility === "private"));
+  $("shareOn").setAttribute("aria-pressed", String(status.visibility === "link"));
+  $("shareLinkRow").hidden = status.visibility !== "link" || !status.publicUrl;
+  if (status.publicUrl) ($("shareLinkInput") as HTMLInputElement).value = location.origin + status.publicUrl;
+}
+
+async function openShare() {
+  if (!doc.seedId) return;
+  $("shareScrim").hidden = false;
+  try {
+    renderShareModal(await getShareStatus(doc.seedId));
+  } catch { toast("Não foi possível carregar o status de compartilhamento."); }
+}
+
+async function toggleShare(visibility: "private" | "link") {
+  if (!doc.seedId) return;
+  try {
+    renderShareModal(await setShareVisibility(doc.seedId, visibility));
+    toast(visibility === "link" ? "Link público ativado" : "Voltou a ser privado");
+  } catch { toast("Não foi possível atualizar o compartilhamento."); }
+}
+
+$("shareOff").addEventListener("click", () => toggleShare("private"));
+$("shareOn").addEventListener("click", () => toggleShare("link"));
+$("shareClose").addEventListener("click", () => { $("shareScrim").hidden = true; });
+$("shareScrim").addEventListener("click", (e) => { if (e.target === $("shareScrim")) $("shareScrim").hidden = true; });
+$("shareCopyLink").addEventListener("click", () => {
+  const input = $("shareLinkInput") as HTMLInputElement;
+  navigator.clipboard?.writeText(input.value).then(() => toast("Link copiado")).catch(() => {
+    input.select();
+    toast("Selecionado — copie com ⌘C");
+  });
 });
 
 /* histórico de versão (item 4.1 do backlog) */
