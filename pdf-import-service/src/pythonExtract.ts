@@ -41,9 +41,24 @@ export interface ExtractedTextElement {
   rot: number;
 }
 
+/** Retângulo de cor sólida (preenchimento vetorial cujo desenho é só um `re` no PDF) que
+ *  não é o fundo da página inteira — esse já virou `Page.bg`. Formas vetoriais mais
+ *  complexas (path com curvas) ainda não têm elemento correspondente no editor. */
+export interface ExtractedShapeElement {
+  type: "rect";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fill: string;
+  opacity: number;
+}
+
+export type ExtractedPageElement = ExtractedTextElement | ExtractedShapeElement;
+
 export interface PythonExtractResult {
   fonts: ExtractedFont[];
-  textByPage: Map<number, ExtractedTextElement[]>;
+  elementsByPage: Map<number, ExtractedPageElement[]>;
   /** Cor de fundo real da página (o preenchimento vetorial que cobre a página inteira, o
    *  mais acima se houver mais de um), ou `null` quando nenhum preenchimento cobre tudo —
    *  quem monta o `Page` decide o branco-padrão nesse caso. */
@@ -64,7 +79,7 @@ interface RawFontEntry {
 
 interface RawTextPage {
   page: number;
-  elements: ExtractedTextElement[];
+  elements: ExtractedPageElement[];
   bg: string | null;
 }
 
@@ -99,12 +114,12 @@ export async function extractFontsAndText(pdfPath: string, workDir: string): Pro
     })),
   );
 
-  const textByPage = new Map<number, ExtractedTextElement[]>();
+  const elementsByPage = new Map<number, ExtractedPageElement[]>();
   const bgByPage = new Map<number, string | null>();
   for (const entry of rawText) {
-    textByPage.set(entry.page, entry.elements);
+    elementsByPage.set(entry.page, entry.elements);
     bgByPage.set(entry.page, entry.bg);
   }
 
-  return { fonts, textByPage, bgByPage };
+  return { fonts, elementsByPage, bgByPage };
 }

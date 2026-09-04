@@ -963,6 +963,14 @@ export function buildApp(
             src,
           };
         }
+        if (el.type === "rect") {
+          return {
+            id: randomUUID(), type: "rect" as const, name: `forma ${index + 1}`,
+            x: el.x, y: el.y, w: el.w, h: el.h,
+            rot: 0, opacity: el.opacity, locked: false, hidden: false,
+            fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
+          };
+        }
         return {
           id: randomUUID(), type: "text" as const, name: `texto ${index + 1}`,
           x: el.x, y: el.y, w: el.w, h: el.h,

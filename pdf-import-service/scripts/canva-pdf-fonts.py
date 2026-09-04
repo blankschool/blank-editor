@@ -214,6 +214,39 @@ def caixa_nao_rotacionada(x0, y0, x1, y1, ang_rad):
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     return cx - w / 2, cy - h / 2, w, h
 
+def extrair_formas(page):
+    """Retângulos de cor sólida (fills vetoriais cujo desenho é só um `re`) que não sejam
+    o próprio fundo da página — esse já virou `bg` em `detectar_fundo`; repeti-lo como
+    elemento seria uma camada idêntica empilhada em cima de si mesma.
+
+    ESCOPO REDUZIDO DE PROPÓSITO: só retângulo puro. Um path vetorial arbitrário (ícone,
+    halftone, contorno de título — comum no Canva) mapeia pro mesmo `d` de `get_drawings()`,
+    mas o `El` do Blank Editor ainda não tem um tipo de "path preenchido arbitrário" (o
+    `draw` existente só guarda uma polyline com stroke, sem fill) — fica para quando esse
+    tipo existir; por enquanto essas formas continuam invisíveis na importação, do jeito
+    que já estavam antes deste método."""
+    r = page.rect
+    formas = []
+    for d in page.get_drawings():
+        fill = d.get("fill")
+        if not fill:
+            continue
+        comandos = [it[0] for it in d.get("items", [])]
+        if comandos != ["re"]:
+            continue
+        x0, y0, x1, y1 = d["rect"]
+        cobre_pagina = x0 <= r.x0 + 1 and y0 <= r.y0 + 1 and x1 >= r.x1 - 1 and y1 >= r.y1 - 1
+        if cobre_pagina:
+            continue
+        formas.append(dict(
+            type="rect",
+            x=round(x0, 2), y=round(y0, 2),
+            w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+            fill="#%02x%02x%02x" % tuple(round(c * 255) for c in fill),
+            opacity=round(d.get("fill_opacity", 1.0) or 1.0, 3),
+        ))
+    return formas
+
 def extrair_texto(page, peso_por_estilo):
     """Blocos de texto da pagina, no formato que `El` do Blank Editor espera
     (x/y/w/h/text/font/weight/size/fill). Um bloco vira um elemento so — Canva normalmente usa
@@ -293,8 +326,12 @@ for (familia, estilo), entries in por_familia_estilo.items():
 peso_por_estilo = {(r["familia"], r["estilo"]): r["peso"] for r in resultado}
 texto_por_pagina = []
 for numero, pagina in enumerate(doc, start=1):
-    elementos = extrair_texto(pagina, peso_por_estilo)
+    formas = extrair_formas(pagina)
+    texto = extrair_texto(pagina, peso_por_estilo)
     fundo = detectar_fundo(pagina)
-    texto_por_pagina.append({"page": numero, "elements": elementos, "bg": fundo})
-    print(f"  pagina {numero}: {len(elementos)} blocos de texto, fundo {fundo or '(nenhum — branco padrão)'}")
+    # Formas primeiro: no editor, elementos mais adiante na lista desenham por cima —
+    # um retângulo de fundo/destaque precisa ficar atrás do texto, nunca na frente.
+    texto_por_pagina.append({"page": numero, "elements": formas + texto, "bg": fundo})
+    print(f"  pagina {numero}: {len(formas)} formas, {len(texto)} blocos de texto, "
+          f"fundo {fundo or '(nenhum — branco padrão)'}")
 (destino / "text.json").write_text(json.dumps(texto_por_pagina, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

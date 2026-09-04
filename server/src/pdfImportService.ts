@@ -28,7 +28,19 @@ export type ImportedImageElement = {
   imageId: string;
 };
 
-export type ImportedElement = ImportedTextElement | ImportedImageElement;
+/** Retângulo de cor sólida extraído do PDF (preenchimento vetorial de um `re` só). Path
+ *  vetorial arbitrário (curvas) ainda não tem elemento correspondente aqui nem no editor. */
+export type ImportedShapeElement = {
+  type: "rect";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fill: string;
+  opacity: number;
+};
+
+export type ImportedElement = ImportedTextElement | ImportedImageElement | ImportedShapeElement;
 
 export interface ImportedPage {
   w: number;

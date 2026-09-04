@@ -23,13 +23,22 @@ usados em server/src/db.ts e supabase/migrations/*).
   grava fundo branco fixo. Detectar o fill que cobre a página inteira (via
   PyMuPDF `page.get_drawings()`, procurando um retângulo de preenchimento que
   cubra ~100% da página) e usar essa cor; manter branco só como fallback.
-- [ ] **1.3 Formas vetoriais (fill/path).** Nenhuma camada vetorial (retângulos
-  de cor sólida, ícones, halftone, contorno de título) é extraída hoje — só
-  imagem raster e texto. Usar `page.get_drawings()` do PyMuPDF (já é
-  dependência) pra extrair fills/paths por página, devolver como novo tipo de
-  elemento (`type:"path"`, com `d` SVG + `fill`) no `ImportedElement` do
-  `pdf-import-service`, e mapear pra um `El` do tipo `draw`/`rect` preenchido
-  em `buildImportedPages`.
+- [x] **1.3 Formas vetoriais — retângulos de cor sólida.** Escopo reduzido
+  deliberadamente: só retângulo puro (`get_drawings()` com `items == ["re"]`),
+  que mapeia direto pro `El` tipo `rect` que já existe — sem mudança de
+  render nenhuma. Path arbitrário com curvas (ícones, halftone, contorno de
+  título) fica pendente do item 2.1 (o `draw` do editor só guarda polyline
+  com stroke, sem fill arbitrário) — quando esse tipo existir, retomar aqui.
+  Filtra o preenchimento que já virou `bg` da página, pra não duplicar como
+  camada. Ordem de pintura: forma atrás, imagem no meio, texto na frente
+  (forma e texto vêm ordenados corretamente do mesmo passo em Python; imagem
+  vem de um passo separado via poppler-utils, sem informação de ordem em
+  relação aos outros dois — heurística razoável, não garantia). Verificado
+  de ponta a ponta: PDF sintético com retângulo azul parcial (não cobre a
+  página) → 1 elemento `rect` com a cor certa (#1a3399), sem duplicar; PDF
+  com fill cobrindo a página inteira → vira só `bg`, zero elementos `rect`
+  redundantes; via `POST /api/v1/imports/pdf` real, o documento final tem
+  forma → imagem → texto na ordem certa, cor e posição batendo.
 - [ ] **1.4 Recorte de imagem em moldura (retangular ou circular).** O PDF
   desenha a imagem maior e recorta via clip path — hoje isso não é detectado,
   a imagem inteira vira uma camada do tamanho errado. Detectar via
@@ -49,9 +58,19 @@ usados em server/src/db.ts e supabase/migrations/*).
   linear com o ângulo. Verificado com PDF sintético girado a 30°: valores
   batem exatamente com o cálculo manual (x=179.26, y=214.6, w=220, h=40,
   rot=30). Caso sem rotação seguiu idêntico (regressão ok).
-- [ ] **1.6 Letter-spacing por bloco.** Extrair o tracking real (diferença
-  entre avanço medido dos glifos e a largura "natural" da fonte no tamanho
-  usado) e gravar como `ls` no elemento de texto.
+- [ ] **1.6 Letter-spacing por bloco. ADIADO — ver nota.** Extrair o tracking
+  real (diferença entre avanço medido dos glifos, via `page.get_text("rawdict")`
+  que dá origin por caractere, e a largura "natural" da fonte reconstruída no
+  tamanho usado — precisa reabrir o `.ttf` que `constroi()` já salvou e ler
+  `hmtx`) e gravar como `ls` no elemento de texto (unidade: pixels, mesma
+  convenção de `src/editor.ts`/`editableTweetTemplate.ts`). Adiado por ter
+  mais complexidade (projetar avanço em texto rotacionado, reabrir fonte por
+  bloco) que retorno visual imediato comparado aos outros itens da seção 1 —
+  retomar depois de 1.3/1.4. ACHADO DE PASSAGEM: o renderer canvas de export
+  (`drawEl` em `editor.ts`, usado por PNG/JPG/PDF) não aplica `e.ls` em
+  `x.measureText`/`x.fillText` nenhuma — o DOM ao vivo e o SVG do servidor
+  respeitam `ls`, o export não. Corrigir isso junto quando este item for
+  retomado, senão o `ls` extraído não teria efeito nenhum no PNG exportado.
 - [ ] **1.7 Texto com contorno vetorial (fontes Type3).** Títulos com efeito
   de contorno no Canva usam fontes Type3 (glifo = procedimento de desenho, não
   contorno TrueType) — hoje esse texto some em silêncio (sem FontFile pra

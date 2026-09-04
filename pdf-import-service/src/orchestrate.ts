@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { countPdfPages, extractPageImages, type ExtractedImageElement } from "./extractImages.ts";
-import { extractFontsAndText, type ExtractedTextElement } from "./pythonExtract.ts";
+import { extractFontsAndText, type ExtractedPageElement } from "./pythonExtract.ts";
 import { isFlattenedPage } from "./flatDetection.ts";
 
 export class FlattenedPdfError extends Error {
@@ -29,7 +29,7 @@ export interface ImportedImage {
 }
 
 export type ImportedElement =
-  | (ExtractedTextElement & { name?: string })
+  | (ExtractedPageElement & { name?: string })
   | { type: "image"; name: string; x: number; y: number; w: number; h: number; imageId: string };
 
 export interface ImportedPage {
@@ -71,7 +71,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
     const pageCount = await countPdfPages(pdfPath);
     if (pageCount < 1) throw new Error("PDF sem páginas");
 
-    const [{ fonts, textByPage, bgByPage }, ...imagePages] = await Promise.all([
+    const [{ fonts, elementsByPage, bgByPage }, ...imagePages] = await Promise.all([
       extractFontsAndText(pdfPath, resolve(workDir, "fonts")),
       ...Array.from({ length: pageCount }, (_, i) =>
         extractPageImages(pdfPath, i + 1, resolve(workDir, `page-${i + 1}`), TARGET_WIDTH_PX)),
@@ -83,16 +83,25 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
 
     imagePages.forEach((imageResult, index) => {
       const pageNumber = index + 1;
-      const text = textByPage.get(pageNumber) ?? [];
+      const pageElements = elementsByPage.get(pageNumber) ?? [];
+      // Formas atrás de tudo, texto na frente — a única ordem que dá pra afirmar sem
+      // ambiguidade: formas e texto vêm do mesmo passo em Python (nessa ordem relativa,
+      // já correta), mas imagem vem de um passo totalmente separado (poppler-utils), sem
+      // informação de ordem de pintura entre as duas fontes de extração.
+      const shapeElements = pageElements.filter((el) => el.type === "rect");
+      const textElements = pageElements.filter((el) => el.type === "text");
       const imageElements: ImportedElement[] = imageResult.elements.map((el: ExtractedImageElement) => {
         const id = randomUUID();
         images.push({ id, contentType: el.contentType, bytes: el.bytes });
         return { type: "image", name: el.name, x: el.x, y: el.y, w: el.w, h: el.h, imageId: id };
       });
-      const elements = [...imageElements, ...text];
+      const elements = [...shapeElements, ...imageElements, ...textElements];
 
       if (isFlattenedPage(
-        elements.map((el) => ("imageId" in el ? { type: "image" as const, w: el.w, h: el.h } : { type: "text" as const, w: el.w, h: el.h })),
+        // Formas não contam pra detecção de achatado — só "tem texto de verdade?" e "tem uma
+        // única imagem cobrindo tudo?" importam aqui.
+        [...imageElements, ...textElements].map((el) =>
+          ("imageId" in el ? { type: "image" as const, w: el.w, h: el.h } : { type: "text" as const, w: el.w, h: el.h })),
         imageResult.canvas,
       )) {
         flaggedPages.push(pageNumber);
