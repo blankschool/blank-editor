@@ -14,7 +14,7 @@ test("importPdf posts multipart to /importar with the shared secret and decodes 
       const file = form.get("pdf") as File;
       sentPdf = Buffer.from(await file.arrayBuffer());
       return new Response(JSON.stringify({
-        pages: [{ w: 1080, h: 1350, elements: [{ type: "text", x: 0, y: 0, w: 100, h: 20, text: "Oi", font: "Inter", weight: 400, size: 16, fill: "#000000", rot: 0 }] }],
+        pages: [{ w: 1080, h: 1350, bg: "#123456", elements: [{ type: "text", x: 0, y: 0, w: 100, h: 20, text: "Oi", font: "Inter", weight: 400, size: 16, fill: "#000000", rot: 0 }] }],
         fonts: [{
           familia: "Inter", estilo: "Regular", peso: 400, glifos: "abc", sha256: "deadbeef",
           ttfBase64: Buffer.from("ttf-bytes").toString("base64"),
@@ -32,6 +32,7 @@ test("importPdf posts multipart to /importar with the shared secret and decodes 
   assert.equal(secretHeader, "top-secret");
   assert.equal(sentPdf!.toString(), "%PDF-1.7 fake");
   assert.equal(result.pages.length, 1);
+  assert.equal(result.pages[0].bg, "#123456");
   assert.equal(result.fonts[0].ttf.toString(), "ttf-bytes");
   assert.equal(result.fonts[0].woff2.toString(), "woff2-bytes");
   assert.equal(result.images[0].bytes.toString(), "png-bytes");

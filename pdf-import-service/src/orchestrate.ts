@@ -35,6 +35,10 @@ export type ImportedElement =
 export interface ImportedPage {
   w: number;
   h: number;
+  /** Cor de fundo real da página, lida do preenchimento vetorial que cobre a página
+   *  inteira no PDF. "#ffffff" quando o PDF não tinha nenhum (ex.: fundo é uma foto que
+   *  cobre tudo, ou o design realmente não pinta nada por trás). */
+  bg: string;
   elements: ImportedElement[];
 }
 
@@ -67,7 +71,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
     const pageCount = await countPdfPages(pdfPath);
     if (pageCount < 1) throw new Error("PDF sem páginas");
 
-    const [{ fonts, textByPage }, ...imagePages] = await Promise.all([
+    const [{ fonts, textByPage, bgByPage }, ...imagePages] = await Promise.all([
       extractFontsAndText(pdfPath, resolve(workDir, "fonts")),
       ...Array.from({ length: pageCount }, (_, i) =>
         extractPageImages(pdfPath, i + 1, resolve(workDir, `page-${i + 1}`), TARGET_WIDTH_PX)),
@@ -94,7 +98,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
         flaggedPages.push(pageNumber);
       }
 
-      pages.push({ w: imageResult.canvas.w, h: imageResult.canvas.h, elements });
+      pages.push({ w: imageResult.canvas.w, h: imageResult.canvas.h, bg: bgByPage.get(pageNumber) ?? "#ffffff", elements });
     });
 
     if (flaggedPages.length === pages.length) throw new FlattenedPdfError();

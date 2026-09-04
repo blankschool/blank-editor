@@ -950,7 +950,7 @@ export function buildApp(
       id: randomUUID(),
       w: page.w,
       h: page.h,
-      bg: "#ffffff",
+      bg: page.bg,
       els: page.elements.map((el, index) => {
         if (el.type === "image") {
           const src = imageSrcById.get(el.imageId);

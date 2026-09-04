@@ -44,6 +44,10 @@ export interface ExtractedTextElement {
 export interface PythonExtractResult {
   fonts: ExtractedFont[];
   textByPage: Map<number, ExtractedTextElement[]>;
+  /** Cor de fundo real da página (o preenchimento vetorial que cobre a página inteira, o
+   *  mais acima se houver mais de um), ou `null` quando nenhum preenchimento cobre tudo —
+   *  quem monta o `Page` decide o branco-padrão nesse caso. */
+  bgByPage: Map<number, string | null>;
 }
 
 interface RawFontEntry {
@@ -61,6 +65,7 @@ interface RawFontEntry {
 interface RawTextPage {
   page: number;
   elements: ExtractedTextElement[];
+  bg: string | null;
 }
 
 export async function extractFontsAndText(pdfPath: string, workDir: string): Promise<PythonExtractResult> {
@@ -95,7 +100,11 @@ export async function extractFontsAndText(pdfPath: string, workDir: string): Pro
   );
 
   const textByPage = new Map<number, ExtractedTextElement[]>();
-  for (const entry of rawText) textByPage.set(entry.page, entry.elements);
+  const bgByPage = new Map<number, string | null>();
+  for (const entry of rawText) {
+    textByPage.set(entry.page, entry.elements);
+    bgByPage.set(entry.page, entry.bg);
+  }
 
-  return { fonts, textByPage };
+  return { fonts, textByPage, bgByPage };
 }

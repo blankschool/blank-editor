@@ -170,6 +170,25 @@ def constroi(entries, familia, estilo, destino):
                 desc=round((-o.sTypoDescender if typo else o.usWinDescent)/u, 5),
                 kb=round((destino / f"{stem}.woff2").stat().st_size/1024, 1))
 
+def detectar_fundo(page):
+    """Cor de fundo real da página: o último preenchimento vetorial que cobre a página
+    inteira (mesmo critério do extrator do pipeline de referência, canva-import/pipeline/
+    extract.py deste repo blank-editor-313c0b78 — "o último" porque um design pode empilhar
+    mais de um retângulo cobrindo tudo, e o desenhado por cima é o que aparece de verdade).
+    None quando nada cobre a página inteira — quem chama decide o branco-padrão."""
+    r = page.rect
+    encontrado = None
+    for d in page.get_drawings():
+        fill = d.get("fill")
+        if not fill:
+            continue
+        x0, y0, x1, y1 = d["rect"]
+        if x0 <= r.x0 + 1 and y0 <= r.y0 + 1 and x1 >= r.x1 - 1 and y1 >= r.y1 - 1:
+            encontrado = fill
+    if encontrado is None:
+        return None
+    return "#%02x%02x%02x" % tuple(round(c * 255) for c in encontrado)
+
 def extrair_texto(page, peso_por_estilo):
     """Blocos de texto da pagina, no formato que `El` do Blank Editor espera
     (x/y/w/h/text/font/weight/size/fill). Um bloco vira um elemento so — Canva normalmente usa
@@ -247,6 +266,7 @@ peso_por_estilo = {(r["familia"], r["estilo"]): r["peso"] for r in resultado}
 texto_por_pagina = []
 for numero, pagina in enumerate(doc, start=1):
     elementos = extrair_texto(pagina, peso_por_estilo)
-    texto_por_pagina.append({"page": numero, "elements": elementos})
-    print(f"  pagina {numero}: {len(elementos)} blocos de texto")
+    fundo = detectar_fundo(pagina)
+    texto_por_pagina.append({"page": numero, "elements": elementos, "bg": fundo})
+    print(f"  pagina {numero}: {len(elementos)} blocos de texto, fundo {fundo or '(nenhum — branco padrão)'}")
 (destino / "text.json").write_text(json.dumps(texto_por_pagina, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

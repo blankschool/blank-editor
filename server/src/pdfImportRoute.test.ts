@@ -61,6 +61,7 @@ const SAMPLE_RESULT: PdfImportResult = {
   pages: [{
     w: 1080,
     h: 1350,
+    bg: "#0a1f14",
     elements: [
       { type: "text", x: 10, y: 20, w: 300, h: 60, text: "Título", font: "NYTFranklin", weight: 700, size: 48, fill: "#111111", rot: 0 },
       { type: "image", name: "Foto de fundo", x: 0, y: 0, w: 1080, h: 1350, imageId: "img-1" },
@@ -157,6 +158,7 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = createdDocument as any;
   assert.equal(doc.pages.length, 1);
+  assert.equal(doc.pages[0].bg, "#0a1f14");
   assert.equal(doc.pages[0].els.length, 2);
   const [text, image] = doc.pages[0].els;
   assert.equal(text.type, "text");

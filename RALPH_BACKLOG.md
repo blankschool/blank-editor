@@ -19,7 +19,7 @@ usados em server/src/db.ts e supabase/migrations/*).
   perde essa letra na fonte final. Corrigir: unir os subsets de `ToUnicode`
   de todas as páginas antes de reconstruir cada família (ver
   `mergefonts.py` do repo de referência para o método).
-- [ ] **1.2 Bug: `bg` sempre "#ffffff".** `server/src/app.ts` (`buildImportedPages`)
+- [x] **1.2 Bug: `bg` sempre "#ffffff".** `server/src/app.ts` (`buildImportedPages`)
   grava fundo branco fixo. Detectar o fill que cobre a página inteira (via
   PyMuPDF `page.get_drawings()`, procurando um retângulo de preenchimento que
   cubra ~100% da página) e usar essa cor; manter branco só como fallback.

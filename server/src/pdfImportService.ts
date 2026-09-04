@@ -33,6 +33,10 @@ export type ImportedElement = ImportedTextElement | ImportedImageElement;
 export interface ImportedPage {
   w: number;
   h: number;
+  /** Cor de fundo real da página, lida do PDF pelo microsserviço (ver pdf-import-service/
+   *  scripts/canva-pdf-fonts.py `detectar_fundo`) — "#ffffff" quando o PDF não tinha um
+   *  preenchimento cobrindo a página inteira. */
+  bg: string;
   elements: ImportedElement[];
 }
 
