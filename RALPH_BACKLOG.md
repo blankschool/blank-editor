@@ -329,12 +329,46 @@ habilitado, políticas por dono).
   LLM real que já existe, em vez de um motor de regras novo). Definir escopo
   exato com o usuário antes de implementar — é o item de maior incerteza de
   produto do backlog inteiro.
-- [ ] **4.10 Erro: captura com TTL, página de erro offline, ponte pra
-  relatório externo.** Adicionar um error boundary simples no React do
-  console + um handler global de erro não capturado, com um cache de curta
-  duração pra não duplicar o mesmo erro repetidamente. Decidir destino do
-  "relatório externo" com o usuário (não assumir um serviço de terceiro sem
-  perguntar).
+- [x] **4.10 Erro: captura com TTL, página de erro offline, ponte pra
+  relatório externo.** Implementado, exceto a ponte pra relatório externo
+  (adiada de propósito — decisão do usuário, não assumir serviço de terceiro).
+  - `src/console/errorDedupe.ts`: `shouldLogError(key, now?)`, cache TTL de 30s
+    em `Map<string, number>`, com limpeza preguiçosa das chaves expiradas a
+    cada chamada. Extraído para `.ts` puro (não `.tsx`) de propósito: o test
+    runner do projeto (`node --test`, sem transform de JSX) só executa
+    `.test.ts`, então a lógica pura precisa viver fora do componente para ser
+    testável — ver `src/errorDedupe.test.ts` (4 casos: primeira ocorrência,
+    dedupe dentro da janela, libera após o TTL, chaves independentes não
+    interferem).
+  - `src/console/ErrorBoundary.tsx`: `ErrorBoundary` (class component,
+    `componentDidCatch` loga uma vez por combinação erro+stack via
+    `shouldLogError`, fallback "Algo deu errado." + botão "Recarregar" que
+    chama `window.location.reload()`) e `installGlobalErrorLogging()` (handler
+    global de `window.onerror`/`unhandledrejection`, mesma dedupe). Ligado em
+    `src/main.tsx` envolvendo os três roots existentes (`LoginApp`,
+    `ConsoleApp`, `PublicView`) e chamando `installGlobalErrorLogging()` antes
+    de montar qualquer um deles.
+  - `src/console/OfflineBanner.tsx`: componente que escuta
+    `window.online`/`offline` e `navigator.onLine`, mostra um banner fixo no
+    rodapé quando offline ("Sem conexão... suas alterações serão salvas assim
+    que a conexão voltar"), some sozinho quando a conexão volta. Montado em
+    `src/main.tsx` num root próprio (`#view-offline` em `index.html`, fora do
+    roteamento por view) — fica visível em qualquer tela, autenticado ou não.
+  - **Verificação**: como o login real da app pede Supabase Auth (sem
+    credenciais disponíveis, e criar conta/digitar senha é proibido), verifiquei
+    com dois métodos: (1) harness HTML isolado descartável (igual ao usado pro
+    item 4.5), montando `ErrorBoundary` com um componente que sempre lança —
+    confirmado visualmente o fallback renderizando com o tema real da app
+    (precisa importar `app.css` + `styles.css` + `chrome.css` + chamar
+    `initTheme()`, senão as variáveis de cor do tema não existem e o fallback
+    fica ilegível — isso é só do harness, não do componente) e confirmado no
+    console do browser que `componentDidCatch` loga exatamente uma vez por
+    erro; (2) pro `OfflineBanner`, rodei a app de verdade (`npm run dev`) e
+    simulei offline/online via `Object.defineProperty(navigator, 'onLine', …)`
+    + `dispatchEvent(new Event('offline'/'online'))` no console do browser —
+    confirmado que o banner aparece/some corretamente já na tela de login (não
+    depende de sessão). `npm run check`, `npm test` (41/41) e `npm run build`
+    passam.
 
 ## Notas de execução do loop
 

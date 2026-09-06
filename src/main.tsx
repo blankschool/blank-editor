@@ -15,8 +15,11 @@ import { openConsole } from "./console/store";
 import { LoginApp } from "./login/LoginApp";
 import { PublicView } from "./public/PublicView";
 import { bootSession } from "./session";
+import { ErrorBoundary, installGlobalErrorLogging } from "./console/ErrorBoundary";
+import { OfflineBanner } from "./console/OfflineBanner";
 
 initTheme();
+installGlobalErrorLogging();
 // Assíncrono de propósito: a sessão vive num cookie httpOnly, então só o servidor sabe dizer
 // quem está logado. initRouter já reage sozinho quando isto resolve (router.ts assina
 // onSessionChange) — não precisa aguardar aqui antes de montar o resto do app.
@@ -29,9 +32,22 @@ const views = {
   p: document.getElementById("view-p")!,
 };
 
-createRoot(views.login).render(<LoginApp />);
-createRoot(views.console).render(<ConsoleApp />);
-createRoot(views.p).render(<PublicView />);
+createRoot(views.login).render(
+  <ErrorBoundary>
+    <LoginApp />
+  </ErrorBoundary>,
+);
+createRoot(views.console).render(
+  <ErrorBoundary>
+    <ConsoleApp />
+  </ErrorBoundary>,
+);
+createRoot(views.p).render(
+  <ErrorBoundary>
+    <PublicView />
+  </ErrorBoundary>,
+);
+createRoot(document.getElementById("view-offline")!).render(<OfflineBanner />);
 
 document.getElementById("backToConsole")?.addEventListener("click", () => navigate("console"));
 
