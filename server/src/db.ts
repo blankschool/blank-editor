@@ -329,6 +329,45 @@ export async function createDesignCommentReply(
   return { ...r, createdAt: r.createdAt.toISOString() };
 }
 
+/* ------------------------ painel de design system/marca (item 4.7) ----------------------- */
+// POR CONTA, não por design — o ponto é serem reaproveitáveis entre designs diferentes, então
+// nenhuma query aqui embaixo leva template_id.
+
+export interface BrandKitRow {
+  id: string;
+  ownerId: string;
+  name: string;
+  colors: string[];
+  fonts: string[];
+  createdAt: string;
+}
+
+export async function listBrandKits(sql: Sql, ownerId: string): Promise<BrandKitRow[]> {
+  const rows = await sql<(Omit<BrandKitRow, "createdAt"> & { createdAt: Date })[]>`
+    select id, owner_id as "ownerId", name, colors, fonts, created_at as "createdAt"
+    from brand_kits where owner_id = ${ownerId} order by created_at desc
+  `;
+  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}
+
+export async function createBrandKit(
+  sql: Sql,
+  input: { id: string; ownerId: string; name: string; colors: string[]; fonts: string[] },
+): Promise<BrandKitRow> {
+  const rows = await sql<(Omit<BrandKitRow, "createdAt"> & { createdAt: Date })[]>`
+    insert into brand_kits (id, owner_id, name, colors, fonts)
+    values (${input.id}, ${input.ownerId}, ${input.name}, ${sql.json(input.colors)}, ${sql.json(input.fonts)})
+    returning id, owner_id as "ownerId", name, colors, fonts, created_at as "createdAt"
+  `;
+  const r = rows[0];
+  return { ...r, createdAt: r.createdAt.toISOString() };
+}
+
+export async function deleteBrandKit(sql: Sql, ownerId: string, id: string): Promise<boolean> {
+  const rows = await sql`delete from brand_kits where id = ${id} and owner_id = ${ownerId} returning id`;
+  return rows.length > 0;
+}
+
 /** Looks up the workspace that owns a (non-revoked) API key by its SHA-256 hash. */
 export async function findApiKeyOwner(sql: Sql, keyHash: string): Promise<ApiKeyOwner | null> {
   const rows = await sql<{ owner_id: string }[]>`

@@ -216,3 +216,36 @@ export async function replyToCommentOnServer(templateId: string, commentId: stri
   if (!res.ok) throw new Error("failed to reply to comment");
   return res.json();
 }
+
+/* ------------------ painel de design system/marca (item 4.7) ------------------ */
+// POR CONTA, não por design — por isso as rotas não levam templateId, diferente de tudo acima.
+
+export interface BrandKit {
+  id: string;
+  ownerId: string;
+  name: string;
+  colors: string[];
+  fonts: string[];
+  createdAt: string;
+}
+
+export async function listBrandKitsFromServer(): Promise<BrandKit[]> {
+  const res = await fetch("/api/v1/brand-kits");
+  if (!res.ok) throw new Error("failed to list brand kits");
+  return res.json();
+}
+
+export async function createBrandKitOnServer(name: string, colors: string[], fonts: string[]): Promise<BrandKit> {
+  const res = await fetch("/api/v1/brand-kits", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, colors, fonts }),
+  });
+  if (!res.ok) throw new Error("failed to create brand kit");
+  return res.json();
+}
+
+export async function deleteBrandKitOnServer(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/brand-kits/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("failed to delete brand kit");
+}

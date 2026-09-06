@@ -46,6 +46,9 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     setDesignCommentResolved: async () => false,
     deleteDesignComment: async () => false,
     createDesignCommentReply: async () => null,
+    listBrandKits: async () => [],
+    createBrandKit: async () => { throw new Error("not implemented in this test stub"); },
+    deleteBrandKit: async () => false,
     upsertFontFace: async (input) => ({
       id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
       postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,

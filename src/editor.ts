@@ -10,6 +10,7 @@ import {
   fetchDesignVersionDocument, getShareStatus, setShareVisibility, type DesignVersionSummary, type ShareStatus,
   listCommentsFromServer, createCommentOnServer, setCommentResolvedOnServer, deleteCommentOnServer, replyToCommentOnServer,
   type DesignComment,
+  listBrandKitsFromServer, createBrandKitOnServer, deleteBrandKitOnServer, type BrandKit,
 } from "./templateStore";
 import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
@@ -60,6 +61,8 @@ let commentsData: DesignComment[] = [];
  *  #stage. Não é um `tool` de verdade (não tem botão próprio na barra, nem estado persistente)
  *  porque é sempre "um clique só", desarmado de novo assim que usado ou cancelado. */
 let placingComment = false;
+/* painel de design system/marca (item 4.7) — por conta, não por design, ver templateStore.ts */
+let brandKits: BrandKit[] = [];
 let zoom = 1, panX = 0, panY = 0;
 // The workspace behind the page — separate from the page's own "Fundo" fill (that's the
 // artboard's content; this is just the room around it). Remembered per-browser, not per-doc.
@@ -2398,6 +2401,7 @@ function renderFileMenu() {
     canManage ? item("share", "Compartilhar") : "",
     canManage ? item("history", "Histórico de versões") : "",
     canManage ? item("comments", "Comentários") : "",
+    item("brand", "Marca"),
     canManage ? item("copy-id", "Copiar ID") : "",
     item("open-json", "Abrir arquivo local…"),
     canManage ? `<div class="dropsep"></div>${item("delete", "Excluir", true)}` : "",
@@ -2433,6 +2437,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
   if (action === "history") { openHistory(); return; }
   if (action === "share") { openShare(); return; }
   if (action === "comments") { openComments(); return; }
+  if (action === "brand") { openBrandKits(); return; }
   if (action === "delete") {
     $("confirmMsg").textContent = `Excluir o template "${doc.name}"? Isso não pode ser desfeito.`;
     $("confirmScrim").hidden = false;
@@ -2704,6 +2709,93 @@ $("commentComposeSave").addEventListener("click", async () => {
     toast("Comentário fixado");
     await refreshComments();
   } catch { toast("Não foi possível salvar o comentário."); }
+});
+
+/* painel de design system/marca (item 4.7 do backlog) */
+async function refreshBrandKits() {
+  try {
+    brandKits = await listBrandKitsFromServer();
+  } catch {
+    brandKits = [];
+    toast("Não foi possível carregar as paletas.");
+  }
+  renderBrandKitList();
+}
+
+function renderBrandKitList() {
+  const el = $("brandList");
+  if (!brandKits.length) {
+    el.innerHTML = `<p class="phint">Nenhuma paleta salva ainda.</p>`;
+    return;
+  }
+  el.innerHTML = brandKits.map((k) => `
+    <div class="row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <strong style="font-size:13px">${esc(k.name)}</strong>
+        <button class="tbtn ghost danger" data-brand-action="delete" data-brand-id="${k.id}">Excluir</button>
+      </div>
+      ${k.colors.length ? `<div class="row" style="gap:6px;flex-wrap:wrap">
+        ${k.colors.map((c) => `<button class="swatch" data-brand-action="apply-color" data-brand-color="${esc(c)}" title="Aplicar ${esc(c)} ao preenchimento" style="background:${esc(c)};width:32px"></button>`).join("")}
+      </div>` : ""}
+      ${k.fonts.length ? `<div class="row" style="gap:6px;flex-wrap:wrap">
+        ${k.fonts.map((f) => `<button class="tbtn ghost" data-brand-action="apply-font" data-brand-font="${esc(f)}" style="font-family:'${esc(f).replace(/"/g, "")}'">${esc(f)}</button>`).join("")}
+      </div>` : ""}
+    </div>`).join("");
+}
+
+function openBrandKits() {
+  $("brandScrim").hidden = false;
+  void refreshBrandKits();
+}
+
+/** Cores e fontes efetivamente em uso no design atual — a fonte da paleta "salvar atual", sem
+ *  precisar de uma UI de seleção manual (o design já É a curadoria). */
+function distinctDocColorsAndFonts(): { colors: string[]; fonts: string[] } {
+  const colors = new Set<string>();
+  const fonts = new Set<string>();
+  for (const p of doc.pages) {
+    for (const e of p.els) {
+      if (typeof e.fill === "string" && /^#[0-9a-f]{6}$/i.test(e.fill)) colors.add(e.fill.toLowerCase());
+      if (e.type === "text" && typeof e.font === "string" && e.font) fonts.add(e.font);
+    }
+  }
+  return { colors: [...colors], fonts: [...fonts] };
+}
+
+$("brandSave").addEventListener("click", async () => {
+  const input = $("brandNameInput") as HTMLInputElement;
+  const name = input.value.trim();
+  if (!name) { toast("Dê um nome pra paleta."); return; }
+  const { colors, fonts } = distinctDocColorsAndFonts();
+  if (!colors.length && !fonts.length) { toast("Este design não tem cores nem fontes pra salvar."); return; }
+  try {
+    await createBrandKitOnServer(name, colors, fonts);
+    input.value = "";
+    toast("Paleta salva");
+    await refreshBrandKits();
+  } catch { toast("Não foi possível salvar a paleta."); }
+});
+$("brandClose").addEventListener("click", () => { $("brandScrim").hidden = true; });
+$("brandScrim").addEventListener("click", (e) => { if (e.target === $("brandScrim")) $("brandScrim").hidden = true; });
+$("brandList").addEventListener("click", async (ev) => {
+  const b = (ev.target as HTMLElement).closest("[data-brand-action]");
+  if (!b) return;
+  const action = b.getAttribute("data-brand-action");
+  if (action === "delete") {
+    const id = b.getAttribute("data-brand-id")!;
+    try { await deleteBrandKitOnServer(id); await refreshBrandKits(); }
+    catch { toast("Não foi possível excluir."); }
+    return;
+  }
+  if (!sel.length) { toast("Selecione um elemento primeiro."); return; }
+  if (action === "apply-color") {
+    patch({ fill: b.getAttribute("data-brand-color")! }, true);
+    toast("Cor aplicada");
+  }
+  if (action === "apply-font") {
+    patch({ font: b.getAttribute("data-brand-font")! }, true);
+    toast("Fonte aplicada");
+  }
 });
 
 /* import / upload */

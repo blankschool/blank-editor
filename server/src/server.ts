@@ -6,6 +6,7 @@ import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
 import {
   createDb,
+  createBrandKit,
   createDesignComment,
   createDesignCommentReply,
   createDesignVersion,
@@ -13,6 +14,7 @@ import {
   createApiKey,
   createTemplate,
   deleteApiKey,
+  deleteBrandKit,
   deleteDesignComment,
   deleteDesignVersion,
   deleteTemplate,
@@ -23,6 +25,7 @@ import {
   getDesignShareVisibility,
   getPublicShareVisibility,
   listApiKeys,
+  listBrandKits,
   listDesignComments,
   listDesignVersions,
   listFontFaces,
@@ -97,6 +100,9 @@ if (DATABASE_URL) {
     deleteDesignComment: (ownerId, templateId, id) => deleteDesignComment(sql, ownerId, templateId, id),
     createDesignCommentReply: (ownerId, templateId, commentId, body) =>
       createDesignCommentReply(sql, { id: randomUUID(), ownerId, templateId, commentId, body }),
+    listBrandKits: (ownerId) => listBrandKits(sql, ownerId),
+    createBrandKit: (ownerId, input) => createBrandKit(sql, { id: randomUUID(), ownerId, ...input }),
+    deleteBrandKit: (ownerId, id) => deleteBrandKit(sql, ownerId, id),
   };
 } else {
   deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);

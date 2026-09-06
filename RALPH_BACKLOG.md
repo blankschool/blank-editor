@@ -412,9 +412,46 @@ habilitado, políticas por dono).
   1812) já é uma feature completa e funcional — tela cheia de verdade
   (`requestFullscreen`), navega página com prev/next, Esc sai, clique fora
   do slide sai. Nada construído aqui, só confirmado que não faltava nada.
-- [ ] **4.7 Painel de design system/marca.** Paletas de cor/fonte salvas por
-  conta, reaproveitáveis entre designs — tabela nova (`brand_kits`), painel
-  no editor pra aplicar uma paleta salva.
+- [x] **4.7 Painel de design system/marca.** Feito. Escopo reduzido de
+  propósito num ponto: "aplicar" não sobrescreve em massa as cores do design
+  (destrutivo e sem mapeamento óbvio de "cor antiga → nova"), é clicar numa
+  cor/fonte da paleta pra aplicar ao elemento SELECIONADO no momento — o
+  mesmo `patch()`/`commit()` que a barra de ferramentas flutuante já usa,
+  só que disparado por este painel novo em vez dela (não toquei em
+  `renderToolbar()`, que já está bem cheia).
+  - `supabase/migrations/0010_brand_kits.sql`: `brand_kits`, POR CONTA (sem
+    `template_id` — reaproveitável entre designs, diferente de
+    `design_versions`/`design_comments`), RLS igual ao padrão já
+    estabelecido.
+  - `server/src/db.ts`/`local.ts`/`app.ts`/`server.ts`: `GET/POST
+    /api/v1/brand-kits`, `DELETE /api/v1/brand-kits/:id` — rotas de conta,
+    não aninhadas sob `/templates/:id/`, mesmo padrão de `/api/v1/keys`. 4
+    testes novos em `app.test.ts` (`makeBrandKitStore()`) — salvar+listar
+    mais recente primeiro, validação de nome/defaults de array, excluir com
+    404 na segunda vez, 401 sem chave. Suíte do server: 212 (211 passam, 1
+    skip pré-existente sem relação).
+  - `src/templateStore.ts`: `listBrandKitsFromServer`/`createBrandKitOnServer`/
+    `deleteBrandKitOnServer`.
+  - `src/editor.ts`: item "Marca" no menu de arquivo (sem exigir
+    `doc.seedId` — paleta é de conta, não do design salvo) abre o painel
+    (`openBrandKits`/`renderBrandKitList`, mesmo padrão scrim+lista de
+    Histórico/Comentários). "Salvar paleta atual"
+    (`distinctDocColorsAndFonts()`) varre o documento aberto por cores de
+    preenchimento válidas (`#rrggbb`) e fontes de texto distintas — a
+    curadoria É o próprio design, sem precisar de UI de seleção manual.
+    Clicar numa cor/fonte salva aplica ao elemento selecionado
+    (`patch({fill|font}, true)`); sem seleção, avisa em vez de fazer nada.
+  - **Verificação**: `npm run check`/`npm test` (48/48 raiz, 211/211 server)
+    e `npm run build` limpos nos dois pacotes. A ação de aplicar em si
+    (clicar numa cor/fonte → `patch()`/`commit()`) não foi testada ao vivo
+    (mesma limitação de login), mas reusa EXATAMENTE a mesma função já usada
+    pelos controles de cor/fonte da barra de ferramentas (`patch({fill:...},
+    true)`/`patch({font:...}, true)`, idênticos aos handlers de `tFill`/
+    `tFont` em `renderToolbar()`) — não é lógica nova, só um novo lugar
+    disparando algo já comprovado. O que FOI verificado visualmente (harness
+    HTML descartável): o painel com múltiplas paletas, swatches de cor no
+    tamanho certo e chips de fonte renderizando na própria fonte que
+    representam.
 - [x] **4.8 Login/cadastro — JÁ EXISTE, NÃO VIRA MODAL.** Verificado:
   `src/login/LoginApp.tsx` já fala com `/api/v1/auth/signup`+`/login` de
   verdade (sessão real em cookie httpOnly). É página cheia, não modal — mas

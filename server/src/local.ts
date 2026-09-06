@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceRow, ShareVisibility, TemplateRow } from "./db.ts";
+import type { ApiKeySummary, BrandKitRow, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceRow, ShareVisibility, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -55,6 +55,7 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
   const shares = new Map<string, ShareVisibility>();
   const designComments = new Map<string, DesignCommentRow>();
   const commentReplies = new Map<string, DesignCommentReply[]>();
+  const brandKits = new Map<string, BrandKitRow>();
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -236,6 +237,21 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       list.push(reply);
       commentReplies.set(commentId, list);
       return reply;
+    },
+
+    listBrandKits: async (ownerId) =>
+      [...brandKits.values()].filter((k) => k.ownerId === ownerId).reverse(),
+
+    createBrandKit: async (ownerId, { name, colors, fonts }) => {
+      const kit: BrandKitRow = { id: randomUUID(), ownerId, name, colors, fonts, createdAt: new Date().toISOString() };
+      brandKits.set(kit.id, kit);
+      return kit;
+    },
+
+    deleteBrandKit: async (ownerId, id) => {
+      const k = brandKits.get(id);
+      if (!k || k.ownerId !== ownerId) return false;
+      return brandKits.delete(id);
     },
   };
 }

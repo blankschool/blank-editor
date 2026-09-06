@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { buildApp, type AppDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
-import type { DesignCommentReply, DesignCommentRow, DesignVersionRow, TemplateRow } from "./db.ts";
+import type { BrandKitRow, DesignCommentReply, DesignCommentRow, DesignVersionRow, TemplateRow } from "./db.ts";
 import { createMemoryGenerationRepository } from "./generationWorkflow.ts";
 
 const VALID_KEY = "blk_live_test";
@@ -116,11 +116,30 @@ function makeCommentStore() {
   };
 }
 
+/** Mesmo espírito das outras três: store em memória isolado por `makeDeps()`. */
+function makeBrandKitStore() {
+  const kits = new Map<string, BrandKitRow>();
+  return {
+    listBrandKits: async (ownerId: string) => [...kits.values()].filter((k) => k.ownerId === ownerId).reverse(),
+    createBrandKit: async (ownerId: string, input: { name: string; colors: string[]; fonts: string[] }) => {
+      const kit: BrandKitRow = { id: randomUUID(), ownerId, ...input, createdAt: new Date().toISOString() };
+      kits.set(kit.id, kit);
+      return kit;
+    },
+    deleteBrandKit: async (ownerId: string, id: string) => {
+      const k = kits.get(id);
+      if (!k || k.ownerId !== ownerId) return false;
+      return kits.delete(id);
+    },
+  };
+}
+
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
     ...makeVersionStore(),
     ...makeShareStore(),
     ...makeCommentStore(),
+    ...makeBrandKitStore(),
     findApiKeyOwner: async (keyHash) => (keyHash === hashApiKey(VALID_KEY) ? { ownerId: OWNER_ID } : null),
     findTemplate: async (ownerId, id) => (id === TPL.id && ownerId === TPL.ownerId ? TPL : null),
     listTemplates: async (ownerId) =>
@@ -620,6 +639,57 @@ test("DELETE .../comments/:commentId removes it; a second delete 404s", async ()
 test("comment routes require an authenticated owner, same as any other template route", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments` });
+  assert.equal(res.statusCode, 401);
+});
+
+// --- Painel de design system/marca (item 4.7 do backlog) -------------------------
+
+test("POST /api/v1/brand-kits saves a named palette; GET lists it, most recent first", async () => {
+  const app = buildApp(makeDeps());
+  const first = await app.inject({
+    method: "POST", url: "/api/v1/brand-kits", headers: AUTH,
+    payload: { name: "Paleta 1", colors: ["#111111"], fonts: ["Inter"] },
+  });
+  assert.equal(first.statusCode, 201);
+  const second = await app.inject({
+    method: "POST", url: "/api/v1/brand-kits", headers: AUTH,
+    payload: { name: "Paleta 2", colors: ["#222222", "#333333"], fonts: [] },
+  });
+  assert.equal(second.statusCode, 201);
+  assert.deepEqual(JSON.parse(second.body).colors, ["#222222", "#333333"]);
+
+  const list = await app.inject({ method: "GET", url: "/api/v1/brand-kits", headers: AUTH });
+  assert.equal(list.statusCode, 200);
+  const names = JSON.parse(list.body).map((k: { name: string }) => k.name);
+  assert.deepEqual(names, ["Paleta 2", "Paleta 1"]);
+});
+
+test("POST /api/v1/brand-kits rejects a missing name; colors/fonts default to empty arrays", async () => {
+  const app = buildApp(makeDeps());
+  const missingName = await app.inject({ method: "POST", url: "/api/v1/brand-kits", headers: AUTH, payload: { colors: ["#000"] } });
+  assert.equal(missingName.statusCode, 400);
+
+  const noArrays = await app.inject({ method: "POST", url: "/api/v1/brand-kits", headers: AUTH, payload: { name: "Vazia" } });
+  assert.equal(noArrays.statusCode, 201);
+  const body = JSON.parse(noArrays.body);
+  assert.deepEqual(body.colors, []);
+  assert.deepEqual(body.fonts, []);
+});
+
+test("DELETE /api/v1/brand-kits/:id removes it; a second delete 404s", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({ method: "POST", url: "/api/v1/brand-kits", headers: AUTH, payload: { name: "Descartável" } });
+  const id = JSON.parse(created.body).id;
+
+  const first = await app.inject({ method: "DELETE", url: `/api/v1/brand-kits/${id}`, headers: AUTH });
+  assert.equal(first.statusCode, 204);
+  const second = await app.inject({ method: "DELETE", url: `/api/v1/brand-kits/${id}`, headers: AUTH });
+  assert.equal(second.statusCode, 404);
+});
+
+test("brand-kit routes require an authenticated owner, same as any other route", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/brand-kits" });
   assert.equal(res.statusCode, 401);
 });
 

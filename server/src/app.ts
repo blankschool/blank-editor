@@ -22,7 +22,7 @@ import {
   uploadRenderedPng,
   uploadUserPhoto,
 } from "./storage.ts";
-import type { ApiKeyOwner, ApiKeySummary, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, BrandKitRow, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
@@ -98,6 +98,9 @@ export interface AppDeps {
     commentId: string,
     body: string,
   ) => Promise<DesignCommentReply | null>;
+  listBrandKits: (ownerId: string) => Promise<BrandKitRow[]>;
+  createBrandKit: (ownerId: string, input: { name: string; colors: string[]; fonts: string[] }) => Promise<BrandKitRow>;
+  deleteBrandKit: (ownerId: string, id: string) => Promise<boolean>;
 }
 
 export interface MediaDeps {
@@ -1381,6 +1384,34 @@ export function buildApp(
     if (!ownerId) return;
     const deleted = await deps.deleteApiKey(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
+    return reply.code(204).send();
+  });
+
+  // --- Painel de design system/marca (Editar → Marca, item 4.7) ------------------------------
+  // POR CONTA, não por design — igual às chaves de API acima, por isso as rotas não vivem sob
+  // /templates/:id/ — o mesmo kit vale pra qualquer design que o dono abrir.
+  app.get("/api/v1/brand-kits", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    return deps.listBrandKits(ownerId);
+  });
+
+  app.post<{ Body: { name?: string; colors?: string[]; fonts?: string[] } }>("/api/v1/brand-kits", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const name = request.body?.name?.trim();
+    if (!name) return reply.code(400).send({ error: "missing required field: name" });
+    const colors = Array.isArray(request.body?.colors) ? request.body.colors : [];
+    const fonts = Array.isArray(request.body?.fonts) ? request.body.fonts : [];
+    const kit = await deps.createBrandKit(ownerId, { name, colors, fonts });
+    return reply.code(201).send(kit);
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/v1/brand-kits/:id", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const deleted = await deps.deleteBrandKit(ownerId, request.params.id);
+    if (!deleted) return reply.code(404).send({ error: `brand kit not found: ${request.params.id}` });
     return reply.code(204).send();
   });
 
