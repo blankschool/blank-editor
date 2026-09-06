@@ -102,6 +102,15 @@ export interface El {
 
   // image — a data URI, or "@key" pointing into Doc.assets
   src?: string;
+  /** Recorte independente da moldura — um retângulo 0..1 relativo à imagem ORIGINAL (não ao
+   *  box do elemento), igual ao crop de Canva/Figma: mover a foto dentro do quadro é só mudar
+   *  `imgX`/`imgY`; redimensionar a moldura não distorce o enquadramento porque o crop já
+   *  registrado não muda. Ausente = comportamento anterior ("cover" automático, centralizado,
+   *  recalculado a cada render a partir do tamanho atual da moldura). */
+  imgX?: number;
+  imgY?: number;
+  imgW?: number;
+  imgH?: number;
 
   // icon
   path?: string;

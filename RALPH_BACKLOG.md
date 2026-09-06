@@ -151,13 +151,44 @@ usados em server/src/db.ts e supabase/migrations/*).
   meio — quebra de linha correta respeitando a largura da caixa, negrito
   visivelmente mais grosso, cor e sublinhado só no trecho certo, os dois
   renderers produzindo o mesmo resultado visual.
-- [ ] **2.3 Recorte/reenquadramento de foto independente da moldura.** Guardar
-  no `El` de imagem um crop próprio (`imgX/imgY/imgW/imgH` relativos à foto
-  original, ou equivalente) em vez de recalcular "cover" a cada render —sem
-  isso, mover a foto dentro do quadro não é possível e redimensionar a moldura
-  distorce o enquadramento. Precisa de UI no editor pra arrastar a foto dentro
-  do quadro (like Canva/Figma) — maior escopo, quebrar em: (a) campo no tipo +
-  render respeitando o campo, (b) interação de arrastar no editor.
+- [x] **2.3a Campo de crop no tipo + render respeitando o campo.** Feito.
+  PARCIAL de propósito — (b), a interação de arrastar a foto dentro do quadro
+  no editor, fica ADIADA: é uma máquina de estado de mouse nova competindo
+  com os handles de mover/redimensionar que já existem, e eu não consigo
+  testar interação de mouse ao vivo sem login (mesma limitação de sempre).
+  Fazer (b) sem ver funcionar seria arriscado demais pra esse tipo de UI.
+  - `src/types.ts`: `El.imgX/imgY/imgW/imgH`, retângulo 0..1 relativo à
+    imagem ORIGINAL (não ao box do elemento) — ausente mantém o "cover"
+    automático de sempre, então nenhum design existente muda de aparência.
+  - `src/imageCrop.ts` (novo, puro/testável): `cropToBackgroundStyle(crop)`
+    — converte o crop normalizado no par `background-size`/`background-position`
+    em % que o CSS entende (fórmula padrão: size% é relativo ao CONTAINER,
+    então o inverso da fração recortada faz esse tanto da imagem preencher a
+    caixa; position% não é a origem do recorte, é `offset / (tamanhoEscalado
+    - tamanhoContainer)`, por isso a divisão por `(1 - crop)`) — e
+    `cropToSourceRect(crop, naturalW, naturalH)` — mesma janela em pixels
+    reais, pro `drawImage` do canvas. 7 testes em `imageCrop.test.ts`
+    (sem crop = no-op, crop centrado, cantos, clamp de valores fora de
+    [0,1], conversão pra pixels, tamanho degenerado não vira zero).
+  - `src/editor.ts`: `elInner` (live DOM) e `drawEl` (canvas export) agora
+    checam `e.imgW == null || e.imgH == null` — se sim, comportamento
+    IDÊNTICO ao anterior (`<img object-fit:cover>` / `drawImage` centralizado
+    por `max(w/iw,h/ih)`); se não, renderizam a janela `imgX/imgY/imgW/imgH`
+    exata via `imageCrop.ts`.
+  - **Verificação**: `npm run check`, `npm test` (48/48) e `npm run build`
+    limpos. Como isto introduz uma técnica de CSS nova (não é reaproveitar
+    uma classe já existente, é a primeira vez que o app desenha
+    `background-image`/`size`/`position` pra simular um crop arbitrário),
+    fiz um harness HTML descartável com uma imagem SVG de 4 quadrantes
+    coloridos (vermelho/verde/azul/amarelo) e comparei visualmente: crop no
+    quadrante superior-esquerdo mostrou vermelho puro, no
+    inferior-direito mostrou amarelo puro, e um crop de 50% central mostrou
+    os quatro quadrantes se encontrando no meio em proporções iguais —
+    exatamente o esperado. Confirma que a matemática do `imageCrop.ts` está
+    certa dentro de um navegador de verdade, não só nos testes unitários.
+- [ ] **2.3b Interação de arrastar a foto dentro do quadro.** Depende de
+  2.3a (feito). Fica pra quando o usuário puder testar ao vivo — ver nota
+  acima.
 - [x] **2.4 Diff de documentos.** Função pura `diffDocs(a: Doc, b: Doc)` que
   devolve as diferenças campo a campo entre duas versões — utilitário sem UI
   própria ainda, mas pré-requisito de qualquer comparação de versão futura

@@ -2,6 +2,7 @@ import "./styles.css";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
+import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
@@ -347,10 +348,17 @@ function elInner(e: any) {
       return `<div style="width:100%;height:100%;background:${e.fill};clip-path:${STAR}"></div>`;
     case "line":
       return `<div style="width:100%;height:100%;background:${e.fill};border-radius:${e.h / 2}px"></div>`;
-    case "image":
-      return srcOf(e)
-        ? `<img src="${srcOf(e)}" alt="" draggable="false" style="width:100%;height:100%;object-fit:cover;border-radius:${e.radius}px;${bd}${sh}">`
-        : `<div style="width:100%;height:100%;background:var(--surface-2)"></div>`;
+    case "image": {
+      const src = srcOf(e);
+      if (!src) return `<div style="width:100%;height:100%;background:var(--surface-2)"></div>`;
+      if (e.imgW == null || e.imgH == null) {
+        return `<img src="${src}" alt="" draggable="false" style="width:100%;height:100%;object-fit:cover;border-radius:${e.radius}px;${bd}${sh}">`;
+      }
+      const { sizePct, positionPct } = cropToBackgroundStyle(e);
+      return `<div style="width:100%;height:100%;border-radius:${e.radius}px;${bd}${sh}` +
+        `background-image:url('${src}');background-repeat:no-repeat;` +
+        `background-size:${sizePct[0]}% ${sizePct[1]}%;background-position:${positionPct[0]}% ${positionPct[1]}%"></div>`;
+    }
     case "icon":
       return `<svg viewBox="${e.viewBox || "0 0 24 24"}" style="width:100%;height:100%;display:block"><path d="${e.path || ""}" fill="${e.fill}"/></svg>`;
     case "draw": {
@@ -2226,9 +2234,14 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     try {
       const img = await loadImg(srcOf(e));
       x.save(); roundRect(x, e.w, e.h, e.radius || 0); x.clip();
-      const r = Math.max(e.w / img.width, e.h / img.height);
-      const dw = img.width * r, dh = img.height * r;
-      x.drawImage(img, (e.w - dw) / 2, (e.h - dh) / 2, dw, dh);
+      if (e.imgW == null || e.imgH == null) {
+        const r = Math.max(e.w / img.width, e.h / img.height);
+        const dw = img.width * r, dh = img.height * r;
+        x.drawImage(img, (e.w - dw) / 2, (e.h - dh) / 2, dw, dh);
+      } else {
+        const { sx, sy, sw, sh: srcH } = cropToSourceRect(e, img.width, img.height);
+        x.drawImage(img, sx, sy, sw, srcH, 0, 0, e.w, e.h);
+      }
       x.restore(); stroke();
     } catch (err) { /* unreadable image, skip */ }
   }
