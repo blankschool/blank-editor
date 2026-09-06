@@ -6,7 +6,7 @@ import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateD
 import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
   listDesignVersionsFromServer, createDesignVersionOnServer, restoreDesignVersionOnServer, duplicateDesignVersionOnServer, deleteDesignVersionOnServer,
-  getShareStatus, setShareVisibility, type DesignVersionSummary, type ShareStatus,
+  fetchDesignVersionDocument, getShareStatus, setShareVisibility, type DesignVersionSummary, type ShareStatus,
 } from "./templateStore";
 import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
@@ -2021,7 +2021,7 @@ $("expCopyMarkup").addEventListener("click", async () => {
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
   $("scrim").hidden = true;
   await document.fonts.ready;
-  const html = await buildScreensHtml(name, expScale);
+  const html = await buildScreensHtml(doc.pages, name, expScale);
   navigator.clipboard?.writeText(html).then(() => toast("Markup copiado"))
     .catch(() => toast("Não foi possível copiar — o navegador recusou o clipboard"));
 });
@@ -2261,9 +2261,9 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
 /** Todas as páginas não-ocultas, renderizadas e empurradas numa página HTML estática só —
  *  usado pela exportação em HTML e por "Copiar markup" (mesmo conteúdo, destino diferente:
  *  arquivo baixado ou clipboard). */
-async function buildScreensHtml(title: string, scale: number): Promise<string> {
+async function buildScreensHtml(pages: Page[], title: string, scale: number): Promise<string> {
   const imgs = [];
-  for (const p of doc.pages.filter((p) => !p.hidden)) {
+  for (const p of pages.filter((p) => !p.hidden)) {
     const c = await renderPageCanvas(p, scale);
     imgs.push(`<img src="${c.toDataURL("image/png")}" width="${p.w}" height="${p.h}" style="display:block;max-width:100%;height:auto;margin:0 auto 24px;box-shadow:0 1px 8px rgba(0,0,0,.15)">`);
   }
@@ -2317,7 +2317,7 @@ async function doExport() {
     if (expFmt === "html") {
       // Uma página HTML estática com todas as telas empilhadas — pra abrir/compartilhar sem
       // precisar do editor nem de um PDF, um arquivo só por design em vez de um por página.
-      await saver.save({ filename: `${name}.html`, data: await buildScreensHtml(name, expScale) });
+      await saver.save({ filename: `${name}.html`, data: await buildScreensHtml(doc.pages, name, expScale) });
       toast("Salvo"); return;
     }
     const p = page();
@@ -2473,6 +2473,7 @@ function renderHistoryList() {
         <span class="phint">${relativeTime(v.createdAt)}</span>
       </div>
       <div class="row" style="gap:6px">
+        <button class="tbtn ghost" data-hist-action="export" data-hist-id="${v.id}" title="Baixa esta versão como HTML, sem alterar o design atual">Exportar</button>
         <button class="tbtn ghost" data-hist-action="restore" data-hist-id="${v.id}" title="Substitui o design atual pelo conteúdo desta versão">Restaurar</button>
         <button class="tbtn ghost" data-hist-action="duplicate" data-hist-id="${v.id}" title="Cria um design novo e independente a partir desta versão">Duplicar</button>
         <button class="tbtn ghost danger" data-hist-action="delete" data-hist-id="${v.id}">Excluir</button>
@@ -2511,6 +2512,19 @@ $("historyList").addEventListener("click", async (ev) => {
   const templateId = doc.seedId;
   const versionId = b.getAttribute("data-hist-id")!;
   const action = b.getAttribute("data-hist-action");
+  if (action === "export") {
+    if (!await ensureCanDownload()) return;
+    try {
+      const version = await fetchDesignVersionDocument(templateId, versionId);
+      const baseName = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
+      const versionName = version.name.replace(/[^\w \-]/g, "").trim() || "versao";
+      await document.fonts.ready;
+      const html = await buildScreensHtml(version.document.pages, `${baseName} - ${versionName}`, expScale);
+      const saver = downloads ?? { save: browserDownload };
+      await saver.save({ filename: `${baseName} - ${versionName}.html`, data: html });
+      toast("Salvo");
+    } catch { toast("Não foi possível exportar esta versão."); }
+  }
   if (action === "restore") {
     try {
       await restoreDesignVersionOnServer(templateId, versionId);

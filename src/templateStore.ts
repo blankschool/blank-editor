@@ -119,6 +119,18 @@ export async function deleteDesignVersionOnServer(templateId: string, versionId:
   if (!res.ok) throw new Error("failed to delete version");
 }
 
+export interface DesignVersionDocument {
+  name: string;
+  document: Doc;
+}
+
+export async function fetchDesignVersionDocument(templateId: string, versionId: string): Promise<DesignVersionDocument> {
+  const res = await fetch(`/api/v1/templates/${templateId}/versions/${versionId}`);
+  if (!res.ok) throw new Error("failed to fetch version");
+  const body = await res.json();
+  return { name: body.name, document: body.document as Doc };
+}
+
 /* ----------------------------- compartilhar ----------------------------- */
 
 export interface ShareStatus {

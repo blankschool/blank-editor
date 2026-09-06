@@ -840,6 +840,21 @@ export function buildApp(
     return deps.listDesignVersions(ownerId, row.id);
   });
 
+  // Leitura de uma versão específica, incluindo o `document` — usado pelo botão "Exportar"
+  // do histórico (item 3.1b): renderiza o snapshot em HTML sem restaurar nem duplicar nada.
+  app.get<{ Params: { id: string; versionId: string } }>(
+    "/api/v1/templates/:id/versions/:versionId",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const version = await deps.findDesignVersion(ownerId, row.id, request.params.versionId);
+      if (!version) return reply.code(404).send({ error: `version not found: ${request.params.versionId}` });
+      return { id: version.id, name: version.name, createdAt: version.createdAt, document: version.document };
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: { name?: string } }>(
     "/api/v1/templates/:id/versions",
     async (request, reply) => {

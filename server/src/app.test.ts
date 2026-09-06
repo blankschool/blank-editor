@@ -385,6 +385,27 @@ test("GET /api/v1/templates/:id/versions lists what was created, most recent fir
   assert.deepEqual(names, ["Segunda", "Primeira"]);
 });
 
+test("GET .../versions/:versionId returns the version's document without touching the template", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/versions`, headers: AUTH, payload: { name: "Antes da campanha" },
+  });
+  const versionId = JSON.parse(created.body).id;
+
+  const res = await app.inject({
+    method: "GET", url: `/api/v1/templates/${TPL.id}/versions/${versionId}`, headers: AUTH,
+  });
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.name, "Antes da campanha");
+  assert.deepEqual(body.document, TPL.document);
+
+  const missing = await app.inject({
+    method: "GET", url: `/api/v1/templates/${TPL.id}/versions/does-not-exist`, headers: AUTH,
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
 test("POST .../restore copies the version's document back into the template", async () => {
   let updateInput: unknown;
   const app = buildApp(makeDeps({

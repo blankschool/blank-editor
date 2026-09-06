@@ -181,9 +181,35 @@ usados em server/src/db.ts e supabase/migrations/*).
   usam, embute cada uma como `<img>` (data URI) numa página HTML estática só,
   empilhadas. Reaproveita 100% do pipeline de render já testado (mesma
   função que já gera PNG/PDF) — só a montagem final do HTML é nova.
-- [ ] **3.1b Exportar HTML de uma versão específica.** Depende do item 4.1
-  (histórico de versões) existir — não dá pra exportar "a versão 3" sem
-  versões nomeadas existirem ainda.
+- [x] **3.1b Exportar HTML de uma versão específica.** Desbloqueado pelo 4.1
+  (histórico de versões).
+  - `server/src/app.ts`: nova rota `GET /api/v1/templates/:id/versions/:versionId`
+    — só leitura, devolve `{ id, name, createdAt, document }` sem restaurar
+    nem duplicar nada (reusa `deps.findDesignVersion`, já existente e já
+    ligado em `db.ts`/`local.ts` pelas rotas de restore/duplicate/delete —
+    nenhuma mudança de schema ou de deps precisou). Testado em
+    `app.test.ts`: cria versão → GET devolve nome+documento corretos → GET de
+    id inexistente 404.
+  - `src/templateStore.ts`: `fetchDesignVersionDocument(templateId, versionId)`.
+  - `src/editor.ts`: `buildScreensHtml` deixou de ler `doc.pages` implícito e
+    passou a receber `pages: Page[]` como parâmetro (os dois call sites
+    existentes — exportar arquivo e copiar markup — agora passam `doc.pages`
+    explicitamente); botão "Exportar" novo na lista do histórico
+    (`renderHistoryList`), ao lado de Restaurar/Duplicar/Excluir, mesma classe
+    `tbtn ghost` já usada ali (sem CSS novo). Handler busca o documento da
+    versão, passa pelo mesmo `ensureCanDownload()` gate do export normal
+    (identidade do template, não conteúdo — não faz sentido baixar uma versão
+    de um design gerado ainda não aprovado), renderiza com `buildScreensHtml`
+    e baixa como `"{nome do design} - {nome da versão}.html"` — sem tocar no
+    documento atualmente aberto no editor.
+  - **Verificação**: `npm run check` e `npm test` (raiz 41/41, `server/`
+    201/201) e `npm run build` limpos nos dois pacotes. Não fiz uma chamada
+    curl ao vivo contra `DATABASE_URL` de propósito — o `.env` deste projeto
+    aponta pro Postgres real, e criar/ler versões de teste ali escreveria
+    linhas de teste num banco que pode não ser só de desenvolvimento; o teste
+    automatizado (create → GET → 404) já cobre o mesmo caminho com uma
+    fixture em memória, sem esse risco. Botão em si não verificado
+    visualmente (mesma limitação de login já registrada nos itens 4.1–4.10).
 - [x] **3.1c Copiar markup pro clipboard.** Botão "Copiar markup" no modal
   de exportar, ao lado de Cancelar/Exportar. `buildScreensHtml()` extraída
   do 3.1a pra ficar compartilhada entre exportar-como-arquivo e copiar — e a
