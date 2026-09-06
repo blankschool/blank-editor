@@ -22,7 +22,7 @@ import {
   uploadRenderedPng,
   uploadUserPhoto,
 } from "./storage.ts";
-import type { ApiKeyOwner, ApiKeySummary, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ApiKeyOwner, ApiKeySummary, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
@@ -85,6 +85,19 @@ export interface AppDeps {
   setDesignShareVisibility: (ownerId: string, templateId: string, visibility: ShareVisibility) => Promise<void>;
   getPublicShareVisibility: (templateId: string) => Promise<ShareVisibility>;
   findTemplatePublic: (id: string) => Promise<TemplateRow | null>;
+  listDesignComments: (ownerId: string, templateId: string) => Promise<DesignCommentRow[]>;
+  createDesignComment: (
+    ownerId: string,
+    input: { templateId: string; pageIndex: number; x: number; y: number; body: string },
+  ) => Promise<DesignCommentRow>;
+  setDesignCommentResolved: (ownerId: string, templateId: string, id: string, resolved: boolean) => Promise<boolean>;
+  deleteDesignComment: (ownerId: string, templateId: string, id: string) => Promise<boolean>;
+  createDesignCommentReply: (
+    ownerId: string,
+    templateId: string,
+    commentId: string,
+    body: string,
+  ) => Promise<DesignCommentReply | null>;
 }
 
 export interface MediaDeps {
@@ -950,6 +963,89 @@ export function buildApp(
       if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
       await deps.setDesignShareVisibility(ownerId, row.id, visibility);
       return { visibility, publicUrl: visibility === "link" ? publicShareUrl(row.id) : null };
+    },
+  );
+
+  // --- Comentários fixados no canvas (Editar → Comentários, item 4.3) ------------------------
+  // Do design inteiro (owner_id + template_id), não de uma versão — restaurar uma versão antiga
+  // não apaga a discussão. Sem conceito de time/colaborador convidado neste app ainda, então é
+  // sempre o próprio dono comentando pra si mesmo — ver a nota na migration 0009.
+  app.get<{ Params: { id: string } }>("/api/v1/templates/:id/comments", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const row = await deps.findTemplate(ownerId, request.params.id);
+    if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+    return deps.listDesignComments(ownerId, row.id);
+  });
+
+  app.post<{ Params: { id: string }; Body: { pageIndex?: number; x?: number; y?: number; body?: string } }>(
+    "/api/v1/templates/:id/comments",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const { pageIndex = 0, x, y, body } = request.body ?? {};
+      if (typeof x !== "number" || typeof y !== "number") {
+        return reply.code(400).send({ error: "x and y (0..1, relative to the page) are required" });
+      }
+      if (!body?.trim()) return reply.code(400).send({ error: "missing required field: body" });
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const comment = await deps.createDesignComment(ownerId, { templateId: row.id, pageIndex, x, y, body: body.trim() });
+      return reply.code(201).send(comment);
+    },
+  );
+
+  app.post<{ Params: { id: string; commentId: string } }>(
+    "/api/v1/templates/:id/comments/:commentId/resolve",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const ok = await deps.setDesignCommentResolved(ownerId, row.id, request.params.commentId, true);
+      if (!ok) return reply.code(404).send({ error: `comment not found: ${request.params.commentId}` });
+      return reply.code(204).send();
+    },
+  );
+
+  app.post<{ Params: { id: string; commentId: string } }>(
+    "/api/v1/templates/:id/comments/:commentId/reopen",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const ok = await deps.setDesignCommentResolved(ownerId, row.id, request.params.commentId, false);
+      if (!ok) return reply.code(404).send({ error: `comment not found: ${request.params.commentId}` });
+      return reply.code(204).send();
+    },
+  );
+
+  app.delete<{ Params: { id: string; commentId: string } }>(
+    "/api/v1/templates/:id/comments/:commentId",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const ok = await deps.deleteDesignComment(ownerId, row.id, request.params.commentId);
+      if (!ok) return reply.code(404).send({ error: `comment not found: ${request.params.commentId}` });
+      return reply.code(204).send();
+    },
+  );
+
+  app.post<{ Params: { id: string; commentId: string }; Body: { body?: string } }>(
+    "/api/v1/templates/:id/comments/:commentId/replies",
+    async (request, reply) => {
+      const ownerId = await requireOwner(request, reply);
+      if (!ownerId) return;
+      const body = request.body?.body?.trim();
+      if (!body) return reply.code(400).send({ error: "missing required field: body" });
+      const row = await deps.findTemplate(ownerId, request.params.id);
+      if (!row) return reply.code(404).send({ error: `template not found: ${request.params.id}` });
+      const created = await deps.createDesignCommentReply(ownerId, row.id, request.params.commentId, body);
+      if (!created) return reply.code(404).send({ error: `comment not found: ${request.params.commentId}` });
+      return reply.code(201).send(created);
     },
   );
 

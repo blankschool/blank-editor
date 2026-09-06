@@ -41,6 +41,11 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     setDesignShareVisibility: async () => {},
     getPublicShareVisibility: async () => "private",
     findTemplatePublic: async () => null,
+    listDesignComments: async () => [],
+    createDesignComment: async () => { throw new Error("not implemented in this test stub"); },
+    setDesignCommentResolved: async () => false,
+    deleteDesignComment: async () => false,
+    createDesignCommentReply: async () => null,
     upsertFontFace: async (input) => ({
       id: input.id, sha256: input.sha256, internalFamily: input.internalFamily,
       postscriptName: input.postscriptName ?? null, weight: input.weight, style: input.style,

@@ -6,11 +6,14 @@ import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
 import {
   createDb,
+  createDesignComment,
+  createDesignCommentReply,
   createDesignVersion,
   createPostgresGenerationRepository,
   createApiKey,
   createTemplate,
   deleteApiKey,
+  deleteDesignComment,
   deleteDesignVersion,
   deleteTemplate,
   findApiKeyOwner,
@@ -20,10 +23,12 @@ import {
   getDesignShareVisibility,
   getPublicShareVisibility,
   listApiKeys,
+  listDesignComments,
   listDesignVersions,
   listFontFaces,
   listTemplates,
   revokeApiKey,
+  setDesignCommentResolved,
   setDesignShareVisibility,
   updateTemplate,
   upsertFontFace,
@@ -86,6 +91,12 @@ if (DATABASE_URL) {
     setDesignShareVisibility: (ownerId, templateId, visibility) => setDesignShareVisibility(sql, ownerId, templateId, visibility),
     getPublicShareVisibility: (templateId) => getPublicShareVisibility(sql, templateId),
     findTemplatePublic: (id) => findTemplatePublic(sql, id),
+    listDesignComments: (ownerId, templateId) => listDesignComments(sql, ownerId, templateId),
+    createDesignComment: (ownerId, input) => createDesignComment(sql, { id: randomUUID(), ownerId, ...input }),
+    setDesignCommentResolved: (ownerId, templateId, id, resolved) => setDesignCommentResolved(sql, ownerId, templateId, id, resolved),
+    deleteDesignComment: (ownerId, templateId, id) => deleteDesignComment(sql, ownerId, templateId, id),
+    createDesignCommentReply: (ownerId, templateId, commentId, body) =>
+      createDesignCommentReply(sql, { id: randomUUID(), ownerId, templateId, commentId, body }),
   };
 } else {
   deps = createLocalDeps(LOCAL_API_KEY!, renderTemplatePng);

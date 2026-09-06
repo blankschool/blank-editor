@@ -153,3 +153,66 @@ export async function setShareVisibility(templateId: string, visibility: "privat
   if (!res.ok) throw new Error("failed to set share visibility");
   return res.json();
 }
+
+/* --------------------- comentários fixados no canvas (item 4.3) --------------------- */
+
+export interface DesignCommentReply {
+  id: string;
+  commentId: string;
+  ownerId: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface DesignComment {
+  id: string;
+  templateId: string;
+  ownerId: string;
+  pageIndex: number;
+  x: number;
+  y: number;
+  body: string;
+  resolved: boolean;
+  createdAt: string;
+  resolvedAt: string | null;
+  replies: DesignCommentReply[];
+}
+
+export async function listCommentsFromServer(templateId: string): Promise<DesignComment[]> {
+  const res = await fetch(`/api/v1/templates/${templateId}/comments`);
+  if (!res.ok) throw new Error("failed to list comments");
+  return res.json();
+}
+
+export async function createCommentOnServer(
+  templateId: string,
+  input: { pageIndex: number; x: number; y: number; body: string },
+): Promise<DesignComment> {
+  const res = await fetch(`/api/v1/templates/${templateId}/comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error("failed to create comment");
+  return res.json();
+}
+
+export async function setCommentResolvedOnServer(templateId: string, commentId: string, resolved: boolean): Promise<void> {
+  const res = await fetch(`/api/v1/templates/${templateId}/comments/${commentId}/${resolved ? "resolve" : "reopen"}`, { method: "POST" });
+  if (!res.ok) throw new Error("failed to update comment");
+}
+
+export async function deleteCommentOnServer(templateId: string, commentId: string): Promise<void> {
+  const res = await fetch(`/api/v1/templates/${templateId}/comments/${commentId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("failed to delete comment");
+}
+
+export async function replyToCommentOnServer(templateId: string, commentId: string, body: string): Promise<DesignCommentReply> {
+  const res = await fetch(`/api/v1/templates/${templateId}/comments/${commentId}/replies`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) throw new Error("failed to reply to comment");
+  return res.json();
+}

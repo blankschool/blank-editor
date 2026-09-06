@@ -185,6 +185,31 @@
   </div>
 </div>
 
+<div class="scrim" id="commentScrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="commentTitle">
+    <h3 id="commentTitle">Comentários</h3>
+    <p class="phint" style="margin-bottom:14px">Notas fixadas num ponto do design — clique em "Adicionar" e depois no canvas pra marcar onde.</p>
+    <div class="row" style="margin-bottom:14px">
+      <button class="tbtn primary" id="commentAdd" style="flex:1">Adicionar comentário</button>
+    </div>
+    <div id="commentList"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="tbtn ghost" id="commentClose" style="flex:1">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="commentComposeScrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="commentComposeTitle">
+    <h3 id="commentComposeTitle">Novo comentário</h3>
+    <textarea id="commentComposeInput" rows="4" style="width:100%;margin-bottom:14px;resize:vertical" placeholder="O que precisa de atenção aqui?"></textarea>
+    <div class="row" style="gap:8px">
+      <button class="tbtn ghost" id="commentComposeCancel" style="flex:1">Cancelar</button>
+      <button class="tbtn primary" id="commentComposeSave" style="flex:1">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="fileImgReplace" accept="image/*" hidden>

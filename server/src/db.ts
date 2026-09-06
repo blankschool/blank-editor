@@ -209,6 +209,126 @@ export async function findTemplatePublic(sql: Sql, id: string): Promise<Template
   return rows[0] ?? null;
 }
 
+/* --------------------------- comentários fixados no canvas (item 4.3) -------------------------- */
+// Um comentário é do DESIGN inteiro (owner_id + template_id), não de uma versão específica —
+// restaurar uma versão antiga não apaga a discussão. `pageIndex`/`x`/`y` fixam o pino relativo à
+// página, normalizados 0..1 (mesma convenção do crop de imagem em imageCrop.ts), pra sobreviver a
+// redimensionar a página.
+
+export interface DesignCommentReply {
+  id: string;
+  commentId: string;
+  ownerId: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface DesignCommentRow {
+  id: string;
+  templateId: string;
+  ownerId: string;
+  pageIndex: number;
+  x: number;
+  y: number;
+  body: string;
+  resolved: boolean;
+  createdAt: string;
+  resolvedAt: string | null;
+  replies: DesignCommentReply[];
+}
+
+const DESIGN_COMMENT_COLUMNS = `
+  id, template_id as "templateId", owner_id as "ownerId", page_index as "pageIndex", x, y, body,
+  resolved, created_at as "createdAt", resolved_at as "resolvedAt"
+`;
+
+export async function listDesignComments(sql: Sql, ownerId: string, templateId: string): Promise<DesignCommentRow[]> {
+  const comments = await sql<(Omit<DesignCommentRow, "createdAt" | "resolvedAt" | "replies"> & { createdAt: Date; resolvedAt: Date | null })[]>`
+    select ${sql.unsafe(DESIGN_COMMENT_COLUMNS)} from design_comments
+    where template_id = ${templateId} and owner_id = ${ownerId}
+    order by created_at asc
+  `;
+  if (!comments.length) return [];
+  const ids = comments.map((c) => c.id);
+  const replies = await sql<(Omit<DesignCommentReply, "createdAt"> & { createdAt: Date })[]>`
+    select id, comment_id as "commentId", owner_id as "ownerId", body, created_at as "createdAt"
+    from design_comment_replies
+    where comment_id in ${sql(ids)}
+    order by created_at asc
+  `;
+  const repliesByComment = new Map<string, DesignCommentReply[]>();
+  for (const r of replies) {
+    const list = repliesByComment.get(r.commentId) ?? [];
+    list.push({ ...r, createdAt: r.createdAt.toISOString() });
+    repliesByComment.set(r.commentId, list);
+  }
+  return comments.map((c) => ({
+    ...c,
+    createdAt: c.createdAt.toISOString(),
+    resolvedAt: c.resolvedAt ? c.resolvedAt.toISOString() : null,
+    replies: repliesByComment.get(c.id) ?? [],
+  }));
+}
+
+export async function createDesignComment(
+  sql: Sql,
+  input: { id: string; ownerId: string; templateId: string; pageIndex: number; x: number; y: number; body: string },
+): Promise<DesignCommentRow> {
+  const rows = await sql<(Omit<DesignCommentRow, "createdAt" | "resolvedAt" | "replies"> & { createdAt: Date; resolvedAt: Date | null })[]>`
+    insert into design_comments (id, template_id, owner_id, page_index, x, y, body)
+    values (${input.id}, ${input.templateId}, ${input.ownerId}, ${input.pageIndex}, ${input.x}, ${input.y}, ${input.body})
+    returning ${sql.unsafe(DESIGN_COMMENT_COLUMNS)}
+  `;
+  const r = rows[0];
+  return { ...r, createdAt: r.createdAt.toISOString(), resolvedAt: null, replies: [] };
+}
+
+export async function setDesignCommentResolved(
+  sql: Sql,
+  ownerId: string,
+  templateId: string,
+  id: string,
+  resolved: boolean,
+): Promise<boolean> {
+  const resolvedAt = resolved ? new Date() : null;
+  const rows = await sql`
+    update design_comments set resolved = ${resolved}, resolved_at = ${resolvedAt}
+    where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
+    returning id
+  `;
+  return rows.length > 0;
+}
+
+export async function deleteDesignComment(sql: Sql, ownerId: string, templateId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    delete from design_comments
+    where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
+    returning id
+  `;
+  return rows.length > 0;
+}
+
+/** Confere que o comentário pertence a esse dono/design ANTES de inserir a resposta — sem isso,
+ *  dar reply num commentId de outro dono criaria uma linha órfã que a leitura (sempre filtrada
+ *  por template_id+owner_id) nunca mostraria, mas que também nunca seria limpa. */
+export async function createDesignCommentReply(
+  sql: Sql,
+  input: { id: string; ownerId: string; templateId: string; commentId: string; body: string },
+): Promise<DesignCommentReply | null> {
+  const owns = await sql<{ id: string }[]>`
+    select id from design_comments
+    where id = ${input.commentId} and template_id = ${input.templateId} and owner_id = ${input.ownerId}
+  `;
+  if (!owns.length) return null;
+  const rows = await sql<(Omit<DesignCommentReply, "createdAt"> & { createdAt: Date })[]>`
+    insert into design_comment_replies (id, comment_id, owner_id, body)
+    values (${input.id}, ${input.commentId}, ${input.ownerId}, ${input.body})
+    returning id, comment_id as "commentId", owner_id as "ownerId", body, created_at as "createdAt"
+  `;
+  const r = rows[0];
+  return { ...r, createdAt: r.createdAt.toISOString() };
+}
+
 /** Looks up the workspace that owns a (non-revoked) API key by its SHA-256 hash. */
 export async function findApiKeyOwner(sql: Sql, keyHash: string): Promise<ApiKeyOwner | null> {
   const rows = await sql<{ owner_id: string }[]>`

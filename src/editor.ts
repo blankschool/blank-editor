@@ -8,6 +8,8 @@ import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
   listDesignVersionsFromServer, createDesignVersionOnServer, restoreDesignVersionOnServer, duplicateDesignVersionOnServer, deleteDesignVersionOnServer,
   fetchDesignVersionDocument, getShareStatus, setShareVisibility, type DesignVersionSummary, type ShareStatus,
+  listCommentsFromServer, createCommentOnServer, setCommentResolvedOnServer, deleteCommentOnServer, replyToCommentOnServer,
+  type DesignComment,
 } from "./templateStore";
 import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
@@ -51,6 +53,13 @@ const SEED: Doc = { name: "Design sem título", pages: [blankPage()], active: 0 
 let doc: Doc = SEED;
 let sel: string[] = [];
 let tool = "select";
+/* comentários fixados no canvas (item 4.3) */
+let commentsData: DesignComment[] = [];
+/** Enquanto true, o PRÓXIMO clique numa página fixa um comentário ali em vez de fazer o que um
+ *  clique normal faria (selecionar/desmarcar/marquee) — ver o topo do handler de pointerdown do
+ *  #stage. Não é um `tool` de verdade (não tem botão próprio na barra, nem estado persistente)
+ *  porque é sempre "um clique só", desarmado de novo assim que usado ou cancelado. */
+let placingComment = false;
 let zoom = 1, panX = 0, panY = 0;
 // The workspace behind the page — separate from the page's own "Fundo" fill (that's the
 // artboard's content; this is just the room around it). Remembered per-browser, not per-doc.
@@ -424,6 +433,8 @@ function renderCanvas() {
       ${pageHeaderHtml(i, p)}
       <div class="pagebox" data-pageidx="${i}" style="width:${p.w}px; height:${p.h}px; background:${p.bg}; opacity:${p.hidden ? .45 : 1}">${p.els
         .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
+        .join("")}${commentsData.filter((c) => c.pageIndex === i && !c.resolved)
+        .map((c) => `<div class="commentPin" data-comment-id="${c.id}" style="left:${c.x * 100}%;top:${c.y * 100}%" title="${esc(c.body)}"></div>`)
         .join("")}</div>
     </div>`).join("") +
     `<button class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + 20 / zoom}px; width:${stackW}px;">
@@ -804,6 +815,28 @@ let spaceDown = false;
 $("stage").addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 $("stage").addEventListener("pointerdown", (ev) => {
+  // Comentários (item 4.3): enquanto armado, o clique NÃO deve virar seleção/marquee — é
+  // tratado aqui, antes de qualquer outra checagem, e sempre desarma depois de um clique
+  // (dentro ou fora de uma página).
+  if (placingComment) {
+    const pageBox = (ev.target as HTMLElement).closest<HTMLElement>(".pagebox");
+    if (pageBox) {
+      const r = pageBox.getBoundingClientRect();
+      const pageIdx = +pageBox.dataset.pageidx;
+      const x = clamp((ev.clientX - r.left) / r.width, 0, 1);
+      const y = clamp((ev.clientY - r.top) / r.height, 0, 1);
+      openCommentCompose(pageIdx, x, y);
+    } else {
+      toast("Clique dentro de uma página pra fixar o comentário.");
+    }
+    placingComment = false;
+    $("stage").style.cursor = tool === "hand" ? "grab" : tool === "draw" ? "crosshair" : "default";
+    return;
+  }
+  // A comment pin is a click target on its own (opens the comments panel), never the start of
+  // a marquee/select drag.
+  const pin = (ev.target as HTMLElement).closest(".commentPin");
+  if (pin) { openComments(); return; }
   // The floating selection toolbar, its "more options" popover, the tool belt, the bottom
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
@@ -2364,6 +2397,7 @@ function renderFileMenu() {
     canManage ? item("duplicate", "Duplicar") : "",
     canManage ? item("share", "Compartilhar") : "",
     canManage ? item("history", "Histórico de versões") : "",
+    canManage ? item("comments", "Comentários") : "",
     canManage ? item("copy-id", "Copiar ID") : "",
     item("open-json", "Abrir arquivo local…"),
     canManage ? `<div class="dropsep"></div>${item("delete", "Excluir", true)}` : "",
@@ -2398,6 +2432,7 @@ $("fileMenu").addEventListener("click", async (ev) => {
   }
   if (action === "history") { openHistory(); return; }
   if (action === "share") { openShare(); return; }
+  if (action === "comments") { openComments(); return; }
   if (action === "delete") {
     $("confirmMsg").textContent = `Excluir o template "${doc.name}"? Isso não pode ser desfeito.`;
     $("confirmScrim").hidden = false;
@@ -2560,6 +2595,115 @@ $("historyList").addEventListener("click", async (ev) => {
       await refreshHistory();
     } catch { toast("Não foi possível excluir."); }
   }
+});
+
+/* comentários fixados no canvas (item 4.3 do backlog) */
+async function refreshComments() {
+  if (!doc.seedId) return;
+  try {
+    commentsData = await listCommentsFromServer(doc.seedId);
+  } catch {
+    commentsData = [];
+    toast("Não foi possível carregar os comentários.");
+  }
+  renderCommentList();
+  renderCanvas(); // reflete pins novos/removidos/resolvidos no canvas
+}
+
+function renderCommentList() {
+  const el = $("commentList");
+  if (!commentsData.length) {
+    el.innerHTML = `<p class="phint">Nenhum comentário ainda.</p>`;
+    return;
+  }
+  el.innerHTML = commentsData.map((c) => `
+    <div class="row" style="flex-direction:column;align-items:stretch;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <strong style="display:block;font-size:13px">Página ${c.pageIndex + 1}${c.resolved ? " · resolvido" : ""}</strong>
+          <span style="font-size:13px">${esc(c.body)}</span>
+          <span class="phint" style="display:block">${relativeTime(c.createdAt)}</span>
+        </div>
+        <div class="row" style="gap:6px">
+          <button class="tbtn ghost" data-comment-action="${c.resolved ? "reopen" : "resolve"}" data-comment-id="${c.id}">${c.resolved ? "Reabrir" : "Resolver"}</button>
+          <button class="tbtn ghost danger" data-comment-action="delete" data-comment-id="${c.id}">Excluir</button>
+        </div>
+      </div>
+      ${c.replies.map((r) => `<div class="phint" style="padding-left:12px">↳ ${esc(r.body)}</div>`).join("")}
+      <div class="row" style="gap:6px">
+        <input class="commentReplyInput" data-comment-id="${c.id}" placeholder="Responder…" style="flex:1">
+        <button class="tbtn ghost" data-comment-action="reply" data-comment-id="${c.id}">Enviar</button>
+      </div>
+    </div>`).join("");
+}
+
+async function openComments() {
+  if (!doc.seedId) return;
+  $("commentScrim").hidden = false;
+  await refreshComments();
+}
+
+let pendingCommentSpot: { pageIdx: number; x: number; y: number } | null = null;
+
+/** Chamado pelo clique-pra-fixar no canvas (ver o handler de pointerdown do #stage) — abre o
+ *  compose já sabendo onde o pino vai, sem precisar reabrir o painel primeiro. */
+function openCommentCompose(pageIdx: number, x: number, y: number) {
+  pendingCommentSpot = { pageIdx, x, y };
+  ($("commentComposeInput") as HTMLTextAreaElement).value = "";
+  $("commentComposeScrim").hidden = false;
+  ($("commentComposeInput") as HTMLTextAreaElement).focus();
+}
+
+$("commentAdd").addEventListener("click", () => {
+  placingComment = true;
+  $("commentScrim").hidden = true;
+  $("stage").style.cursor = "crosshair";
+  toast("Clique no canvas pra fixar o comentário");
+});
+$("commentClose").addEventListener("click", () => { $("commentScrim").hidden = true; });
+$("commentScrim").addEventListener("click", (e) => { if (e.target === $("commentScrim")) $("commentScrim").hidden = true; });
+$("commentList").addEventListener("click", async (ev) => {
+  const b = (ev.target as HTMLElement).closest("[data-comment-action]");
+  if (!b || !doc.seedId) return;
+  const templateId = doc.seedId;
+  const commentId = b.getAttribute("data-comment-id")!;
+  const action = b.getAttribute("data-comment-action");
+  if (action === "resolve" || action === "reopen") {
+    try {
+      await setCommentResolvedOnServer(templateId, commentId, action === "resolve");
+      await refreshComments();
+    } catch { toast("Não foi possível atualizar o comentário."); }
+  }
+  if (action === "delete") {
+    try {
+      await deleteCommentOnServer(templateId, commentId);
+      await refreshComments();
+    } catch { toast("Não foi possível excluir."); }
+  }
+  if (action === "reply") {
+    const input = ($("commentList") as HTMLElement).querySelector<HTMLInputElement>(`.commentReplyInput[data-comment-id="${commentId}"]`);
+    const body = input?.value.trim();
+    if (!body) return;
+    try {
+      await replyToCommentOnServer(templateId, commentId, body);
+      await refreshComments();
+    } catch { toast("Não foi possível responder."); }
+  }
+});
+$("commentComposeCancel").addEventListener("click", () => { $("commentComposeScrim").hidden = true; pendingCommentSpot = null; });
+$("commentComposeScrim").addEventListener("click", (e) => { if (e.target === $("commentComposeScrim")) { $("commentComposeScrim").hidden = true; pendingCommentSpot = null; } });
+$("commentComposeSave").addEventListener("click", async () => {
+  if (!doc.seedId || !pendingCommentSpot) return;
+  const body = ($("commentComposeInput") as HTMLTextAreaElement).value.trim();
+  if (!body) { toast("Escreva o comentário antes de salvar."); return; }
+  const { pageIdx, x, y } = pendingCommentSpot;
+  try {
+    await createCommentOnServer(doc.seedId, { pageIndex: pageIdx, x, y, body });
+    $("commentComposeScrim").hidden = true;
+    pendingCommentSpot = null;
+    toast("Comentário fixado");
+    await refreshComments();
+  } catch { toast("Não foi possível salvar o comentário."); }
 });
 
 /* import / upload */
@@ -2748,10 +2892,12 @@ export function openTemplateDocument(templateDoc: Doc) {
   future = [];
   baseline = snap();
   void refreshGenerationReview();
+  commentsData = [];
   if (doc.seedId) pushRecentDesign(doc.seedId, doc.name);
   if (editorMounted) {
     $("docname").value = doc.name;
     renderAll();
+    if (doc.seedId) void refreshComments();
     syncHistory();
     buildThumbs();
     requestAnimationFrame(zoomFit);

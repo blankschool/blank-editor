@@ -351,6 +351,13 @@ button { cursor: pointer; background: none; border: none; }
 .dragghost { pointer-events: none; opacity: .85; box-shadow: var(--shadow-lg); }
 .el { position: absolute; transform-origin: center center; }
 .el.locked { cursor: default; }
+/* comentário fixado no canvas (item 4.3) — `left`/`top` em % vêm de El.x/y normalizados 0..1.
+   `translate(-50%,-50%)` centraliza o círculo EXATAMENTE no ponto marcado, não no seu canto. */
+.commentPin {
+  position: absolute; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--accent); border: 2px solid #fff; box-shadow: var(--shadow-page);
+  transform: translate(-50%, -50%); cursor: pointer; z-index: 5;
+}
 .txt { white-space: pre-wrap; word-break: break-word; outline: none; }
 .txt[contenteditable="true"] { cursor: text; }
 .ovl { position: absolute; inset: 0; pointer-events: none; }

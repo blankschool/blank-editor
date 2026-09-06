@@ -327,11 +327,59 @@ habilitado, políticas por dono).
   dois tem consumidor ainda (comentários é o item 4.3, ainda não feito;
   expiração não foi pedida por ninguém, seria campo morto). Adicionar
   quando o item 4.3 existir ou alguém pedir expiração de verdade.
-- [ ] **4.3 Comentários fixados no canvas.** Tabelas `design_comments` +
-  `design_comment_replies` (mesmo padrão de `approvals`/`generation_workflow`
-  já existente), pin por `x/y` relativo à página, resolver/reabrir, painel no
-  editor. Depende de 4.1 existir pra decidir se comentário é por versão ou
-  pelo design como um todo (sugestão: pelo design, mais simples).
+- [x] **4.3 Comentários fixados no canvas.** Feito, seguindo a sugestão do
+  próprio item: por DESIGN inteiro, não por versão — restaurar uma versão
+  antiga não apaga a discussão. Sem conceito de time/colaborador convidado
+  neste app ainda (só compartilhamento público READ-ONLY), então isto é o
+  dono deixando notas fixadas pra si mesmo, não uma discussão entre pessoas
+  diferentes — registrado explicitamente na migration e no código.
+  - `supabase/migrations/0009_design_comments.sql`: `design_comments` +
+    `design_comment_replies`, RLS igual ao padrão de `design_versions`/
+    `design_shares` (`owner_id = auth.uid()`).
+  - `server/src/db.ts`: `listDesignComments` (join manual com as replies,
+    agrupadas em memória por `comment_id`), `createDesignComment`,
+    `setDesignCommentResolved` (uma função só pra resolver/reabrir, não duas —
+    evita ter que aninhar um fragmento SQL condicional dentro de outro
+    template `sql\`\``, mais simples que nested fragments), `deleteDesignComment`,
+    `createDesignCommentReply` (confere que o comentário pertence a esse
+    dono/design ANTES de inserir a resposta, pra não criar uma linha órfã).
+  - `server/src/app.ts`: `GET/POST /api/v1/templates/:id/comments`,
+    `POST .../resolve`, `POST .../reopen`, `DELETE .../:commentId`,
+    `POST .../:commentId/replies`. 6 testes novos em `app.test.ts`
+    (`makeCommentStore()`, mesmo padrão de `makeVersionStore`/`makeShareStore`)
+    — pin+listar, validação de x/y/body, resolver/reabrir com 404 pra id
+    inexistente, responder (incluindo 404 num comentário que não existe),
+    excluir com 404 na segunda tentativa. Suíte do server: 208 (207 passam,
+    1 skip pré-existente sem relação).
+  - `src/templateStore.ts`: `listCommentsFromServer`/`createCommentOnServer`/
+    `setCommentResolvedOnServer`/`deleteCommentOnServer`/`replyToCommentOnServer`.
+  - `src/editor.ts`: item "Comentários" no menu de arquivo abre o painel
+    (`openComments`/`renderCommentList`, mesmo padrão scrim+lista do
+    Histórico); botão "Adicionar comentário" arma `placingComment = true` e
+    fecha o painel; o PRÓXIMO clique numa página (interceptado no TOPO do
+    handler de `pointerdown` do `#stage`, antes de qualquer outra lógica —
+    não modifica a lógica de seleção/drag/marquee já existente, só intercepta
+    antes dela) calcula x/y normalizados via `pageBox.getBoundingClientRect()`
+    (robusto a zoom/pan de graça, sem reimplementar a matemática de
+    mundo/página que o resto do arquivo já usa) e abre um compose pequeno
+    (`commentComposeScrim`) pra escrever o texto; pinos renderizam como
+    círculos (`.commentPin`) posicionados em `%` dentro de cada `.pagebox`
+    (mesma origem de coordenada que `El.x/y` já usa) — clicar num pino abre o
+    painel em vez de iniciar uma seleção/marquee (adicionado à mesma
+    ignore-list que já protege a barra de ferramentas flutuante).
+  - **Verificação**: `npm run check`/`npm test` (48/48 raiz, 207/207 server)
+    e `npm run build` limpos nos dois pacotes. A interação de clique-pra-fixar
+    em si (mousedown → abrir compose) não foi testada ao vivo (mesma
+    limitação de login de sempre) — MAS, diferente do 2.3b (uma máquina de
+    estado de arrastar nova competindo com handles existentes), aqui o clique
+    é interceptado no topo do handler ANTES de qualquer lógica de
+    seleção/drag rodar, então o risco de quebrar uma interação já existente é
+    bem menor; decidi que valia a pena implementar em vez de adiar. O que FOI
+    verificado visualmente (harness HTML descartável, igual ao dos itens
+    2.3a/4.5): os pinos centralizados exatamente no ponto normalizado
+    (inclusive um caso de canto 0,0) e o painel de comentários com estados
+    resolvido/não-resolvido, respostas indentadas e os botões de ação —
+    tudo renderizando como esperado.
 - [x] **4.4 Painel de código/handoff.** Nova aba "{ }" no popover de
   propriedades (ao lado de Organizar/Camadas), read-only: JSON do elemento
   selecionado (ou de todos, se vários) com botão "Copiar JSON". Escopo bem

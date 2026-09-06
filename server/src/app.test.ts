@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { buildApp, type AppDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
-import type { DesignVersionRow, TemplateRow } from "./db.ts";
+import type { DesignCommentReply, DesignCommentRow, DesignVersionRow, TemplateRow } from "./db.ts";
 import { createMemoryGenerationRepository } from "./generationWorkflow.ts";
 
 const VALID_KEY = "blk_live_test";
@@ -69,10 +69,58 @@ function makeShareStore() {
   };
 }
 
+/** Mesmo espírito das outras duas: store em memória isolado por `makeDeps()`. Réplicas
+ *  simplificadas de `listDesignComments`/`createDesignCommentReply` de `db.ts` — sem o join real,
+ *  só o suficiente pra testar o contrato das rotas. */
+function makeCommentStore() {
+  const comments = new Map<string, DesignCommentRow>();
+  const replies = new Map<string, DesignCommentReply[]>();
+  return {
+    listDesignComments: async (ownerId: string, templateId: string) =>
+      [...comments.values()]
+        .filter((c) => c.ownerId === ownerId && c.templateId === templateId)
+        .map((c) => ({ ...c, replies: replies.get(c.id) ?? [] })),
+    createDesignComment: async (
+      ownerId: string,
+      input: { templateId: string; pageIndex: number; x: number; y: number; body: string },
+    ) => {
+      const comment: DesignCommentRow = {
+        id: randomUUID(), ownerId, ...input,
+        resolved: false, createdAt: new Date().toISOString(), resolvedAt: null, replies: [],
+      };
+      comments.set(comment.id, comment);
+      return comment;
+    },
+    setDesignCommentResolved: async (ownerId: string, templateId: string, id: string, resolved: boolean) => {
+      const c = comments.get(id);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return false;
+      c.resolved = resolved;
+      c.resolvedAt = resolved ? new Date().toISOString() : null;
+      return true;
+    },
+    deleteDesignComment: async (ownerId: string, templateId: string, id: string) => {
+      const c = comments.get(id);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return false;
+      replies.delete(id);
+      return comments.delete(id);
+    },
+    createDesignCommentReply: async (ownerId: string, templateId: string, commentId: string, body: string) => {
+      const c = comments.get(commentId);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return null;
+      const reply: DesignCommentReply = { id: randomUUID(), commentId, ownerId, body, createdAt: new Date().toISOString() };
+      const list = replies.get(commentId) ?? [];
+      list.push(reply);
+      replies.set(commentId, list);
+      return reply;
+    },
+  };
+}
+
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
     ...makeVersionStore(),
     ...makeShareStore(),
+    ...makeCommentStore(),
     findApiKeyOwner: async (keyHash) => (keyHash === hashApiKey(VALID_KEY) ? { ownerId: OWNER_ID } : null),
     findTemplate: async (ownerId, id) => (id === TPL.id && ownerId === TPL.ownerId ? TPL : null),
     listTemplates: async (ownerId) =>
@@ -468,6 +516,110 @@ test("DELETE .../versions/:versionId removes it; a second delete 404s", async ()
 test("version-history routes require an authenticated owner, same as any other template route", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/versions` });
+  assert.equal(res.statusCode, 401);
+});
+
+// --- Comentários fixados no canvas (item 4.3 do backlog) -------------------------
+
+test("POST .../comments pins a comment at x/y on a page; GET lists it", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH,
+    payload: { pageIndex: 0, x: 0.4, y: 0.6, body: "Ajustar o contraste aqui" },
+  });
+  assert.equal(created.statusCode, 201);
+  const comment = JSON.parse(created.body);
+  assert.equal(comment.body, "Ajustar o contraste aqui");
+  assert.equal(comment.resolved, false);
+  assert.deepEqual(comment.replies, []);
+
+  const list = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH });
+  assert.equal(list.statusCode, 200);
+  assert.equal(JSON.parse(list.body).length, 1);
+});
+
+test("POST .../comments rejects a missing body or missing x/y", async () => {
+  const app = buildApp(makeDeps());
+  const noBody = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH, payload: { x: 0.1, y: 0.1 },
+  });
+  assert.equal(noBody.statusCode, 400);
+  const noPosition = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH, payload: { body: "oi" },
+  });
+  assert.equal(noPosition.statusCode, 400);
+});
+
+test("POST .../resolve and .../reopen toggle a comment's resolved state", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH, payload: { x: 0.1, y: 0.1, body: "oi" },
+  });
+  const commentId = JSON.parse(created.body).id;
+
+  const resolved = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments/${commentId}/resolve`, headers: AUTH,
+  });
+  assert.equal(resolved.statusCode, 204);
+  let list = JSON.parse((await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH })).body);
+  assert.equal(list[0].resolved, true);
+  assert.ok(list[0].resolvedAt);
+
+  const reopened = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments/${commentId}/reopen`, headers: AUTH,
+  });
+  assert.equal(reopened.statusCode, 204);
+  list = JSON.parse((await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH })).body);
+  assert.equal(list[0].resolved, false);
+  assert.equal(list[0].resolvedAt, null);
+
+  const missing = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments/does-not-exist/resolve`, headers: AUTH,
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
+test("POST .../replies adds a reply; a reply on a missing comment 404s", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH, payload: { x: 0.1, y: 0.1, body: "oi" },
+  });
+  const commentId = JSON.parse(created.body).id;
+
+  const reply = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments/${commentId}/replies`, headers: AUTH,
+    payload: { body: "Já ajustei" },
+  });
+  assert.equal(reply.statusCode, 201);
+  assert.equal(JSON.parse(reply.body).body, "Já ajustei");
+
+  const list = JSON.parse((await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH })).body);
+  assert.equal(list[0].replies.length, 1);
+  assert.equal(list[0].replies[0].body, "Já ajustei");
+
+  const missingParent = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments/does-not-exist/replies`, headers: AUTH,
+    payload: { body: "oi" },
+  });
+  assert.equal(missingParent.statusCode, 404);
+});
+
+test("DELETE .../comments/:commentId removes it; a second delete 404s", async () => {
+  const app = buildApp(makeDeps());
+  const created = await app.inject({
+    method: "POST", url: `/api/v1/templates/${TPL.id}/comments`, headers: AUTH, payload: { x: 0.1, y: 0.1, body: "oi" },
+  });
+  const commentId = JSON.parse(created.body).id;
+
+  const first = await app.inject({ method: "DELETE", url: `/api/v1/templates/${TPL.id}/comments/${commentId}`, headers: AUTH });
+  assert.equal(first.statusCode, 204);
+  const second = await app.inject({ method: "DELETE", url: `/api/v1/templates/${TPL.id}/comments/${commentId}`, headers: AUTH });
+  assert.equal(second.statusCode, 404);
+});
+
+test("comment routes require an authenticated owner, same as any other template route", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments` });
   assert.equal(res.statusCode, 401);
 });
 

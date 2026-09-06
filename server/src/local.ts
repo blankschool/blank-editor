@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey } from "./auth.ts";
 import type { AppDeps } from "./app.ts";
-import type { ApiKeySummary, DesignVersionRow, FontFaceRow, ShareVisibility, TemplateRow } from "./db.ts";
+import type { ApiKeySummary, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceRow, ShareVisibility, TemplateRow } from "./db.ts";
 
 /** Dono sintético de tudo que existe em modo local — não há Supabase Auth aqui, só um id fixo. */
 const LOCAL_OWNER_ID = "local-dev-owner";
@@ -53,6 +53,8 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
   const fontFaces = new Map<string, FontFaceRow>();
   const designVersions = new Map<string, DesignVersionRow>();
   const shares = new Map<string, ShareVisibility>();
+  const designComments = new Map<string, DesignCommentRow>();
+  const commentReplies = new Map<string, DesignCommentReply[]>();
 
   /**
    * Quando cada template foi tocado. Fica fora do TemplateRow porque a coluna
@@ -196,5 +198,44 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
     },
     getPublicShareVisibility: async (templateId) => shares.get(templateId) ?? "private",
     findTemplatePublic: async (id) => templates.get(id) ?? null,
+
+    listDesignComments: async (ownerId, templateId) =>
+      [...designComments.values()]
+        .filter((c) => c.ownerId === ownerId && c.templateId === templateId)
+        .map((c) => ({ ...c, replies: commentReplies.get(c.id) ?? [] })),
+
+    createDesignComment: async (ownerId, { templateId, pageIndex, x, y, body }) => {
+      const comment: DesignCommentRow = {
+        id: randomUUID(), ownerId, templateId, pageIndex, x, y, body,
+        resolved: false, createdAt: new Date().toISOString(), resolvedAt: null, replies: [],
+      };
+      designComments.set(comment.id, comment);
+      return comment;
+    },
+
+    setDesignCommentResolved: async (ownerId, templateId, id, resolved) => {
+      const c = designComments.get(id);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return false;
+      c.resolved = resolved;
+      c.resolvedAt = resolved ? new Date().toISOString() : null;
+      return true;
+    },
+
+    deleteDesignComment: async (ownerId, templateId, id) => {
+      const c = designComments.get(id);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return false;
+      commentReplies.delete(id);
+      return designComments.delete(id);
+    },
+
+    createDesignCommentReply: async (ownerId, templateId, commentId, body) => {
+      const c = designComments.get(commentId);
+      if (!c || c.ownerId !== ownerId || c.templateId !== templateId) return null;
+      const reply: DesignCommentReply = { id: randomUUID(), commentId, ownerId, body, createdAt: new Date().toISOString() };
+      const list = commentReplies.get(commentId) ?? [];
+      list.push(reply);
+      commentReplies.set(commentId, list);
+      return reply;
+    },
   };
 }
