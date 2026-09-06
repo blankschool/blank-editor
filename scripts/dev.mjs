@@ -125,8 +125,14 @@ console.log(
 start("api", process.execPath, ["src/server.ts"], {
   cwd: serverDir,
   // Mesma configuração do `dev:local` do servidor: sem Postgres, templates em
-  // memória, e a chave fixa que o playground e o curl usam.
-  env: { ...process.env, LOCAL_API_KEY: "blk_local_dev" },
+  // memória, e a chave fixa que o playground e o curl usam. PORT force pra
+  // 8787 é deliberado, não redundante: um `PORT` já setado no ambiente de
+  // quem chamou `npm run dev` (por exemplo uma ferramenta de preview que
+  // exporta PORT=5173 pra combinar com o Vite) vazaria pelo `...process.env`
+  // e faria a API tentar subir na MESMA porta do Vite — o proxy de /api do
+  // vite.config.ts aponta pra 127.0.0.1:8787 fixo, então sem isto ele erra
+  // com ECONNREFUSED e o console abre "vazio" sem explicar por quê.
+  env: { ...process.env, LOCAL_API_KEY: "blk_local_dev", PORT: "8787" },
 });
 
 start("web", process.execPath, [join(root, "node_modules", "vite", "bin", "vite.js")], {

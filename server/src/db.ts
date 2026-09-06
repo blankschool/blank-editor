@@ -117,7 +117,7 @@ const DESIGN_VERSION_COLUMNS = `
 
 export async function listDesignVersions(sql: Sql, ownerId: string, templateId: string): Promise<DesignVersionRow[]> {
   const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
-    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from design_versions
+    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from template_versions
     where template_id = ${templateId} and owner_id = ${ownerId}
     order by created_at desc
   `;
@@ -129,7 +129,7 @@ export async function createDesignVersion(
   input: { id: string; ownerId: string; templateId: string; name: string; document: unknown },
 ): Promise<DesignVersionRow> {
   const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
-    insert into design_versions (id, template_id, owner_id, name, document)
+    insert into template_versions (id, template_id, owner_id, name, document)
     values (${input.id}, ${input.templateId}, ${input.ownerId}, ${input.name}, ${sql.json(jsonValue(sql, input.document))})
     returning ${sql.unsafe(DESIGN_VERSION_COLUMNS)}
   `;
@@ -147,7 +147,7 @@ export async function findDesignVersion(
   id: string,
 ): Promise<DesignVersionRow | null> {
   const rows = await sql<(Omit<DesignVersionRow, "createdAt"> & { createdAt: Date })[]>`
-    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from design_versions
+    select ${sql.unsafe(DESIGN_VERSION_COLUMNS)} from template_versions
     where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
   `;
   const r = rows[0];
@@ -156,7 +156,7 @@ export async function findDesignVersion(
 
 export async function deleteDesignVersion(sql: Sql, ownerId: string, templateId: string, id: string): Promise<boolean> {
   const rows = await sql`
-    delete from design_versions
+    delete from template_versions
     where id = ${id} and template_id = ${templateId} and owner_id = ${ownerId}
     returning id
   `;

@@ -169,6 +169,14 @@ export function buildApp(
   pdfImport: PdfImportDeps | null = null,
 ): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
+  // O logger do Fastify está desligado (`Fastify({...})` sem `logger`) — sem isto, qualquer
+  // exceção não tratada numa rota vira um 500 sem NENHUM rastro, nem no terminal do servidor.
+  // Não muda a resposta que o cliente recebe (Fastify já respondia 500 sozinho); só garante que
+  // o erro real fica visível pra diagnosticar.
+  app.setErrorHandler((err, request, reply) => {
+    console.error(`[${request.method} ${request.url}] erro não tratado:`, err);
+    reply.send(err);
+  });
   const generations = deps.generations ?? createMemoryGenerationRepository();
   app.register(fastifyCookie);
   app.register(fastifyMultipart, { limits: { fileSize: BODY_LIMIT_BYTES } });
@@ -1296,13 +1304,24 @@ export function buildApp(
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
 
-    const imageSrcById = await uploadImportedImages(ownerId, result.images);
-    const fonts = await registerImportedFonts(ownerId, result.fonts);
-    const pages = buildImportedPages(result.pages, imageSrcById);
-    const name = file.filename?.replace(/\.pdf$/i, "").trim() || "PDF importado";
-    const document = { name, active: 0, pages, ...(fonts.length ? { fonts } : {}) };
-
-    const row = await deps.createTemplate(ownerId, { name, document });
+    let row;
+    let pages;
+    let fonts;
+    try {
+      const imageSrcById = await uploadImportedImages(ownerId, result.images);
+      fonts = await registerImportedFonts(ownerId, result.fonts);
+      pages = buildImportedPages(result.pages, imageSrcById);
+      const name = file.filename?.replace(/\.pdf$/i, "").trim() || "PDF importado";
+      const document = { name, active: 0, pages, ...(fonts.length ? { fonts } : {}) };
+      row = await deps.createTemplate(ownerId, { name, document });
+    } catch (err) {
+      // Sem isto, um erro daqui em diante (upload de imagem/fonte, montagem das páginas, criar o
+      // template) virava um 500 cru do Fastify sem mensagem nenhuma — o logger deste app está
+      // desligado (ver `Fastify({...})` acima), então nem no terminal do servidor sobrava rastro.
+      request.log?.error?.(err);
+      console.error("[imports/pdf] falhou depois da extração:", err);
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
     return reply.code(201).send({
       id: row.id,
       name: row.name,

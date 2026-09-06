@@ -298,7 +298,7 @@ em toda `server/src/db.ts`, e escrever a migration em
 `supabase/migrations/000N_*.sql` seguindo o estilo das existentes (RLS
 habilitado, políticas por dono).
 
-- [x] **4.1 Histórico de versões nomeado.** Migration `0007_design_versions.sql`
+- [x] **4.1 Histórico de versões nomeado.** Migration `0007_template_versions.sql`
   (RLS por dono, sem policy de update — versão é snapshot imutável).
   `db.ts`/`local.ts`/`server.ts` com os 4 métodos (list/create/find/delete),
   rotas `GET/POST /api/v1/templates/:id/versions` +
@@ -321,6 +321,25 @@ habilitado, políticas por dono).
   mocks) — criar 2 versões, editar o design, restaurar a versão 1 e
   confirmar que o `bg` da página voltou ao valor original, duplicar como
   design novo, excluir uma versão e confirmar que sumiu da listagem.
+
+  BUG REAL #2, achado só ao aplicar as migrations num Postgres de verdade
+  (nunca apareceu nos testes, que usam stores em memória): a tabela se
+  chamava `design_versions`, mas esse nome JÁ EXISTIA em
+  `0005_generation_review_and_media.sql` (versionamento automático de
+  gerações revisadas por IA, chave por `generation_id`, não `template_id`)
+  — uma migration de sessão anterior a esta, nunca aplicada até este ponto
+  do projeto. Como `create table if not exists` não faz nada quando a
+  tabela já existe, aplicar 0007 antes de 0005 criou `design_versions` com
+  o esquema ERRADO (o meu, por `template_id`) — e quando 0005 rodasse
+  depois, o dela (por `generation_id`) nunca seria criado, quebrando em
+  silêncio o fluxo de revisão de geração inteiro. Só descobri isso ao
+  investigar um 500 real em produção (`GET /api/v1/templates/:id`
+  quebrando porque `generation_runs` — outra tabela da 0005 — também não
+  existia). Corrigido renomeando a MINHA tabela pra `template_versions`
+  (migration + `db.ts`), já que ela era a mais nova e menos referenciada;
+  a 0005 manteve `design_versions`. Nenhum teste automatizado detecta esse
+  tipo de colisão entre migrations — só aplicar de verdade contra um
+  Postgres real revela.
 - [x] **4.2 Compartilhamento — feito junto com o 3.2, ver aquele item.**
   Escopo reduzido em relação à ideia original: só `visibility`
   ("private"/"link"), sem `allow_comments` nem `expires_at` — nenhum dos

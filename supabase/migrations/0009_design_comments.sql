@@ -1,9 +1,9 @@
 -- Comentários fixados no canvas (Editar → Comentários). Um comentário é do DESIGN inteiro, não
--- de uma versão específica (design_versions em 0007_design_versions.sql é outra coisa: snapshot
--- imutável do documento) — mais simples, e uma versão restaurada não devia apagar o histórico de
--- discussão sobre o design. `page_index`/`x`/`y` fixam o pino relativo à página (x/y normalizados
--- 0..1, como El.imgX/imgY do crop de imagem) — não em pixels, pra sobreviver a redimensionar a
--- página.
+-- de uma versão específica (template_versions em 0007_template_versions.sql é outra coisa:
+-- snapshot imutável do documento) — mais simples, e uma versão restaurada não devia apagar o
+-- histórico de discussão sobre o design. `page_index`/`x`/`y` fixam o pino relativo à página
+-- (x/y normalizados 0..1, como El.imgX/imgY do crop de imagem) — não em pixels, pra sobreviver a
+-- redimensionar a página.
 create table if not exists public.design_comments (
   id uuid primary key default gen_random_uuid(),
   template_id text not null references public.templates (id) on delete cascade,

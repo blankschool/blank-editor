@@ -149,11 +149,3 @@ insert into storage.buckets (id, name, public)
 values ('draft-renders', 'draft-renders', false)
 on conflict (id) do nothing;
 
--- Compatibility projection for the existing Intel workflow.
-alter table intel.art_renders
-  add column if not exists generation_id text,
-  add column if not exists design_version integer,
-  add column if not exists review_status text,
-  add column if not exists approved_at timestamptz,
-  add column if not exists approved_png_url text;
-
