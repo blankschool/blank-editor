@@ -86,7 +86,8 @@
           "id": "7hzSRjpZe4NLye5h",
           "name": "Blank Editor API"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "montar-prompt",
@@ -153,6 +154,51 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {}
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.x.ai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"grok-4\", search_parameters: { mode: \"on\" }, messages: [{ role: \"user\", content: \"Pesquise na web o tema: \" + $json.tema }] }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -460,
+        180
+      ],
+      "id": "0f3a1c7e-5b21-4d8a-9c60-11c0de5c0de1",
+      "name": "Pesquisa externa (Grok) — NAO IMPLEMENTADO",
+      "disabled": true,
+      "notes": "Placeholder desligado e fora do fluxo. Ver a nota amarela ao lado antes de ligar."
+    },
+    {
+      "parameters": {
+        "content": "## Pesquisa externa (Grok) — pendente\n\nQuando `needs_external_research: true`, o tema **nao existe na curadoria** do Instagram.\nHoje o fluxo segue mesmo assim e a IA escreve so com o tema; a UI avisa o usuario.\n\n**Para ligar o Grok:**\n1. Criar credencial Header Auth com `Authorization: Bearer <XAI_API_KEY>` e usar no no cinza ao lado.\n2. Ligar `E pesquisar?` (saida true) -> `Buscar curadoria`; se `encontrou === false`, mandar pro Grok.\n3. Em **Montar prompt**, injetar o texto do Grok no bloco de referencias (mesmo lugar onde hoje entram os posts curados).\n4. Em **Montar resposta**, trocar `needs_external_research` por `false` e preencher `referencias` com as fontes que o Grok devolver.\n\nEnquanto isso nao acontece, o no ao lado fica **desativado** de proposito — nao ligar sem fazer os 4 passos.",
+        "height": 400,
+        "width": 420,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        320
+      ],
+      "id": "8d2b6f04-73ac-4f19-b0d5-2ea77b1ce900",
+      "name": "Nota: pesquisa externa"
     }
   ],
   "connections": {
