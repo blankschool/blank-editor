@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizarTema, tokensDoTema, SCORE_MINIMO } from "./curadoria.ts";
+import { normalizarPerfil, normalizarTema, tokensDoTema, SCORE_MINIMO } from "./curadoria.ts";
 
 test("normalizarTema tira acento, caixa e espaço das pontas", () => {
   assert.equal(normalizarTema("  Eleições 2026 "), "eleicoes 2026");
@@ -28,6 +28,15 @@ test("tokensDoTema quebra em qualquer separador não alfanumérico", () => {
 
 test("tokensDoTema devolve lista vazia pra tema só de stopwords", () => {
   assert.deepEqual(tokensDoTema("de para com"), []);
+});
+
+test("normalizarPerfil devolve sempre exatamente um arroba", () => {
+  // O handle vem do banco já com "@", e o n8n prefixava outro: a resposta do webhook saía
+  // "@@estadao". Idempotência é o que trava esse bug dos dois lados.
+  assert.equal(normalizarPerfil("@estadao"), "@estadao");
+  assert.equal(normalizarPerfil("estadao"), "@estadao");
+  assert.equal(normalizarPerfil("@@estadao"), "@estadao");
+  assert.equal(normalizarPerfil("  @metropoles  "), "@metropoles");
 });
 
 test("o corte de score exige mais que um token solto batendo", () => {

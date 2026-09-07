@@ -59,6 +59,16 @@ export function tokensDoTema(tema: string): string[] {
     .filter((t) => t.length >= TAMANHO_MINIMO_TOKEN && !STOPWORDS.has(t));
 }
 
+/**
+ * Handle sempre com exatamente um "@". A coluna `intel.contents.handle` já guarda o arroba, mas
+ * quem consome (o n8n, a UI) tende a acrescentar outro por conta própria — foi assim que saiu
+ * "@@estadao" na resposta do webhook. Normalizar aqui é o que garante que os dois lados possam
+ * ser idempotentes sem combinarem nada entre si.
+ */
+export function normalizarPerfil(handle: string): string {
+  return `@${handle.trim().replace(/^@+/, "")}`;
+}
+
 export interface TendenciaTopico {
   mencoes7d: number;
   perfisDistintos: number;
@@ -206,7 +216,7 @@ export async function buscarCuradoriaPorTema(
       },
     })),
     referencias: referencias.map((r) => ({
-      perfil: r.handle,
+      perfil: normalizarPerfil(r.handle),
       nomeExibicao: r.display_name ?? null,
       postId: r.id,
       permalink: r.permalink ?? null,
