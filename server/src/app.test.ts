@@ -136,6 +136,7 @@ function makeBrandKitStore() {
 
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
+    buscarCuradoria: async () => ({ topicos: [], referencias: [] }),
     ...makeVersionStore(),
     ...makeShareStore(),
     ...makeCommentStore(),
@@ -639,6 +640,75 @@ test("DELETE .../comments/:commentId removes it; a second delete 404s", async ()
 test("comment routes require an authenticated owner, same as any other template route", async () => {
   const app = buildApp(makeDeps());
   const res = await app.inject({ method: "GET", url: `/api/v1/templates/${TPL.id}/comments` });
+  assert.equal(res.statusCode, 401);
+});
+
+// --- Curadoria de Instagram (consumida pelo fluxo n8n `gerar-conteudo`) ----------
+
+test("GET /api/v1/curadoria/buscar exige o parâmetro tema", async () => {
+  const app = buildApp(makeDeps());
+  const semTema = await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar", headers: AUTH });
+  assert.equal(semTema.statusCode, 400);
+
+  const temaVazio = await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=%20%20", headers: AUTH });
+  assert.equal(temaVazio.statusCode, 400);
+});
+
+test("GET /api/v1/curadoria/buscar devolve encontrou:false quando a curadoria não tem o tema", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=bolo%20de%20cenoura", headers: AUTH });
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.encontrou, false);
+  assert.deepEqual(body.referencias, []);
+  assert.equal(body.tema, "bolo de cenoura");
+});
+
+test("GET /api/v1/curadoria/buscar devolve encontrou:true e as referências quando há match", async () => {
+  const app = buildApp(makeDeps({
+    buscarCuradoria: async (tema, limite) => {
+      assert.equal(tema, "banco master");
+      assert.equal(limite, 3);
+      return {
+        topicos: [{
+          topicId: "t1", slug: "banco-master", label: "banco master", nivel: "assunto",
+          totalMencoes: 33, ultimaVez: "2026-09-07T00:00:00.000Z", score: 100,
+          tendencia: { mencoes7d: 184, perfisDistintos: 5, engajamento7d: 1480323, scoreMedio: 29.7 },
+        }],
+        referencias: [{
+          perfil: "infomoney", nomeExibicao: "InfoMoney", postId: "c1", permalink: null,
+          formato: "Carrossel", grupo: "benchmark", nicho: "financas", categoria: "Caso e resultado",
+          funil: "Topo", temaDetectado: "banco master", subtemas: ["PF"], resumo: "resumo",
+          legenda: "legenda", publicadoEm: "2026-09-06T00:00:00.000Z",
+        }],
+      };
+    },
+  }));
+  const res = await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=banco%20master&limite=3", headers: AUTH });
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.encontrou, true);
+  assert.equal(body.referencias.length, 1);
+  assert.equal(body.referencias[0].perfil, "infomoney");
+  assert.equal(body.topicos[0].tendencia.mencoes7d, 184);
+});
+
+test("o limite de referências é preso na faixa 1..20", async () => {
+  let recebido = -1;
+  const app = buildApp(makeDeps({
+    buscarCuradoria: async (_tema, limite) => { recebido = limite; return { topicos: [], referencias: [] }; },
+  }));
+  await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=x&limite=999", headers: AUTH });
+  assert.equal(recebido, 20);
+  await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=x&limite=0", headers: AUTH });
+  assert.equal(recebido, 1);
+  await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=x&limite=abc", headers: AUTH });
+  assert.equal(recebido, 5);
+});
+
+test("a rota de curadoria exige autenticação, igual às outras", async () => {
+  const app = buildApp(makeDeps());
+  const res = await app.inject({ method: "GET", url: "/api/v1/curadoria/buscar?tema=x" });
   assert.equal(res.statusCode, 401);
 });
 

@@ -36,6 +36,7 @@ import {
   updateTemplate,
   upsertFontFace,
 } from "./db.ts";
+import { buscarCuradoriaPorTema } from "./curadoria.ts";
 import { createLocalDeps } from "./local.ts";
 import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.ts";
 import { configureFontStorage } from "./render/fontCache.ts";
@@ -100,6 +101,7 @@ if (DATABASE_URL) {
     deleteDesignComment: (ownerId, templateId, id) => deleteDesignComment(sql, ownerId, templateId, id),
     createDesignCommentReply: (ownerId, templateId, commentId, body) =>
       createDesignCommentReply(sql, { id: randomUUID(), ownerId, templateId, commentId, body }),
+    buscarCuradoria: (tema, limite) => buscarCuradoriaPorTema(sql, tema, limite),
     listBrandKits: (ownerId) => listBrandKits(sql, ownerId),
     createBrandKit: (ownerId, input) => createBrandKit(sql, { id: randomUUID(), ownerId, ...input }),
     deleteBrandKit: (ownerId, id) => deleteBrandKit(sql, ownerId, id),

@@ -23,6 +23,7 @@ import {
   uploadUserPhoto,
 } from "./storage.ts";
 import type { ApiKeyOwner, ApiKeySummary, BrandKitRow, DesignCommentReply, DesignCommentRow, DesignVersionRow, FontFaceInput, FontFaceRow, ShareVisibility, TemplateRow, TemplateSummary } from "./db.ts";
+import type { ResultadoCuradoria } from "./curadoria.ts";
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
@@ -98,6 +99,9 @@ export interface AppDeps {
     commentId: string,
     body: string,
   ) => Promise<DesignCommentReply | null>;
+  /** Busca na curadoria de Instagram (schema `intel`) — ver curadoria.ts. Só existe com Postgres
+   *  de verdade; em modo local (`local.ts`) devolve vazio, que a rota traduz como "sem match". */
+  buscarCuradoria: (tema: string, limite: number) => Promise<ResultadoCuradoria>;
   listBrandKits: (ownerId: string) => Promise<BrandKitRow[]>;
   createBrandKit: (ownerId: string, input: { name: string; colors: string[]; fonts: string[] }) => Promise<BrandKitRow>;
   deleteBrandKit: (ownerId: string, id: string) => Promise<boolean>;
@@ -1404,6 +1408,35 @@ export function buildApp(
     const deleted = await deps.deleteApiKey(ownerId, request.params.id);
     if (!deleted) return reply.code(404).send({ error: `key not found, or not yet revoked: ${request.params.id}` });
     return reply.code(204).send();
+  });
+
+  // --- Curadoria de Instagram (schema `intel`) — consumida pelo fluxo n8n `gerar-conteudo` ----
+  // Mora aqui, e não numa query dentro de um nó do n8n, porque o n8n roda em outro servidor e o
+  // Postgres não é público: só este serviço alcança `intel.*`. De quebra a query fica versionada
+  // e testável (curadoria.ts + curadoria.test.ts).
+  app.get<{ Querystring: { tema?: string; limite?: string } }>("/api/v1/curadoria/buscar", async (request, reply) => {
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const tema = request.query.tema?.trim();
+    if (!tema) return reply.code(400).send({ error: "missing required query param: tema" });
+
+    const limiteBruto = Number(request.query.limite ?? 5);
+    const limite = Number.isFinite(limiteBruto) ? Math.min(Math.max(Math.trunc(limiteBruto), 1), 20) : 5;
+
+    try {
+      const { topicos, referencias } = await deps.buscarCuradoria(tema, limite);
+      return {
+        tema,
+        // O consumidor (n8n) decide o ramo por este campo — sem match, cai na pesquisa externa.
+        encontrou: referencias.length > 0,
+        topicos,
+        referencias,
+      };
+    } catch (err) {
+      request.log?.error?.(err);
+      console.error("[curadoria/buscar] falhou:", err);
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // --- Painel de design system/marca (Editar → Marca, item 4.7) ------------------------------

@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { openTemplateById, openTemplateDocument } from "../editor";
 import { createPlaygroundDocument, savePlaygroundCopy } from "../playgroundDocument";
-import { hasBlankGerarImageSource, isBlankGerarImageSource, listGerarFixedElements, prepareGerarDraftDocument, type GerarFixedElement } from "../gerarDraft";
 import type { Doc } from "../types";
 import { clearDefaultApiKey, getDefaultApiKey, getSession, saveDefaultApiKey } from "../session";
 import { ensurePlaygroundApiKey } from "../playgroundApiKey";
@@ -50,20 +49,6 @@ export type Lang = "JavaScript" | "Python" | "cURL" | "PHP";
 export interface Layer { id: number; type: LayerType; name: string; value: string; }
 export interface ApiKey { id: string; name: string; createdAt: string; revoked: boolean; }
 export interface TemplateSummary { id: string; name: string; updatedAt: string; favorite: boolean; }
-
-/** Um modelo escolhido na tela Gerar — sempre um design já salvo da conta ("Meus"). Gerar só
- *  escreve em cima de um template que já existe, nunca inventa um layout do zero. */
-export interface GerarSource { templateId: string; name: string }
-export type GerarImageStrategy = "stock" | "ai";
-/** Uma página já gerada: texto editável, imagens adquiridas pelo provedor escolhido (ainda
- *  substituíveis por URL/upload) e o preview privado resultante. */
-export interface GerarPage {
-  page: number;
-  layers: Record<string, string>;
-  images: Record<string, string>;
-  fixed: GerarFixedElement[];
-  previewUrl: string;
-}
 
 export interface State {
   view: View;
@@ -125,25 +110,23 @@ export interface State {
   /** Id do design cujo nome está sendo editado no próprio card. */
   renamingId: string | null;
 
-  /* ------------------------- tela "Gerar" (IA) ------------------------- */
-  /** O modelo escolhido pra gerar em cima — um starter ou um design salvo. */
-  gerarSource: GerarSource | null;
-  gerarTheme: string;
-  gerarImageStrategy: GerarImageStrategy;
-  /**
-   * O design (sempre novo, nunca o modelo/design de origem) que a geração escreve. Criado na
-   * hora do primeiro "Gerar" pra esse `gerarSource`; `null` significa "ainda não gerou nada
-   * pra esse modelo". Vira `null` de novo depois de "Abrir no editor"/"Salvar como design novo"
-   * — confirmar aquela geração começa a próxima do zero, em vez de continuar reescrevendo o
-   * mesmo rascunho.
-   */
-  gerarDraftId: string | null;
-  gerarDraftName: string;
-  gerarGenerating: boolean;
-  gerarRegenerating: string | null;
-  gerarError: string | null;
-  gerarPages: GerarPage[];
-  gerarActivePage: number;
+  /* ----------------------- tela "Gerar" (conteúdo por tema) ----------------------- */
+  /** O tema digitado — obrigatório pros dois modos de geração. */
+  gerarTema: string;
+  /** Modo da AÇÃO de gerar. Vai no payload do webhook como `modo`. */
+  gerarModo: GerarModo;
+  gerarCarregando: boolean;
+  gerarErro: string | null;
+  /** Rascunho atual devolvido pelo webhook. `null` = nada gerado ainda (Chat fica bloqueado). */
+  gerarConteudo: GerarConteudo | null;
+  gerarUsouCuradoria: boolean;
+  gerarPrecisaPesquisaExterna: boolean;
+  gerarReferencias: GerarReferencia[];
+  gerarMensagem: string | null;
+  /** Chat de refinamento — só existe depois de um rascunho, e nunca dispara a curadoria. */
+  gerarChat: GerarChatMensagem[];
+  gerarChatRascunho: string;
+  gerarChatEnviando: boolean;
 }
 
 export const state: State = {
@@ -191,16 +174,18 @@ export const state: State = {
   creating: null,
   createError: null,
 
-  gerarSource: null,
-  gerarTheme: "",
-  gerarImageStrategy: "stock",
-  gerarDraftId: null,
-  gerarDraftName: "",
-  gerarGenerating: false,
-  gerarRegenerating: null,
-  gerarError: null,
-  gerarPages: [],
-  gerarActivePage: 1,
+  gerarTema: "",
+  gerarModo: "pesquisar",
+  gerarCarregando: false,
+  gerarErro: null,
+  gerarConteudo: null,
+  gerarUsouCuradoria: false,
+  gerarPrecisaPesquisaExterna: false,
+  gerarReferencias: [],
+  gerarMensagem: null,
+  gerarChat: [],
+  gerarChatRascunho: "",
+  gerarChatEnviando: false,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -677,241 +662,191 @@ export async function createFromStarter(starter: Starter | null) {
 export { STARTERS };
 export type { Starter };
 
-/* ------------------------------ tela "Gerar" ------------------------------ */
-// Endereço da Edge Function (fase 12 do plano de migração) — origem diferente da do console
-// (não passa pelo proxy do Vite/nginx), por isso a chamada usa Authorization: Bearer em vez
-// de cookie. Vem de .env.production no build de produção; em dev local, cai no stack local.
-const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL || "http://127.0.0.1:54321/functions/v1";
+/* --------------------- tela "Gerar" (conteúdo por tema) --------------------- */
+/**
+ * O fluxo inteiro mora num webhook do n8n (`gerar-conteudo`): é lá que a IA escreve, que a
+ * curadoria de Instagram é consultada e que a pesquisa externa vai entrar depois. O console só
+ * manda o tema + o modo e desenha a resposta — nenhuma regra de geração é duplicada aqui.
+ *
+ * A URL vem do build (Vite), não de uma chamada ao nosso servidor: a tela fala com o n8n
+ * direto, como pedido na especificação.
+ */
+const WEBHOOK_GERAR = import.meta.env.VITE_N8N_WEBHOOK_GERAR ?? "";
 
-/** Escolher um modelo novo zera a geração anterior — trocar de design no meio não faz sentido
- *  misturar rascunhos. */
-export function selectGerarSource(source: GerarSource) {
-  state.gerarSource = source;
-  state.gerarTheme = "";
-  state.gerarDraftId = null;
-  state.gerarDraftName = source.name;
-  state.gerarPages = [];
-  state.gerarActivePage = 1;
-  state.gerarError = null;
+export type GerarModo = "gerar_do_zero" | "pesquisar";
+
+export interface GerarReferencia {
+  perfil: string;
+  post_id: string;
+  tema_detectado: string;
+  resumo: string;
+}
+
+export interface GerarConteudo {
+  titulo: string;
+  legenda: string;
+  gancho: string;
+  cta: string;
+  hashtags: string[];
+  /** Slides, quando o conteúdo é carrossel — mesmo formato de `intel.briefings.roteiro`. */
+  roteiro?: string[];
+}
+
+export interface GerarChatMensagem {
+  autor: "voce" | "ia";
+  texto: string;
+}
+
+/** Resposta do webhook. Tudo opcional na leitura: se o n8n devolver um contrato incompleto, a
+ *  tela mostra o que veio em vez de quebrar com "undefined is not an object". */
+interface RespostaWebhook {
+  ok?: boolean;
+  modo?: string;
+  tema?: string;
+  usou_curadoria?: boolean;
+  needs_external_research?: boolean;
+  referencias?: GerarReferencia[];
+  conteudo?: Partial<GerarConteudo>;
+  mensagem?: string;
+  error?: string;
+}
+
+export function setGerarTema(valor: string) {
+  state.gerarTema = valor;
   notify();
 }
 
-export function setGerarTheme(value: string) {
-  state.gerarTheme = value;
+export function setGerarModo(modo: GerarModo) {
+  state.gerarModo = modo;
   notify();
 }
 
-export function setGerarImageStrategy(value: GerarImageStrategy) {
-  state.gerarImageStrategy = value;
+export function setGerarChatRascunho(valor: string) {
+  state.gerarChatRascunho = valor;
   notify();
 }
 
-/** O JWT que a Edge Function precisa como Bearer — o navegador não lê o cookie httpOnly sozinho,
- *  então o servidor devolve o mesmo token de volta pra essa única finalidade (ver server/src/app.ts). */
-async function fetchAccessToken(): Promise<string> {
-  const res = await fetch("/api/v1/auth/token");
-  if (!res.ok) throw new Error("Sessão expirada — entre de novo.");
-  const { accessToken } = await res.json();
-  if (!accessToken) throw new Error("Sessão expirada — entre de novo.");
-  return accessToken;
-}
-
-/** Migra rascunhos que já estavam abertos quando o placeholder antigo ainda era usado. */
-async function syncStoredGerarDraft(id: string, page = 1, fixed: readonly GerarFixedElement[] = []): Promise<void> {
-  const fetched = await fetch(`/api/v1/templates/${id}`);
-  if (!fetched.ok) throw new Error("Não deu para atualizar esse rascunho.");
-  const { document, name } = await fetched.json();
-  const current = document?.pages?.[page - 1]?.els ?? [];
-  const visibilityChanged = fixed.some(item => current.find((element: { id?: string }) => element.id === item.id)?.hidden !== item.hidden);
-  if (!hasBlankGerarImageSource(document) && !visibilityChanged) return;
-  const cleaned = prepareGerarDraftDocument(document, page - 1, fixed);
-  const saved = await fetch(`/api/v1/templates/${id}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: name || state.gerarDraftName, document: cleaned }),
-  });
-  if (!saved.ok) throw new Error("Não deu para limpar as imagens vazias do rascunho.");
-}
-
-/** Tema → texto + imagens → novo design revisável. Cada clique ganha uma chave idempotente nova;
- *  retries de transporte reutilizam a mesma geração dentro da Edge Function/Fastify. */
-export async function runGerarGenerate() {
-  if (state.gerarGenerating || !state.gerarSource || !state.gerarTheme.trim()) return;
-  state.gerarGenerating = true;
-  state.gerarError = null;
+/** Zera o rascunho e a conversa — trocar de tema não deve deixar o chat conversando sobre o
+ *  conteúdo anterior. */
+export function limparGerar() {
+  state.gerarConteudo = null;
+  state.gerarReferencias = [];
+  state.gerarUsouCuradoria = false;
+  state.gerarPrecisaPesquisaExterna = false;
+  state.gerarMensagem = null;
+  state.gerarErro = null;
+  state.gerarChat = [];
+  state.gerarChatRascunho = "";
   notify();
+}
 
-  try {
-    const accessToken = await fetchAccessToken();
-    const idempotencyKey = crypto.randomUUID();
-    const res = await fetch(`${FUNCTIONS_URL}/generate-design`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({
-        templateId: state.gerarSource.templateId,
-        name: state.gerarDraftName || state.gerarSource.name,
-        theme: state.gerarTheme.trim(),
-        imageStrategy: state.gerarImageStrategy,
-        idempotencyKey,
-      }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || "Não deu para gerar agora.");
-    const templateId = body.design?.id as string | undefined;
-    if (!templateId) throw new Error("A geração não devolveu um design editável.");
-    state.gerarDraftId = templateId;
-    state.gerarDraftName = body.design?.name || state.gerarDraftName;
-    state.gerarActivePage = 1;
-    const tplRes = await fetch(`/api/v1/templates/${templateId}`);
-    if (!tplRes.ok) throw new Error("O design foi criado, mas não pôde ser aberto para revisão.");
-    const { document } = await tplRes.json();
-    const pages: Array<{ els?: Array<{ id?: string; name?: string; type?: string; text?: string; src?: string; hidden?: boolean }> }> = document?.pages ?? [];
-    const previews = new Map<number, string>((body.design?.pages ?? []).map((item: { page: number; pngUrl: string }) => [item.page, item.pngUrl]));
-    state.gerarPages = pages.map((page, index) => ({
-      page: index + 1,
-      layers: Object.fromEntries((page.els ?? [])
-        .filter((el) => el.type === "text" && el.name)
-        .map((el) => [el.name as string, el.text ?? ""])),
-      images: Object.fromEntries((page.els ?? [])
-        .filter((el) => el.type === "image" && el.name)
-        .map((el) => [el.name as string, isBlankGerarImageSource(el.src) ? "" : el.src ?? ""])),
-      fixed: listGerarFixedElements(document, index),
-      previewUrl: previews.get(index + 1) ?? "",
-    }));
-    state.templatesLoaded = false;
-    notify();
-  } catch (err) {
-    state.gerarError = err instanceof Error ? err.message : "Não deu para gerar agora.";
-  } finally {
-    state.gerarGenerating = false;
-    notify();
+function normalizarConteudo(bruto: Partial<GerarConteudo> | undefined): GerarConteudo | null {
+  if (!bruto) return null;
+  return {
+    titulo: bruto.titulo ?? "",
+    legenda: bruto.legenda ?? "",
+    gancho: bruto.gancho ?? "",
+    cta: bruto.cta ?? "",
+    hashtags: Array.isArray(bruto.hashtags) ? bruto.hashtags : [],
+    roteiro: Array.isArray(bruto.roteiro) ? bruto.roteiro : undefined,
+  };
+}
+
+async function chamarWebhook(corpo: Record<string, unknown>): Promise<RespostaWebhook> {
+  if (!WEBHOOK_GERAR) {
+    throw new Error("Webhook não configurado — defina VITE_N8N_WEBHOOK_GERAR no build.");
   }
-}
-
-export function setGerarActivePage(page: number) {
-  state.gerarActivePage = page;
-  notify();
-}
-
-export function setGerarLayerValue(page: number, name: string, value: string) {
-  const target = state.gerarPages.find((p) => p.page === page);
-  if (target) target.layers = { ...target.layers, [name]: value };
-  notify();
-}
-
-export function setGerarImageValue(page: number, name: string, value: string) {
-  const target = state.gerarPages.find((p) => p.page === page);
-  if (target) target.images = { ...target.images, [name]: value };
-  notify();
-}
-
-export function setGerarFixedVisibility(page: number, id: string, hidden: boolean) {
-  const target = state.gerarPages.find((item) => item.page === page);
-  const element = target?.fixed?.find((item) => item.id === id);
-  if (!element) return;
-  element.hidden = hidden;
-  notify();
-  void commitGerarPageEdit(page);
-}
-
-/** Sobe a foto pro bucket privado (mesma rota do Playground) e já grava a página com ela —
- *  diferente de texto, não faz sentido "esperar sair do campo" depois de um upload. */
-export async function uploadGerarImage(page: number, name: string, file: File) {
-  const form = new FormData();
-  form.append("file", file);
+  let res: Response;
   try {
-    const res = await fetch("/api/v1/uploads", { method: "POST", body: form });
-    if (!res.ok) return;
-    const { src } = await res.json();
-    setGerarImageValue(page, name, src);
-    await commitGerarPageEdit(page);
-  } catch { /* upload falhou — o campo continua com o que tinha antes */ }
-}
-
-/** Troca apenas a imagem nomeada da página atual. O endpoint cria uma nova versão pendente,
- * portanto uma arte que já tinha sido aprovada volta para revisão sem perder o snapshot antigo. */
-export async function regenerateGerarImage(page: number, name: string) {
-  if (!state.gerarDraftId || state.gerarRegenerating) return;
-  state.gerarRegenerating = `${page}:${name}`;
-  state.gerarError = null;
-  notify();
-  try {
-    const status = await fetch(`/api/v1/generations/by-design/${encodeURIComponent(state.gerarDraftId)}`);
-    if (!status.ok) throw new Error("Este design ainda não está ligado a uma geração revisável.");
-    const current = await status.json();
-    const generationId = current.generation?.id;
-    if (!generationId) throw new Error("Geração não encontrada.");
-    const description = state.gerarTheme.trim() || state.gerarDraftName;
-    const result = await fetch(
-      `/api/v1/generations/${encodeURIComponent(generationId)}/media/${page}/${encodeURIComponent(name)}/regenerate`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          strategy: state.gerarImageStrategy,
-          ...(state.gerarImageStrategy === "stock" ? { query: description } : { prompt: description }),
-          aspectRatio: "4:5",
-        }),
-      },
-    );
-    const body = await result.json().catch(() => ({}));
-    if (!result.ok) throw new Error(body.error || "Não foi possível regenerar a imagem.");
-    const tplRes = await fetch(`/api/v1/templates/${encodeURIComponent(state.gerarDraftId)}`);
-    if (!tplRes.ok) throw new Error("A imagem foi gerada, mas o design não pôde ser atualizado.");
-    const { document } = await tplRes.json();
-    const element = document?.pages?.[page - 1]?.els?.find((item: { name?: string }) => item.name === name);
-    const target = state.gerarPages.find((item) => item.page === page);
-    if (target) {
-      target.images = { ...target.images, [name]: element?.src ?? "" };
-      target.previewUrl = body.design?.pages?.find((item: { page: number }) => item.page === page)?.pngUrl ?? target.previewUrl;
-    }
-  } catch (err) {
-    state.gerarError = err instanceof Error ? err.message : "Não foi possível regenerar a imagem.";
-  } finally {
-    state.gerarRegenerating = null;
-    notify();
-  }
-}
-
-/** Corrigir um campo à mão (texto ou imagem) re-renderiza e já grava aquela página — mesmo
- *  mecanismo do Playground com "Salvar como design" ligado, só que embutido, sem exigir chave
- *  de API da pessoa. */
-export async function commitGerarPageEdit(page: number) {
-  const target = state.gerarPages.find((p) => p.page === page);
-  if (!target || !state.gerarDraftId) return;
-  try {
-    await syncStoredGerarDraft(state.gerarDraftId, page, target.fixed ?? []);
-    const layers: Record<string, { text?: string } | { image_url?: string }> = {};
-    for (const [name, value] of Object.entries(target.layers)) layers[name] = { text: value };
-    target.images = Object.fromEntries(Object.entries(target.images).map(([name, value]) => [
-      name, isBlankGerarImageSource(value) ? "" : value,
-    ]));
-    for (const [name, value] of Object.entries(target.images)) if (value) layers[name] = { image_url: value };
-
-    const res = await fetch("/api/v1/render", {
+    res = await fetch(WEBHOOK_GERAR, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        template: state.gerarDraftId,
-        page: state.gerarPages.length > 1 ? page : undefined,
-        layers,
-        save: true,
-      }),
+      body: JSON.stringify(corpo),
     });
-    if (!res.ok) return;
-    const png = await res.blob();
-    target.previewUrl = URL.createObjectURL(png);
-    notify();
-  } catch { /* melhor esforço — o que a pessoa editou já está na tela de qualquer forma */ }
+  } catch {
+    // Erro de rede/CORS não tem status nem corpo — a mensagem genérica do fetch ("Failed to
+    // fetch") não ajuda ninguém, então traduz aqui.
+    throw new Error("Não foi possível falar com o serviço de geração. Verifique a conexão.");
+  }
+  if (!res.ok) {
+    const detalhe = await res.text().catch(() => "");
+    throw new Error(`O serviço de geração respondeu ${res.status}. ${detalhe.slice(0, 200)}`.trim());
+  }
+  const corpoResposta = (await res.json().catch(() => null)) as RespostaWebhook | null;
+  if (!corpoResposta) throw new Error("O serviço de geração devolveu uma resposta vazia.");
+  if (corpoResposta.ok === false) {
+    throw new Error(corpoResposta.error || corpoResposta.mensagem || "A geração falhou.");
+  }
+  return corpoResposta;
 }
 
-/** "Abrir no editor": a geração vira o design que se abre pra ajustar à mão. */
-export async function openGeneratedInEditor() {
-  if (!state.gerarDraftId) return;
-  const id = state.gerarDraftId;
-  state.gerarDraftId = null; // a próxima geração começa um rascunho novo
-  await openTemplateById(id);
+/** "Gerar": dispara o modo escolhido (do zero ou pesquisar). Substitui o rascunho e reinicia a
+ *  conversa — o chat refina UM rascunho, não uma sequência deles. */
+export async function gerarConteudo() {
+  const tema = state.gerarTema.trim();
+  if (!tema || state.gerarCarregando) return;
+
+  state.gerarCarregando = true;
+  state.gerarErro = null;
+  notify();
+
+  try {
+    const resposta = await chamarWebhook({
+      tema,
+      modo: state.gerarModo,
+      origem: "app_gerar",
+      user_id: getSession()?.id ?? null,
+    });
+    state.gerarConteudo = normalizarConteudo(resposta.conteudo);
+    state.gerarReferencias = resposta.referencias ?? [];
+    state.gerarUsouCuradoria = resposta.usou_curadoria === true;
+    state.gerarPrecisaPesquisaExterna = resposta.needs_external_research === true;
+    state.gerarMensagem = resposta.mensagem ?? null;
+    state.gerarChat = [];
+    state.gerarChatRascunho = "";
+  } catch (err) {
+    state.gerarErro = err instanceof Error ? err.message : String(err);
+  } finally {
+    state.gerarCarregando = false;
+    notify();
+  }
 }
+
+/** Chat de refinamento. Manda o conteúdo ATUAL junto pra IA editar em cima dele, e nunca
+ *  reabre a curadoria (`modo: "chat"` é um ramo separado no n8n). */
+export async function enviarMensagemChat() {
+  const mensagem = state.gerarChatRascunho.trim();
+  if (!mensagem || state.gerarChatEnviando || !state.gerarConteudo) return;
+
+  state.gerarChat = [...state.gerarChat, { autor: "voce", texto: mensagem }];
+  state.gerarChatRascunho = "";
+  state.gerarChatEnviando = true;
+  state.gerarErro = null;
+  notify();
+
+  try {
+    const resposta = await chamarWebhook({
+      tema: state.gerarTema.trim(),
+      modo: "chat",
+      origem: "app_gerar",
+      user_id: getSession()?.id ?? null,
+      mensagem_usuario: mensagem,
+      conteudo_atual: state.gerarConteudo,
+    });
+    const atualizado = normalizarConteudo(resposta.conteudo);
+    if (atualizado) state.gerarConteudo = atualizado;
+    state.gerarChat = [
+      ...state.gerarChat,
+      { autor: "ia", texto: resposta.mensagem || "Conteúdo atualizado." },
+    ];
+  } catch (err) {
+    state.gerarErro = err instanceof Error ? err.message : String(err);
+  } finally {
+    state.gerarChatEnviando = false;
+    notify();
+  }
+}
+
 
 /**
  * Envia um PDF exportado do Canva (Compartilhar → Baixar → "PDF para impressão") para

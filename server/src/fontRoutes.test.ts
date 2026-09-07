@@ -31,6 +31,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     setDesignCommentResolved: async () => false,
     deleteDesignComment: async () => false,
     createDesignCommentReply: async () => null,
+    buscarCuradoria: async () => ({ topicos: [], referencias: [] }),
     listBrandKits: async () => [],
     createBrandKit: async () => { throw new Error("not implemented in this test stub"); },
     deleteBrandKit: async () => false,

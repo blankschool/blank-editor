@@ -1,0 +1,144 @@
+{
+  "name": "Blank Editor — Post automático diário",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Todo dia às 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1200, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"gpt-4o-mini\",\n  response_format: { type: \"json_object\" },\n  messages: [\n    { role: \"system\", content: \"Você escreve posts curtos e engraçados/relacionáveis em português do Brasil, estilo tweet, para uma conta de memes. Responda APENAS um JSON válido com exatamente duas chaves: postText (o texto do post, até 200 caracteres) e imageQuery (2 a 4 palavras em INGLÊS descrevendo uma foto de banco de imagens que combine com o post, ex: 'tired dog couch', 'confused cat').\" },\n    { role: \"user\", content: \"Escreva um novo post. Pode ser sobre trabalho, relacionamentos, redes sociais, ou o dia a dia — varie o tema a cada vez.\" }\n  ]\n}) }}"
+      },
+      "id": "http-openai",
+      "name": "IA escreve o post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-980, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI (Authorization: Bearer sk-...)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsToExecute": "const raw = $input.first().json.choices[0].message.content;\nconst parsed = JSON.parse(raw);\nreturn [{ json: { postText: parsed.postText, imageQuery: parsed.imageQuery } }];"
+      },
+      "id": "code-parse-ai",
+      "name": "Ler resposta da IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-760, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.pexels.com/v1/search?query={{ encodeURIComponent($json.imageQuery) }}&per_page=1&orientation=square",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "http-pexels",
+      "name": "Buscar foto no Pexels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-540, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_PEXELS_CREDENTIAL_ID",
+          "name": "Pexels (Authorization: <sua chave, sem 'Bearer'>)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsToExecute": "const ai = $('Ler resposta da IA').first().json;\nconst pexels = $input.first().json;\nconst photo = pexels.photos && pexels.photos[0];\nif (!photo) throw new Error('Pexels não encontrou nenhuma foto para: ' + ai.imageQuery);\nreturn [{ json: { postText: ai.postText, imageUrl: photo.src.large } }];"
+      },
+      "id": "code-pick-photo",
+      "name": "Extrair URL da foto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://blank-editor.ickanz.easypanel.host/api/v1/templates/32ff6c71-fc57-4934-a404-8679d26ed44f",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "http-get-template",
+      "name": "Buscar template base",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-100, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_BLANK_EDITOR_CREDENTIAL_ID",
+          "name": "Blank Editor (Authorization: Bearer blk_live_...)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsToExecute": "const gerado = $('Extrair URL da foto').first().json;\nconst base = $input.first().json;\nconst doc = JSON.parse(JSON.stringify(base.document));\n\nfor (const page of doc.pages) {\n  for (const el of page.els) {\n    if (el.name === 'texto') el.text = gerado.postText;\n    if (el.name === 'foto_perfil') el.src = gerado.imageUrl;\n  }\n}\n\nconst dataHoje = new Date().toISOString().slice(0, 10);\nreturn [{ json: { name: `Post automático - ${dataHoje}`, document: doc } }];"
+      },
+      "id": "code-build-doc",
+      "name": "Montar novo design",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://blank-editor.ickanz.easypanel.host/api/v1/templates",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, document: $json.document }) }}"
+      },
+      "id": "http-create-template",
+      "name": "Criar design novo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [340, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_BLANK_EDITOR_CREDENTIAL_ID",
+          "name": "Blank Editor (Authorization: Bearer blk_live_...)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Todo dia às 9h": { "main": [[{ "node": "IA escreve o post", "type": "main", "index": 0 }]] },
+    "IA escreve o post": { "main": [[{ "node": "Ler resposta da IA", "type": "main", "index": 0 }]] },
+    "Ler resposta da IA": { "main": [[{ "node": "Buscar foto no Pexels", "type": "main", "index": 0 }]] },
+    "Buscar foto no Pexels": { "main": [[{ "node": "Extrair URL da foto", "type": "main", "index": 0 }]] },
+    "Extrair URL da foto": { "main": [[{ "node": "Buscar template base", "type": "main", "index": 0 }]] },
+    "Buscar template base": { "main": [[{ "node": "Montar novo design", "type": "main", "index": 0 }]] },
+    "Montar novo design": { "main": [[{ "node": "Criar design novo", "type": "main", "index": 0 }]] }
+  }
+}

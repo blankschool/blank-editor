@@ -1,0 +1,245 @@
+{
+  "name": "gerar-conteudo",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1120,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gerar-conteudo",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "webhookId": "gerar-conteudo"
+    },
+    {
+      "id": "validar-entrada",
+      "name": "Validar entrada",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body ?? {};\nconst tema = String(body.tema ?? \"\").trim();\nif (!tema) throw new Error(\"O campo tema e obrigatorio.\");\nconst modos = [\"gerar_do_zero\", \"pesquisar\", \"chat\"];\nconst modo = modos.includes(body.modo) ? body.modo : \"gerar_do_zero\";\nreturn [{ json: {\n  tema,\n  modo,\n  origem: body.origem ?? null,\n  user_id: body.user_id ?? null,\n  mensagem_usuario: body.mensagem_usuario ?? null,\n  conteudo_atual: body.conteudo_atual ?? null,\n} }];"
+      }
+    },
+    {
+      "id": "e-pesquisar-",
+      "name": "E pesquisar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -680,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "modo-pesquisar",
+              "leftValue": "={{ $json.modo }}",
+              "rightValue": "pesquisar",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "buscar-curadoria",
+      "name": "Buscar curadoria",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -460,
+        -120
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://blank-editor.ickanz.easypanel.host/api/v1/curadoria/buscar?tema={{ encodeURIComponent($json.tema) }}&limite=5",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7hzSRjpZe4NLye5h",
+          "name": "Blank Editor API"
+        }
+      }
+    },
+    {
+      "id": "montar-prompt",
+      "name": "Montar prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const entrada = $(\"Validar entrada\").first().json;\n\n// So o ramo \"pesquisar\" passa pelo no de curadoria. Referenciar um no que nao rodou lanca,\n// entao o try/catch e o que distingue \"nao pesquisou\" de \"pesquisou e nao achou\".\nlet curadoria = { encontrou: false, topicos: [], referencias: [] };\ntry {\n  const c = $(\"Buscar curadoria\").first().json;\n  if (c && typeof c === \"object\") curadoria = c;\n} catch (e) { /* ramo sem pesquisa */ }\n\nconst FORMATO = \"Responda APENAS um JSON valido com as chaves: titulo (string), legenda (string), gancho (string, a primeira frase que prende), cta (string), hashtags (array de strings sem #), roteiro (array de 3 a 6 strings, cada uma um slide do carrossel).\";\nconst SISTEMA = \"Voce e redator de conteudo para Instagram, em portugues do Brasil. \" + FORMATO;\n\nlet usuario;\nif (entrada.modo === \"chat\") {\n  usuario = [\n    \"Refine o conteudo abaixo conforme o pedido. Mantenha o mesmo tema e o mesmo formato de JSON.\",\n    \"\",\n    \"TEMA: \" + entrada.tema,\n    \"PEDIDO: \" + (entrada.mensagem_usuario ?? \"\"),\n    \"\",\n    \"CONTEUDO ATUAL:\",\n    JSON.stringify(entrada.conteudo_atual ?? {}, null, 2),\n  ].join(\"\\n\");\n} else if (curadoria.encontrou) {\n  const refs = (curadoria.referencias ?? []).map(function (r, i) {\n    return [\n      (i + 1) + \") @\" + r.perfil + \" (\" + (r.formato ?? \"post\") + \", \" + (r.grupo ?? \"sem grupo\") + \")\",\n      \"   assunto: \" + (r.temaDetectado ?? \"-\"),\n      \"   categoria/funil: \" + (r.categoria ?? \"-\") + \" / \" + (r.funil ?? \"-\"),\n      \"   resumo: \" + (r.resumo ?? \"-\"),\n    ].join(\"\\n\");\n  }).join(\"\\n\");\n  const topicos = (curadoria.topicos ?? []).map(function (t) {\n    return t.label + (t.tendencia ? \" (\" + t.tendencia.mencoes7d + \" mencoes em 7d)\" : \"\");\n  }).join(\", \");\n  usuario = [\n    \"Crie um conteudo NOVO sobre o tema: \" + entrada.tema,\n    \"\",\n    \"Use as referencias abaixo como INSPIRACAO de angulo, estrutura e tom. NAO copie: nada de\",\n    \"reaproveitar frases, e o conteudo precisa ser original e sobre o tema pedido.\",\n    \"\",\n    \"TOPICOS EM ALTA NA CURADORIA: \" + (topicos || \"-\"),\n    \"\",\n    \"REFERENCIAS:\",\n    refs,\n  ].join(\"\\n\");\n} else {\n  usuario = \"Crie um conteudo original sobre o tema: \" + entrada.tema;\n}\n\nreturn [{ json: {\n  curadoria,\n  corpoIA: {\n    model: \"gpt-4o-mini\",\n    response_format: { type: \"json_object\" },\n    messages: [\n      { role: \"system\", content: SISTEMA },\n      { role: \"user\", content: usuario },\n    ],\n  },\n} }];"
+      }
+    },
+    {
+      "id": "ia-escreve",
+      "name": "IA escreve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corpoIA) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "BPg9cQUWG8rQ6PON",
+          "name": "OpenAI HTTP | Inteligência de Conteúdo"
+        }
+      }
+    },
+    {
+      "id": "montar-resposta",
+      "name": "Montar resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const entrada = $(\"Validar entrada\").first().json;\nconst curadoria = $(\"Montar prompt\").first().json.curadoria ?? { encontrou: false, referencias: [] };\n\nlet gerado = {};\ntry {\n  gerado = JSON.parse($input.first().json.choices[0].message.content);\n} catch (e) {\n  throw new Error(\"A IA devolveu um JSON invalido: \" + e.message);\n}\n\nconst usouCuradoria = entrada.modo === \"pesquisar\" && curadoria.encontrou === true;\nconst precisaExterna = entrada.modo === \"pesquisar\" && !usouCuradoria;\n\nconst referencias = usouCuradoria\n  ? (curadoria.referencias ?? []).map(function (r) {\n      return {\n        perfil: \"@\" + r.perfil,\n        post_id: r.postId,\n        tema_detectado: r.temaDetectado ?? \"\",\n        resumo: r.resumo ?? \"\",\n      };\n    })\n  : [];\n\nlet mensagem;\nif (entrada.modo === \"chat\") mensagem = \"Conteudo atualizado conforme o pedido.\";\nelse if (usouCuradoria) mensagem = \"Gerado a partir de \" + referencias.length + \" post(s) da curadoria.\";\nelse if (precisaExterna) mensagem = \"Tema nao encontrado na curadoria. Pesquisa externa sera usada.\";\nelse mensagem = \"Gerado do zero a partir do tema.\";\n\nreturn [{ json: {\n  ok: true,\n  modo: entrada.modo,\n  tema: entrada.tema,\n  usou_curadoria: usouCuradoria,\n  needs_external_research: precisaExterna,\n  referencias,\n  conteudo: {\n    titulo: gerado.titulo ?? \"\",\n    legenda: gerado.legenda ?? \"\",\n    gancho: gerado.gancho ?? \"\",\n    cta: gerado.cta ?? \"\",\n    hashtags: Array.isArray(gerado.hashtags) ? gerado.hashtags : [],\n    roteiro: Array.isArray(gerado.roteiro) ? gerado.roteiro : [],\n  },\n  mensagem,\n} }];"
+      }
+    },
+    {
+      "id": "responder",
+      "name": "Responder",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        420,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validar entrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar entrada": {
+      "main": [
+        [
+          {
+            "node": "E pesquisar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E pesquisar?": {
+      "main": [
+        [
+          {
+            "node": "Buscar curadoria",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Montar prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar curadoria": {
+      "main": [
+        [
+          {
+            "node": "Montar prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar prompt": {
+      "main": [
+        [
+          {
+            "node": "IA escreve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA escreve": {
+      "main": [
+        [
+          {
+            "node": "Montar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar resposta": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
