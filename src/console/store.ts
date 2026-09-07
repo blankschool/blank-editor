@@ -28,8 +28,8 @@ import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
  * serviria como snapshot.
  */
 
-export type View = "designs" | "gerar" | "docs" | "account" | "playground" | "import" | "keys";
-export const VIEWS: View[] = ["designs", "gerar", "docs", "account", "playground", "import", "keys"];
+export type View = "designs" | "docs" | "account" | "playground" | "import" | "keys";
+export const VIEWS: View[] = ["designs", "docs", "account", "playground", "import", "keys"];
 const DEFAULT_VIEW: View = "designs";
 
 /**
@@ -109,24 +109,6 @@ export interface State {
   sync: "ok" | "syncing" | "failed";
   /** Id do design cujo nome está sendo editado no próprio card. */
   renamingId: string | null;
-
-  /* ----------------------- tela "Gerar" (conteúdo por tema) ----------------------- */
-  /** O tema digitado — obrigatório pros dois modos de geração. */
-  gerarTema: string;
-  /** Modo da AÇÃO de gerar. Vai no payload do webhook como `modo`. */
-  gerarModo: GerarModo;
-  gerarCarregando: boolean;
-  gerarErro: string | null;
-  /** Rascunho atual devolvido pelo webhook. `null` = nada gerado ainda (Chat fica bloqueado). */
-  gerarConteudo: GerarConteudo | null;
-  gerarUsouCuradoria: boolean;
-  gerarPrecisaPesquisaExterna: boolean;
-  gerarReferencias: GerarReferencia[];
-  gerarMensagem: string | null;
-  /** Chat de refinamento — só existe depois de um rascunho, e nunca dispara a curadoria. */
-  gerarChat: GerarChatMensagem[];
-  gerarChatRascunho: string;
-  gerarChatEnviando: boolean;
 }
 
 export const state: State = {
@@ -173,19 +155,6 @@ export const state: State = {
   newDesignOpen: false,
   creating: null,
   createError: null,
-
-  gerarTema: "",
-  gerarModo: "pesquisar",
-  gerarCarregando: false,
-  gerarErro: null,
-  gerarConteudo: null,
-  gerarUsouCuradoria: false,
-  gerarPrecisaPesquisaExterna: false,
-  gerarReferencias: [],
-  gerarMensagem: null,
-  gerarChat: [],
-  gerarChatRascunho: "",
-  gerarChatEnviando: false,
 };
 
 /* ------------------------------ store ------------------------------ */
@@ -264,7 +233,7 @@ export function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
   // O playground escolhe da mesma lista, então também precisa dos designs carregados, não só a home.
-  if ((view === "designs" || view === "playground" || view === "gerar") && !state.templatesLoaded) loadTemplates();
+  if ((view === "designs" || view === "playground") && !state.templatesLoaded) loadTemplates();
   if (view === "playground" && state.templateId && state.layersLoadedForId !== state.templateId) {
     loadLayersForTemplate(state.templateId);
   }
@@ -661,191 +630,6 @@ export async function createFromStarter(starter: Starter | null) {
 
 export { STARTERS };
 export type { Starter };
-
-/* --------------------- tela "Gerar" (conteúdo por tema) --------------------- */
-/**
- * O fluxo inteiro mora num webhook do n8n (`gerar-conteudo`): é lá que a IA escreve, que a
- * curadoria de Instagram é consultada e que a pesquisa externa vai entrar depois. O console só
- * manda o tema + o modo e desenha a resposta — nenhuma regra de geração é duplicada aqui.
- *
- * A URL vem do build (Vite), não de uma chamada ao nosso servidor: a tela fala com o n8n
- * direto, como pedido na especificação.
- */
-const WEBHOOK_GERAR = import.meta.env.VITE_N8N_WEBHOOK_GERAR ?? "";
-
-export type GerarModo = "gerar_do_zero" | "pesquisar";
-
-export interface GerarReferencia {
-  perfil: string;
-  post_id: string;
-  tema_detectado: string;
-  resumo: string;
-}
-
-export interface GerarConteudo {
-  titulo: string;
-  legenda: string;
-  gancho: string;
-  cta: string;
-  hashtags: string[];
-  /** Slides, quando o conteúdo é carrossel — mesmo formato de `intel.briefings.roteiro`. */
-  roteiro?: string[];
-}
-
-export interface GerarChatMensagem {
-  autor: "voce" | "ia";
-  texto: string;
-}
-
-/** Resposta do webhook. Tudo opcional na leitura: se o n8n devolver um contrato incompleto, a
- *  tela mostra o que veio em vez de quebrar com "undefined is not an object". */
-interface RespostaWebhook {
-  ok?: boolean;
-  modo?: string;
-  tema?: string;
-  usou_curadoria?: boolean;
-  needs_external_research?: boolean;
-  referencias?: GerarReferencia[];
-  conteudo?: Partial<GerarConteudo>;
-  mensagem?: string;
-  error?: string;
-}
-
-export function setGerarTema(valor: string) {
-  state.gerarTema = valor;
-  notify();
-}
-
-export function setGerarModo(modo: GerarModo) {
-  state.gerarModo = modo;
-  notify();
-}
-
-export function setGerarChatRascunho(valor: string) {
-  state.gerarChatRascunho = valor;
-  notify();
-}
-
-/** Zera o rascunho e a conversa — trocar de tema não deve deixar o chat conversando sobre o
- *  conteúdo anterior. */
-export function limparGerar() {
-  state.gerarConteudo = null;
-  state.gerarReferencias = [];
-  state.gerarUsouCuradoria = false;
-  state.gerarPrecisaPesquisaExterna = false;
-  state.gerarMensagem = null;
-  state.gerarErro = null;
-  state.gerarChat = [];
-  state.gerarChatRascunho = "";
-  notify();
-}
-
-function normalizarConteudo(bruto: Partial<GerarConteudo> | undefined): GerarConteudo | null {
-  if (!bruto) return null;
-  return {
-    titulo: bruto.titulo ?? "",
-    legenda: bruto.legenda ?? "",
-    gancho: bruto.gancho ?? "",
-    cta: bruto.cta ?? "",
-    hashtags: Array.isArray(bruto.hashtags) ? bruto.hashtags : [],
-    roteiro: Array.isArray(bruto.roteiro) ? bruto.roteiro : undefined,
-  };
-}
-
-async function chamarWebhook(corpo: Record<string, unknown>): Promise<RespostaWebhook> {
-  if (!WEBHOOK_GERAR) {
-    throw new Error("Webhook não configurado — defina VITE_N8N_WEBHOOK_GERAR no build.");
-  }
-  let res: Response;
-  try {
-    res = await fetch(WEBHOOK_GERAR, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(corpo),
-    });
-  } catch {
-    // Erro de rede/CORS não tem status nem corpo — a mensagem genérica do fetch ("Failed to
-    // fetch") não ajuda ninguém, então traduz aqui.
-    throw new Error("Não foi possível falar com o serviço de geração. Verifique a conexão.");
-  }
-  if (!res.ok) {
-    const detalhe = await res.text().catch(() => "");
-    throw new Error(`O serviço de geração respondeu ${res.status}. ${detalhe.slice(0, 200)}`.trim());
-  }
-  const corpoResposta = (await res.json().catch(() => null)) as RespostaWebhook | null;
-  if (!corpoResposta) throw new Error("O serviço de geração devolveu uma resposta vazia.");
-  if (corpoResposta.ok === false) {
-    throw new Error(corpoResposta.error || corpoResposta.mensagem || "A geração falhou.");
-  }
-  return corpoResposta;
-}
-
-/** "Gerar": dispara o modo escolhido (do zero ou pesquisar). Substitui o rascunho e reinicia a
- *  conversa — o chat refina UM rascunho, não uma sequência deles. */
-export async function gerarConteudo() {
-  const tema = state.gerarTema.trim();
-  if (!tema || state.gerarCarregando) return;
-
-  state.gerarCarregando = true;
-  state.gerarErro = null;
-  notify();
-
-  try {
-    const resposta = await chamarWebhook({
-      tema,
-      modo: state.gerarModo,
-      origem: "app_gerar",
-      user_id: getSession()?.id ?? null,
-    });
-    state.gerarConteudo = normalizarConteudo(resposta.conteudo);
-    state.gerarReferencias = resposta.referencias ?? [];
-    state.gerarUsouCuradoria = resposta.usou_curadoria === true;
-    state.gerarPrecisaPesquisaExterna = resposta.needs_external_research === true;
-    state.gerarMensagem = resposta.mensagem ?? null;
-    state.gerarChat = [];
-    state.gerarChatRascunho = "";
-  } catch (err) {
-    state.gerarErro = err instanceof Error ? err.message : String(err);
-  } finally {
-    state.gerarCarregando = false;
-    notify();
-  }
-}
-
-/** Chat de refinamento. Manda o conteúdo ATUAL junto pra IA editar em cima dele, e nunca
- *  reabre a curadoria (`modo: "chat"` é um ramo separado no n8n). */
-export async function enviarMensagemChat() {
-  const mensagem = state.gerarChatRascunho.trim();
-  if (!mensagem || state.gerarChatEnviando || !state.gerarConteudo) return;
-
-  state.gerarChat = [...state.gerarChat, { autor: "voce", texto: mensagem }];
-  state.gerarChatRascunho = "";
-  state.gerarChatEnviando = true;
-  state.gerarErro = null;
-  notify();
-
-  try {
-    const resposta = await chamarWebhook({
-      tema: state.gerarTema.trim(),
-      modo: "chat",
-      origem: "app_gerar",
-      user_id: getSession()?.id ?? null,
-      mensagem_usuario: mensagem,
-      conteudo_atual: state.gerarConteudo,
-    });
-    const atualizado = normalizarConteudo(resposta.conteudo);
-    if (atualizado) state.gerarConteudo = atualizado;
-    state.gerarChat = [
-      ...state.gerarChat,
-      { autor: "ia", texto: resposta.mensagem || "Conteúdo atualizado." },
-    ];
-  } catch (err) {
-    state.gerarErro = err instanceof Error ? err.message : String(err);
-  } finally {
-    state.gerarChatEnviando = false;
-    notify();
-  }
-}
 
 
 /**

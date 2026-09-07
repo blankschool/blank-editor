@@ -239,10 +239,6 @@ export function createLocalDeps(apiKey: string, renderTemplatePng: AppDeps["rend
       return reply;
     },
 
-    // Sem schema `intel` em modo local: devolve vazio, que a rota traduz como "sem match"
-    // e o n8n como `needs_external_research`.
-    buscarCuradoria: async () => ({ topicos: [], referencias: [] }),
-
     listBrandKits: async (ownerId) =>
       [...brandKits.values()].filter((k) => k.ownerId === ownerId).reverse(),
 

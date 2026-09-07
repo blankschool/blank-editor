@@ -1,8 +1,8 @@
 import type { Doc, El } from "../types";
 
 /**
- * Miniatura de um documento, desenhada a partir do PRÓPRIO documento — usada tanto pelo
- * seletor "Começar por um modelo" quanto pela tela "Gerar" (mesmos starters, mesma fonte).
+ * Miniatura de um documento, desenhada a partir do PRÓPRIO documento — usada pelo seletor
+ * "Começar por um modelo".
  *
  * Podia ser um mock em SVG feito à mão para cada modelo, e seria menos código — mas aí o
  * seletor mostraria uma coisa e o editor abriria outra assim que alguém mexesse em

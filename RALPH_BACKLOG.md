@@ -546,14 +546,13 @@ habilitado, políticas por dono).
   é gap", não como "feito".
 - [ ] **4.9 Chat de IA contínuo editando o design.** Maior item do backlog.
   O repo de referência usa um interpretador de regras local (não LLM de
-  verdade); este repo já tem geração por LLM real em `GerarView.tsx`/
-  `mediaAcquisition.ts`, só que de tiro único. Escopo sugerido pra não
-  reconstruir tudo: NÃO portar o interpretador de regras; em vez disso,
-  estender o fluxo de "Gerar" existente pra aceitar pedidos de edição
-  incrementais em linguagem natural sobre o design já gerado (reaproveita o
-  LLM real que já existe, em vez de um motor de regras novo). Definir escopo
-  exato com o usuário antes de implementar — é o item de maior incerteza de
-  produto do backlog inteiro.
+  verdade); aqui a geração por LLM real vive em `mediaAcquisition.ts`, de tiro
+  único. A tela "Gerar" (`GerarView.tsx` + webhook n8n `gerar-conteudo`), que
+  antes serviria de base pra este item, foi removida a pedido do usuário em
+  07/09/2026 — quem retomar isto começa sem esse ponto de partida. Escopo
+  sugerido pra não reconstruir tudo: NÃO portar o interpretador de regras.
+  Definir escopo exato com o usuário antes de implementar — é o item de maior
+  incerteza de produto do backlog inteiro.
 - [x] **4.10 Erro: captura com TTL, página de erro offline, ponte pra
   relatório externo.** Implementado, exceto a ponte pra relatório externo
   (adiada de propósito — decisão do usuário, não assumir serviço de terceiro).
