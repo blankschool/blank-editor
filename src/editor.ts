@@ -3,6 +3,7 @@ import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
+import { applyStyleToRange } from "./richText";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
@@ -338,6 +339,23 @@ function elStyle(e: any) {
   if (e.hidden) s.push("display:none");
   return s.join(";");
 }
+/** Conteúdo de dentro do `.txt` — plano (só o texto escapado) ou rico (um `<span>` por run,
+ *  cada um só declarando o que DIVERGE do estilo base do elemento). Extraída pra ser reusada
+ *  fora do render normal também: depois de aplicar cor a um trecho selecionado (item "seleção de
+ *  trecho de texto"), só esse `.txt` precisa ser reconstruído, não a página inteira. */
+function textRunsHtml(e: any): string {
+  if (!e.runs || !e.runs.length) return esc(e.text);
+  return e.runs.map((r) => {
+    const over = [
+      r.font ? `font-family:'${r.font}',Inter,system-ui,sans-serif` : "",
+      r.weight !== undefined ? `font-weight:${r.weight}` : "",
+      r.italic !== undefined ? `font-style:${r.italic ? "italic" : "normal"}` : "",
+      r.underline !== undefined ? `text-decoration:${r.underline ? "underline" : "none"}` : "",
+      r.fill ? `color:${r.fill}` : "",
+    ].filter(Boolean).join(";");
+    return `<span style="${over}">${esc(r.text)}</span>`;
+  }).join("");
+}
 function elInner(e: any) {
   const bd = e.stroke && e.strokeWidth ? `border:${e.strokeWidth}px solid ${e.stroke};` : "";
   const sh = e.shadow ? `box-shadow:${e.shadow.x}px ${e.shadow.y}px ${e.shadow.blur}px ${e.shadow.spread || 0}px ${e.shadow.color};` : "";
@@ -394,20 +412,7 @@ function elInner(e: any) {
         `text-decoration:${e.underline ? "underline" : "none"}`, `text-align:${e.align}`,
         `line-height:${e.lh}`, `letter-spacing:${e.ls}px`, `color:${e.fill}`,
       ].join(";");
-      if (e.runs && e.runs.length) {
-        const inner = e.runs.map((r) => {
-          const over = [
-            r.font ? `font-family:'${r.font}',Inter,system-ui,sans-serif` : "",
-            r.weight !== undefined ? `font-weight:${r.weight}` : "",
-            r.italic !== undefined ? `font-style:${r.italic ? "italic" : "normal"}` : "",
-            r.underline !== undefined ? `text-decoration:${r.underline ? "underline" : "none"}` : "",
-            r.fill ? `color:${r.fill}` : "",
-          ].filter(Boolean).join(";");
-          return `<span style="${over}">${esc(r.text)}</span>`;
-        }).join("");
-        return `<div class="txt" data-txt="${e.id}" style="${st}">${inner}</div>`;
-      }
-      return `<div class="txt" data-txt="${e.id}" style="${st}">${esc(e.text)}</div>`;
+      return `<div class="txt" data-txt="${e.id}" style="${st}">${textRunsHtml(e)}</div>`;
     }
   }
   return "";
@@ -844,7 +849,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
   // through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas")) return;
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas, #textSelToolbar")) return;
   // Right-click only pans when it actually drags — a plain right-click (no movement) opens
   // the Context Menu instead, matching how canvas tools commonly split the two.
   if (ev.button === 2) { startRightClickPanOrMenu(ev); return; }
@@ -1236,8 +1241,77 @@ function stopEditing() {
     if (v !== el.text) { el.text = v; commit(); }
   }
   editingId = null;
+  hideTextSelToolbar();
   renderAll();
 }
+
+/** Deslocamento em caracteres de texto plano de um ponto de fronteira de Range, relativo ao
+ *  início de `container` — funciona igual esteja o conteúdo num nó de texto só (caixa sem
+ *  `runs`) ou espalhado em vários `<span>` (uma run por span): `Range.toString()` concatena o
+ *  texto de todos os nós que atravessa, então basta medir um range do início até esse ponto. */
+function textOffsetOf(container: Node, node: Node, offset: number): number {
+  const r = document.createRange();
+  r.selectNodeContents(container);
+  r.setEnd(node, offset);
+  return r.toString().length;
+}
+
+/** Seleção de um TRECHO de texto (dentro de uma caixa em edição), pra aplicar cor só nele — não
+ *  é a seleção de ELEMENTOS (`sel`), é a seleção de caracteres dentro de UM elemento de texto.
+ *  Guardada à parte (não só lida de `document.getSelection()` na hora de aplicar) porque clicar
+ *  no seletor de cor rouba a seleção nativa do navegador antes do evento `input` disparar. */
+let pendingTextSelection: { start: number; end: number } | null = null;
+
+function hideTextSelToolbar() {
+  $("textSelToolbar").hidden = true;
+  pendingTextSelection = null;
+}
+
+/** Reage a QUALQUER mudança de seleção na página (não só dentro da caixa de texto) — por isso a
+ *  primeira coisa é sair se não houver edição de texto rolando ou se a seleção não estiver
+ *  dentro da caixa sendo editada. Quando está: guarda o trecho em `pendingTextSelection` e
+ *  posiciona o popover de cor logo acima da seleção, usando `getBoundingClientRect()` — em
+ *  coordenadas de viewport, as mesmas que `position:fixed` (`.textSelToolbar`) espera, sem
+ *  precisar repetir a conta de zoom/pan que os elementos do canvas usam. */
+function updateTextSelToolbar() {
+  if (!editingId) { hideTextSelToolbar(); return; }
+  const container = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
+  const sel = document.getSelection();
+  if (!container || !sel || sel.rangeCount === 0 || sel.isCollapsed) { hideTextSelToolbar(); return; }
+  const range = sel.getRangeAt(0);
+  if (!container.contains(range.commonAncestorContainer)) { hideTextSelToolbar(); return; }
+  const a = textOffsetOf(container, range.startContainer, range.startOffset);
+  const b = textOffsetOf(container, range.endContainer, range.endOffset);
+  const start = Math.min(a, b), end = Math.max(a, b);
+  if (start === end) { hideTextSelToolbar(); return; }
+  pendingTextSelection = { start, end };
+  const rect = range.getBoundingClientRect();
+  const bar = $("textSelToolbar");
+  bar.style.left = (rect.left + rect.width / 2) + "px";
+  bar.style.top = rect.top + "px";
+  bar.hidden = false;
+}
+document.addEventListener("selectionchange", updateTextSelToolbar);
+
+// Sem isto, clicar no seletor de cor rouba o foco da caixa em edição, dispara o `blur` dela
+// (que já está ligado a `stopEditing`, ver `startEditingText`) e a seleção nativa do navegador
+// desaparece ANTES do evento `input` do seletor disparar — `pendingTextSelection` existiria à
+// toa. `preventDefault` no `mousedown` evita o input roubar o foco (testado: o `click` que abre
+// o seletor nativo de cor do sistema continua disparando normalmente).
+$("textSelColor").addEventListener("mousedown", (ev) => ev.preventDefault());
+$("textSelColor").addEventListener("input", (ev) => {
+  if (!editingId || !pendingTextSelection) return;
+  const el = byId(editingId);
+  if (!el) return;
+  const { start, end } = pendingTextSelection;
+  el.runs = applyStyleToRange(el.text, el.runs, start, end, { fill: (ev.target as HTMLInputElement).value });
+  commit();
+  // Só este `.txt` é reconstruído — um `renderCanvas()` inteiro derrubaria o `contenteditable`
+  // que ainda está ativo nele (a pessoa pode querer colorir outro trecho em seguida).
+  const node = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
+  if (node) node.innerHTML = textRunsHtml(el);
+  hideTextSelToolbar();
+});
 
 /* scroll + zoom wheel */
 $("stage").addEventListener("wheel", (ev) => {

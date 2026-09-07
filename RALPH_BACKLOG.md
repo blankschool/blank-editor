@@ -144,6 +144,70 @@ usados em server/src/db.ts e supabase/migrations/*).
   Fora de escopo de propósito: o render SVG do servidor
   (`editableTweetTemplate.ts`) não recebe `runs` — mesmo raciocínio do
   fillPath (item 2.1), essa rota é só pra templates de geração automática
+  (nota completa mais abaixo, item 2.2b fecha a lacuna que ficou aqui: não
+  existia interface pra SELECIONAR um trecho de texto e aplicar cor só nele —
+  só a metade de renderizar já existia).
+
+- [x] **2.2b Selecionar um trecho de texto e aplicar cor só nele.** Pedido
+  direto do usuário (não estava no levantamento original), fechando a lacuna
+  do 2.2: até aqui `El.runs` só renderizava um dado que já viesse pronto (ex.
+  de um PDF importado) — não havia como, dentro do editor, marcar uma palavra
+  e mudar só a cor dela.
+  - `src/richText.ts` (novo, puro/testável): `applyStyleToRange(text, runs,
+    start, end, override)` — converte `runs` num array de segmentos com
+    offset absoluto, corta nos limites de `[start,end)`, aplica o override só
+    aos segmentos totalmente contidos, e mescla de volta segmentos vizinhos
+    que acabaram com o mesmo estilo (senão cada aplicação fragmentaria o
+    texto num run a mais). 9 testes (`richText.test.ts`): range no meio/borda/
+    tudo, ordem invertida (arrastar da direita pra esquerda), recolorir
+    dentro de um run já colorido (fatia em 3), mesclagem de segmentos iguais,
+    offsets fora do intervalo (clamped), múltiplos overrides (peso+cor).
+  - `src/editor.ts`: `textRunsHtml(e)` extraída de `elInner` (reusável fora
+    do render normal). `textOffsetOf(container, node, offset)` — converte um
+    ponto de fronteira de `Range` em offset de caractere de texto plano via
+    `Range.toString().length`, funciona igual o conteúdo esteja num nó de
+    texto só ou espalhado em vários `<span>` de run. `updateTextSelToolbar()`
+    ouve `selectionchange` no documento inteiro, filtra pra só reagir quando
+    há uma caixa em edição E a seleção está dentro dela, guarda o trecho em
+    `pendingTextSelection` (não só lê `document.getSelection()` na hora de
+    aplicar — ver bug abaixo) e posiciona um popover (`#textSelToolbar`,
+    `position:fixed`, coordenadas direto de `Range.getBoundingClientRect()`)
+    com um `<input type="color">`.
+  - **BUG REAL #1, achado só testando ao vivo**: clicar no seletor de cor
+    rouba o foco da caixa em edição — dispara `blur`, que já está ligado a
+    `stopEditing()` desde sempre. Corrigido com `preventDefault()` no
+    `mousedown` do input (confirmado que o `click` que abre o seletor nativo
+    do sistema continua disparando normalmente mesmo assim).
+  - **BUG REAL #2, achado só testando ao vivo**: mesmo com o `preventDefault`
+    acima, clicar no popover ainda derrubava a edição — porque o handler de
+    `pointerdown` do `#stage` trata qualquer clique fora de `.el`/`.hdl` como
+    "clique no canvas vazio" (fecha a edição, inicia marquee), e a lista de
+    exclusão (`#seltoolbar, #proppop, #documentScroll, #ctxmenu, .pagehead,
+    #addPageCanvas`) não incluía o `#textSelToolbar` novo. Corrigido
+    adicionando-o à mesma lista.
+  - Ao aplicar, só o `.txt` daquele elemento é reconstruído
+    (`node.innerHTML = textRunsHtml(el)`) — nunca um `renderCanvas()`
+    inteiro, que derrubaria o `contenteditable` ainda ativo (a pessoa pode
+    quer colorir outro trecho em seguida). `commit()` é chamado na hora (não
+    dá pra confiar no commit condicional de `stopEditing()`, que só dispara
+    quando o TEXTO PLANO muda — uma mudança só de estilo não mudaria
+    `el.text`).
+  - **Verificação**: os dois bugs reais acima só apareceram testando ao vivo
+    num harness isolado (mesma técnica de sempre: cópia de `index.html`,
+    `mountEditor()` + `openTemplateDocument()` direto, sem precisar de
+    login) — cliques de mouse de verdade (`double_click` pra entrar em modo
+    de edição e selecionar uma palavra), e a escolha de cor em si simulada
+    via `dispatchEvent(new Event("input"))` no `<input type="color">` (o
+    diálogo nativo do sistema operacional não é automatizável). Confirmado:
+    seleção de uma palavra ("world") preservada depois do clique no seletor
+    (`contentEditable` continua `"true"`, seleção continua "world"); depois
+    de aplicar, `el.runs` vira exatamente os 3 runs esperados
+    (`[{text:"hello "},{text:"world",fill:"#..."},{text:" this is a
+    test"}]`), o texto plano (`el.text`) não muda; a cor sobrevive a sair do
+    modo de edição (`stopEditing`/`blur`) e a um `renderAll()` completo;
+    `Desfazer` reverte a mudança corretamente (`.txt` volta a texto plano
+    sem spans). `npm run check`/`npm test` (57/57, 9 novos) e `npm run
+    build` limpos.
   simples, não pra design importado/editado à mão.
 
   Verificado isoladamente (canvas e DOM lado a lado, fora do app atrás de

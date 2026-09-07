@@ -460,6 +460,16 @@ button { cursor: pointer; background: none; border: none; }
   border-radius: 12px; padding: 4px; box-shadow: var(--shadow-lg);
 }
 .seltoolbar[hidden] { display: none; }
+/* Cor de um TRECHO de texto selecionado (dentro de uma caixa em edição) — `position:fixed` de
+   propósito, não `absolute` como `.seltoolbar`: o `left`/`top` vêm direto de
+   `Range.getBoundingClientRect()` (coordenadas de viewport), então não precisa repetir a
+   matemática de zoom/pan que `.seltoolbar` já faz pra elementos inteiros. */
+.textSelToolbar {
+  position: fixed; z-index: 16; transform: translate(-50%, calc(-100% - 10px));
+  display: flex; align-items: center; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px; box-shadow: var(--shadow-lg);
+}
+.textSelToolbar[hidden] { display: none; }
 .qbtn {
   min-width: 28px; height: 28px; padding: 0 6px; border-radius: 8px; color: var(--muted);
   display: grid; place-items: center; font-size: 13px;
