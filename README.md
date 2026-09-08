@@ -37,6 +37,13 @@ Para exercitar login e upload de verdade, copie `.env.docker.example` para
 `.env.docker` e preencha as chaves do Supabase. Sem isso o app sobe normalmente,
 só com `/api/v1/auth/*` respondendo 501.
 
+**Não misture com `npm run dev`.** Os dois usam as portas 5173 e 8787. Se um
+processo do host já estiver nelas quando o compose subir, o container inicia
+normalmente e os logs dizem que está pronto — mas o encaminhamento de porta
+falha calado, e o que responde em `localhost:5173` é o servidor do host. Você
+fica testando o processo errado sem nenhum aviso. Escolha um dos dois modos:
+`npm run dev` ou `docker compose up`.
+
 **Por que existe:** rodando direto na máquina, o `.env` deste projeto aponta o
 `DATABASE_URL` para `127.0.0.1:5432` — um túnel SSH para o banco de produção. Se
 o túnel cai (e cai), o console abre vazio com `ECONNREFUSED` e nada indica que a
