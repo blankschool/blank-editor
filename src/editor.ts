@@ -2926,9 +2926,31 @@ $("redoBtn").addEventListener("click", redo);
 const typing = () => {
   const a = document.activeElement;
   const el = a as HTMLElement | null;
-  return !!el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable);
+  // TEXTAREA precisa estar aqui junto com INPUT: sem ele, todo atalho abaixo é
+  // preventDefault'ado dentro de uma caixa de texto multilinha — o composer de comentário
+  // e o Playground perdiam Ctrl+C/V/Z/A, e Backspace nem apagava caractere.
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 };
+
+/**
+ * O editor está na tela?
+ *
+ * Este módulo registra o listener de teclado no `window` no momento do import, e o import
+ * acontece no boot do app (main.tsx) — não quando o editor abre. O router só alterna
+ * `display` entre as views; nada desmonta. Sem esta checagem, os atalhos do editor valiam
+ * no site inteiro: na tela de login e no console, Ctrl+C/V/Z/A eram capturados e
+ * preventDefault'ados por um editor que nem estava visível, então copiar texto da página
+ * simplesmente não funcionava — o navegador nunca chegava a emitir o evento `copy`.
+ *
+ * A checagem é sobre `display` porque é exatamente o que o router manipula (router.ts).
+ */
+function editorAtivo(): boolean {
+  const view = document.getElementById("view-editor");
+  return !!view && view.style.display !== "none";
+}
+
 window.addEventListener("keydown", (e) => {
+  if (!editorAtivo()) return;
   if (e.key === "Escape" && !$("present").hidden) { exitPresent(); return; }
   if (e.key === "Escape" && !$("gridview").hidden) { setPagesMode("document"); return; }
   if (e.code === "Space" && !typing() && !(document.activeElement instanceof HTMLButtonElement)) { e.preventDefault(); spaceDown = true; $("stage").style.cursor = "grab"; }
@@ -2940,8 +2962,11 @@ window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (mod && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && k === "y") { e.preventDefault(); redo(); return; }
-  if (mod && k === "c") { e.preventDefault(); copySel(); return; }
-  if (mod && k === "v") { e.preventDefault(); paste(); return; }
+  // Só sequestra Ctrl+C/V quando há de fato o que copiar ou colar no canvas. Sem seleção, o
+  // atalho tem que chegar ao navegador: dentro do editor também se copia texto de um painel,
+  // e antes isso era engolido em silêncio (copySel() sem seleção não fazia nada — nem toast).
+  if (mod && k === "c") { if (!sel.length) return; e.preventDefault(); copySel(); return; }
+  if (mod && k === "v") { if (!clipboard?.length) return; e.preventDefault(); paste(); return; }
   if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
   if (mod && k === "g") { e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
   if (mod && k === "a") { e.preventDefault(); sel = page().els.filter((x) => !x.hidden).map((x) => x.id); renderAll(); return; }
@@ -2975,6 +3000,7 @@ window.addEventListener("keydown", (e) => {
   }
 });
 window.addEventListener("keyup", (e) => {
+  if (!editorAtivo()) return;
   if (e.code === "Space") { spaceDown = false; $("stage").style.cursor = tool === "hand" ? "grab" : tool === "draw" ? "crosshair" : "default"; }
 });
 
