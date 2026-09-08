@@ -51,9 +51,16 @@ test("gate honesto: uma família que o documento NÃO declara não cai numa font
   );
 });
 
-test("um elemento sem `font` exige a família default, não desenha em branco calado", async () => {
+test("um elemento sem `font` desenha na família default sem o documento declarar nada", async () => {
+  // A garantia aqui sempre foi "não desenha em branco calado". O mecanismo mudou: antes o
+  // render RECUSAVA quando a família default não estava declarada — o que transformava todo
+  // template inicial (nenhum declara fontes) num 400. Agora o servidor traz as faces da
+  // família default embutidas (builtinFaces.ts), então o caso desenha de verdade.
+  //
+  // A recusa continua valendo para qualquer OUTRA família: é o teste logo acima.
   const d = doc({ fonts: [] }, { font: undefined });
-  await assert.rejects(() => renderTemplatePng(d, noLayers), /"Inter".*não declara/s);
+  const png = await renderTemplatePng(d, noLayers);
+  assert.ok(await larguraDaTinta(png) > 0, "sem tinta na página: o texto saiu em branco");
 });
 
 test("listUsedFamilies conta o default para o elemento sem fonte e ignora camada escondida", () => {

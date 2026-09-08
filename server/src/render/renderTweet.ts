@@ -4,6 +4,7 @@ import { renderAsync } from "@resvg/resvg-js";
 import { buildTemplateSvg, listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
 import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
 import { assertGlyphCoverage, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { builtinFaces } from "./builtinFaces.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
 import type { ParsedLayers } from "./layers.ts";
@@ -73,8 +74,19 @@ export async function renderTemplatePng(
   // e falha alto se alguma não estiver declarada (resolveFonts.ts).
   const page = pageForRender(document, pageIndex);
   const doDocumento = listDesignFonts(document);
-  const declaradas = new Set(doDocumento.map((f) => `${f.family}::${f.weight}`));
-  const disponiveis = [...doDocumento, ...registryFaces.filter((f) => !declaradas.has(`${f.family}::${f.weight}`))];
+  // Precedência: documento > registro da conta > embutida. A chave família::peso é o que
+  // define "já tenho esta face" — a primeira fonte a declarar um par vence, e as camadas de
+  // baixo só preenchem buraco. Assim quem declara a face no design continua no controle, e as
+  // embutidas (builtinFaces.ts) garantem apenas que a família padrão nunca falte.
+  const acumuladas: FaceRef[] = [];
+  const vistas = new Set<string>();
+  for (const f of [...doDocumento, ...registryFaces, ...builtinFaces()]) {
+    const chave = `${f.family}::${f.weight}`;
+    if (vistas.has(chave)) continue;
+    vistas.add(chave);
+    acumuladas.push(f);
+  }
+  const disponiveis = acumuladas;
   const faces = resolveFaces(disponiveis, listUsedFamilies(page));
   // Um subset vindo de PDF não cobre o alfabeto: conferir ANTES de rasterizar transforma
   // "a manchete saiu com um buraco" em erro nomeando a camada e o caractere.
