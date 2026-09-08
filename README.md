@@ -7,6 +7,46 @@ API que o n8n (ou qualquer cliente HTTP) pode chamar.
 
 ## Rodar
 
+Duas formas. **Em container é a recomendada** — é a única que não depende do que
+está instalado na sua máquina.
+
+### Em container (recomendado)
+
+```bash
+docker compose up        # front + API + Postgres, tudo junto
+```
+
+Só isso. Não precisa de Node instalado, nem `npm install`, nem banco, nem túnel
+para lugar nenhum: o compose sobe um Postgres próprio, aplica as 10 migrations de
+`supabase/migrations/` na primeira vez e liga os três serviços entre si. O código
+fica montado do disco, então salvar um arquivo recarrega igual ao dev normal.
+
+| Endereço | O quê |
+| --- | --- |
+| `http://localhost:5173` | o app |
+| `http://localhost:8787` | a API |
+| `localhost:55432` | o Postgres (usuário/senha/base: `blank`) |
+
+```bash
+docker compose down      # para tudo, preserva o banco
+docker compose down -v   # zera o banco e reaplica as migrations no próximo up
+docker compose logs -f api
+```
+
+Para exercitar login e upload de verdade, copie `.env.docker.example` para
+`.env.docker` e preencha as chaves do Supabase. Sem isso o app sobe normalmente,
+só com `/api/v1/auth/*` respondendo 501.
+
+**Por que existe:** rodando direto na máquina, o `.env` deste projeto aponta o
+`DATABASE_URL` para `127.0.0.1:5432` — um túnel SSH para o banco de produção. Se
+o túnel cai (e cai), o console abre vazio com `ECONNREFUSED` e nada indica que a
+causa é externa ao código. O ambiente em container não tem esse acoplamento.
+
+### Direto na máquina
+
+Precisa de Node 22+ e, para o banco, de um `DATABASE_URL` que você mesmo
+providencia.
+
 ```bash
 npm install              # uma vez
 cd server && npm install # uma vez, as deps da API
@@ -35,6 +75,7 @@ banco de dados.
 | `npm run build` | checa tipos e gera `dist/` |
 | `npm run check` | só a checagem de tipos |
 | `npm test` | testa o documento editável do Twitter |
+| `docker compose up` | tudo em container, sem depender da máquina |
 
 ## Estrutura
 

@@ -1,0 +1,86 @@
+# Ambiente de desenvolvimento completo, em container.
+#
+# O objetivo é acabar com o "na minha máquina funciona": tudo que o projeto precisa para
+# rodar — versão do Node, Postgres, schema aplicado, dependências nativas — está descrito
+# aqui, não no que cada pessoa tem instalado. `docker compose up` é o comando único.
+#
+# Por que o node_modules mora em VOLUME NOMEADO e não vem do bind mount: o @resvg/resvg-js
+# traz binário nativo compilado por plataforma. Um node_modules instalado no macOS (arm64)
+# quebra dentro do container (linux), e vice-versa. Os volumes abaixo cobrem o bind mount
+# justamente para que host e container tenham cada um o seu.
+
+# `npm ci` e não `npm install` nos serviços abaixo: além de instalar exatamente o que o
+# package-lock.json trava, ele nunca REESCREVE o lockfile. O npm que vem na imagem do Node é
+# mais antigo que o do host e estava apagando os campos `libc` das dependências nativas
+# opcionais — deriva de ambiente causada pela própria ferramenta que existe para evitá-la.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: blank
+      POSTGRES_PASSWORD: blank
+      POSTGRES_DB: blank
+    ports:
+      # Exposto para dar para abrir o banco com um cliente do host (psql, TablePlus).
+      # 55432 e não 5432 para não brigar com um Postgres já instalado na máquina.
+      - "55432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Rodam só na primeira criação do volume. `docker compose down -v` recria do zero.
+      - ./docker/dev/initdb:/docker-entrypoint-initdb.d:ro
+      - ./supabase/migrations:/migrations:ro
+    healthcheck:
+      # A API depende disto: sem healthcheck ela sobe antes do banco aceitar conexão e
+      # morre no primeiro query — o mesmo ECONNREFUSED que este setup existe para matar.
+      test: ["CMD-SHELL", "pg_isready -U blank -d blank"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: node:22-slim
+    working_dir: /app/server
+    command: sh -c "npm ci --no-audit --no-fund && node --experimental-strip-types --watch src/server.ts"
+    environment:
+      PORT: "8787"
+      DATABASE_URL: postgres://blank:blank@db:5432/blank
+      # Sem Supabase configurado, /api/v1/auth/* responde 501 e o resto funciona por chave
+      # Bearer. Para exercitar login de verdade, preencha no .env.docker (ver .env.docker.example).
+      NODE_ENV: development
+    env_file:
+      - path: .env.docker
+        required: false
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./server:/app/server
+      - api-node-modules:/app/server/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    image: node:22-slim
+    working_dir: /app
+    # --host expõe o Vite fora do container; sem isso ele escuta só em 127.0.0.1 e a porta
+    # publicada não responde nada (falha clássica de Vite em Docker).
+    command: sh -c "npm ci --no-audit --no-fund && npx vite --host 0.0.0.0"
+    environment:
+      # Lido por vite.config.ts. No host o padrão continua sendo 127.0.0.1:8787.
+      API_PROXY_TARGET: http://api:8787
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./:/app
+      - web-node-modules:/app/node_modules
+      # O node_modules do server tem binário nativo próprio; não deixa o bind mount da raiz
+      # arrastá-lo para dentro do container do web.
+      - /app/server/node_modules
+    depends_on:
+      - api
+
+volumes:
+  db-data:
+  api-node-modules:
+  web-node-modules:

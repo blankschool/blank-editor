@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 // Artifact (vite-plugin-singlefile). The project is now a real hosted app backed
 // by server/, so it builds normally instead — real asset splitting/caching is
 // what a served app wants, not everything inlined into one file.
+const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8787";
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -20,8 +22,10 @@ export default defineConfig({
     // antiga achando que é a nova — o pior tipo de bug de ambiente.
     strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:8787",
-      "/health": "http://127.0.0.1:8787",
+      // Em container a API é outro serviço ("api"), não localhost. O padrão continua sendo
+      // 127.0.0.1 para quem roda `npm run dev` direto no host — o compose injeta a variável.
+      "/api": API_PROXY_TARGET,
+      "/health": API_PROXY_TARGET,
     },
   },
   build: {
