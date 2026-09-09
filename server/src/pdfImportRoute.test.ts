@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildApp, type AppDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
+import { buildApp, type AppDeps, type GoogleFontsDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { FlattenedPdfError, type PdfImportResult, type PdfImportService } from "./pdfImportService.ts";
 
@@ -92,6 +92,29 @@ const SAMPLE_RESULT: PdfImportResult = {
   images: [{ id: "img-1", contentType: "image/jpeg", bytes: Buffer.from("fake-jpeg-bytes") }],
   flaggedPages: [],
 };
+
+/** Igual a SAMPLE_RESULT, mas o texto já saiu do microsserviço como fallback Inter (Fix 2) —
+ *  `fontOriginal` presente e a página com `previewPng`, é o que dá ao Feature 3 algo pra fazer. */
+const RESULT_COM_FALLBACK: PdfImportResult = {
+  ...SAMPLE_RESULT,
+  pages: [{
+    ...SAMPLE_RESULT.pages[0],
+    previewPng: Buffer.from("fake-page-preview-png"),
+    elements: SAMPLE_RESULT.pages[0].elements.map((el) =>
+      el.type === "text" ? { ...el, font: "Inter", fontOriginal: "DMSans-Bold" } : el),
+  }],
+};
+
+function fakeGoogleFonts(overrides: Partial<GoogleFontsDeps> = {}): GoogleFontsDeps {
+  return {
+    match: async (_png, hints) => new Map(hints.map((h) => [h.chave, { family: "Montserrat", weight: 700 }])),
+    fetchFace: async () => ({
+      ttf: Buffer.from("fake-google-ttf"), woff2: Buffer.from("fake-google-woff2"),
+      sha256: "fake-google-sha256-0000000000000000000000000000000000000000000000",
+    }),
+    ...overrides,
+  };
+}
 
 function pdfForm(bytes = Buffer.from("%PDF-1.7 conteúdo fake")) {
   const fd = new FormData();
@@ -195,4 +218,59 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
   assert.equal(doc.fonts.length, 1);
   assert.equal(doc.fonts[0].family, "NYTFranklin");
   assert.match(doc.fonts[0].ttf, /^supabase:\/\/font-sfnt\//);
+});
+
+test("com googleFonts configurado e a IA achando um match, o bloco em Inter troca para a Google Font escolhida", async () => {
+  let createdDocument: unknown;
+  const app = buildApp(
+    deps({ createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; } }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), fakeGoogleFonts(),
+  );
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc = createdDocument as any;
+  const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
+  assert.equal(texto.font, "Montserrat");
+  assert.equal(texto.weight, 700);
+  assert.ok(doc.fonts.some((f: { family: string }) => f.family === "Montserrat"), "a Google Font escolhida deveria entrar em Doc.fonts");
+});
+
+test("sem googleFonts configurado, o bloco em fallback permanece em Inter — recurso é opcional", async () => {
+  let createdDocument: unknown;
+  const app = buildApp(
+    deps({ createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; } }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), null,
+  );
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc = createdDocument as any;
+  const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
+  assert.equal(texto.font, "Inter");
+});
+
+test("googleFonts configurado mas sem match (ou o download falha) — o bloco continua em Inter, sem quebrar o import", async () => {
+  let createdDocument: unknown;
+  const semMatch = fakeGoogleFonts({ match: async () => new Map() });
+  const app = buildApp(
+    deps({ createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; } }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), semMatch,
+  );
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc = createdDocument as any;
+  const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
+  assert.equal(texto.font, "Inter");
+});
+
+test("googleFonts.match lançando não derruba o import — mesma proteção de rede fora do ar", async () => {
+  const quebrado = fakeGoogleFonts({ match: async () => { throw new Error("timeout"); } });
+  const app = buildApp(deps(), null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), quebrado);
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
 });

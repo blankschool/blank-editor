@@ -16,6 +16,11 @@ export type ImportedTextElement = {
   size: number;
   fill: string;
   rot: number;
+  /** Só presente quando o microsserviço não conseguiu reconstruir a fonte original do bloco e
+   *  já trocou `font` por "Inter" (canva-pdf-fonts.py). Pista pro matching de Google Font por
+   *  IA (server/src/render/googleFontMatch.ts) — sem isso não haveria como saber, depois da
+   *  troca, qual fonte a arte original usava. */
+  fontOriginal?: string;
 };
 
 export type ImportedImageElement = {
@@ -62,6 +67,9 @@ export interface ImportedPage {
    *  preenchimento cobrindo a página inteira. */
   bg: string;
   elements: ImportedElement[];
+  /** PNG da página inteira (150dpi), só quando algum elemento de texto tem `fontOriginal` —
+   *  entrada visual do matching de Google Font por IA. Ausente nas demais páginas. */
+  previewPng?: Buffer;
 }
 
 export interface ImportedFont {
@@ -109,10 +117,18 @@ export interface PdfImportServiceConfig {
 
 type JsonFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
+interface RawPdfImportPage {
+  w: number;
+  h: number;
+  bg: string;
+  elements: ImportedElement[];
+  previewPngBase64?: string;
+}
+
 interface RawPdfImportResponse {
   erro?: string;
   codigo?: string;
-  pages?: ImportedPage[];
+  pages?: RawPdfImportPage[];
   fonts?: Array<{
     familia: string;
     estilo: string;
@@ -152,7 +168,10 @@ export function createHttpPdfImportService(
         throw new Error(body.erro ?? `pdf-import-service respondeu ${response.status}`);
       }
       return {
-        pages: body.pages ?? [],
+        pages: (body.pages ?? []).map((p) => ({
+          w: p.w, h: p.h, bg: p.bg, elements: p.elements,
+          ...(p.previewPngBase64 ? { previewPng: Buffer.from(p.previewPngBase64, "base64") } : {}),
+        })),
         fonts: (body.fonts ?? []).map((f) => ({
           familia: f.familia,
           estilo: f.estilo,

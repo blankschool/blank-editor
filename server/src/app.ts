@@ -27,6 +27,8 @@ import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInp
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
 import { FlattenedPdfError, type ImportedPage, type ImportedFont, type ImportedImage, type PdfImportService } from "./pdfImportService.ts";
+import type { FontMatch, FontMatchHint } from "./render/googleFontMatch.ts";
+import type { FetchedGoogleFont } from "./render/googleFontFetch.ts";
 import {
   clearSessionCookies,
   getAccessCookie,
@@ -111,6 +113,14 @@ export interface PdfImportDeps {
   service: PdfImportService;
 }
 
+/** Opcional: sem isto, um bloco de texto que o Fix 2 já trocou por Inter (fonte do PDF não
+ *  reconstruída) continua saindo em Inter — este dep só tenta melhorar isso pra uma Google Font
+ *  parecida, nunca é pré-requisito pro import funcionar. */
+export interface GoogleFontsDeps {
+  match: (pageImagePng: Buffer, hints: readonly FontMatchHint[]) => Promise<Map<string, FontMatch>>;
+  fetchFace: (family: string, weight: number) => Promise<FetchedGoogleFont | null>;
+}
+
 interface RenderBody {
   template?: string;
   layers?: Layers;
@@ -167,6 +177,7 @@ export function buildApp(
   storage: StorageDeps | null = null,
   media: MediaDeps | null = null,
   pdfImport: PdfImportDeps | null = null,
+  googleFonts: GoogleFontsDeps | null = null,
 ): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
   // O logger do Fastify está desligado (`Fastify({...})` sem `logger`) — sem isto, qualquer
@@ -1228,6 +1239,63 @@ export function buildApp(
     }));
   }
 
+  /**
+   * Melhora, quando possível, blocos que o Fix 2 (canva-pdf-fonts.py) já trocou por Inter
+   * porque não conseguiu reconstruir a fonte original — pergunta a uma IA (googleFonts.match)
+   * qual Google Font parece com o que a arte usava e, se achar, baixa e registra essa face
+   * (googleFonts.fetchFace), trocando `font`/`weight` só NESSE elemento.
+   *
+   * Estritamente aditivo: sem `googleFonts` configurado, sem match, ou sem conseguir baixar a
+   * face, os elementos ficam exatamente como o Fix 2 já deixa hoje (Inter) — nenhuma etapa
+   * daqui pode fazer um import que funcionava parar de funcionar.
+   */
+  async function upgradeFallbackFontsWithGoogleMatch(
+    ownerId: string, pages: ImportedPage[],
+  ): Promise<{
+    pages: ImportedPage[];
+    fonts: Array<{ family: string; weight: number; sha256: string; ttf: string; woff2: string; glyphs?: string }>;
+  }> {
+    if (!googleFonts) return { pages, fonts: [] };
+    const registradas = new Map<string, { family: string; weight: number; sha256: string; ttf: string; woff2: string }>();
+
+    const novasPaginas = await Promise.all(pages.map(async (page) => {
+      const textos = page.elements.filter((el): el is Extract<typeof el, { type: "text" }> => el.type === "text");
+      const pistas: FontMatchHint[] = textos
+        .filter((el) => el.fontOriginal)
+        .map((el) => ({ chave: el.fontOriginal!, bbox: { x: el.x, y: el.y, w: el.w, h: el.h } }));
+      if (!pistas.length || !page.previewPng) return page;
+
+      const matches = await googleFonts!.match(page.previewPng, pistas).catch(() => new Map<string, FontMatch>());
+      if (!matches.size) return page;
+
+      const elements = await Promise.all(page.elements.map(async (el) => {
+        if (el.type !== "text" || !el.fontOriginal) return el;
+        const escolhida = matches.get(el.fontOriginal);
+        if (!escolhida) return el;
+
+        const chaveFace = `${escolhida.family}::${escolhida.weight}`;
+        let face = registradas.get(chaveFace);
+        if (!face) {
+          const baixada = await googleFonts!.fetchFace(escolhida.family, escolhida.weight).catch(() => null);
+          if (!baixada) return el;
+          const { sfntPath, woff2Path } = await uploadFontFace(
+            storage!.client, baixada.sha256, { ext: "ttf", bytes: baixada.ttf }, baixada.woff2);
+          await deps.upsertFontFace({
+            id: randomUUID(), ownerId, sha256: baixada.sha256,
+            internalFamily: escolhida.family, weight: escolhida.weight, style: "Regular",
+            sfntPath, woff2Path,
+          });
+          face = { family: escolhida.family, weight: escolhida.weight, sha256: baixada.sha256, ttf: sfntPath, woff2: woff2Path };
+          registradas.set(chaveFace, face);
+        }
+        return { ...el, font: face.family, weight: face.weight };
+      }));
+      return { ...page, elements };
+    }));
+
+    return { pages: novasPaginas, fonts: [...registradas.values()] };
+  }
+
   // Junta páginas+elementos do microsserviço num Doc do editor (src/types.ts). Cada El exige um
   // conjunto de campos que a extração não tem motivo pra saber (rot/opacity/locked/...) — os
   // mesmos defaults que canva-import.ts já usa para o caminho manual de importação.
@@ -1310,7 +1378,12 @@ export function buildApp(
     try {
       const imageSrcById = await uploadImportedImages(ownerId, result.images);
       fonts = await registerImportedFonts(ownerId, result.fonts);
-      pages = buildImportedPages(result.pages, imageSrcById);
+      // Depois de registrar as fontes reconstruídas do PDF: tenta melhorar os blocos que ainda
+      // ficaram em Inter (fallback do Fix 2) para uma Google Font parecida — devolve páginas
+      // NOVAS (não muta `result.pages`), então `buildImportedPages` precisa ler a partir daqui.
+      const upgrade = await upgradeFallbackFontsWithGoogleMatch(ownerId, result.pages);
+      fonts = [...fonts, ...upgrade.fonts];
+      pages = buildImportedPages(upgrade.pages, imageSrcById);
       const name = file.filename?.replace(/\.pdf$/i, "").trim() || "PDF importado";
       const document = { name, active: 0, pages, ...(fonts.length ? { fonts } : {}) };
       row = await deps.createTemplate(ownerId, { name, document });

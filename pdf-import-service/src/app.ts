@@ -30,7 +30,13 @@ export function buildApp() {
     try {
       const result = await importCanvaPdf(bytes);
       return {
-        pages: result.pages,
+        // `previewPng` é Buffer — a serialização default do Fastify pra Buffer é
+        // {type:"Buffer",data:[...]}, que o cliente não espera. Mesmo padrão de base64 já usado
+        // abaixo pra fonte/imagem.
+        pages: result.pages.map((p) => ({
+          w: p.w, h: p.h, bg: p.bg, elements: p.elements,
+          ...(p.previewPng ? { previewPngBase64: p.previewPng.toString("base64") } : {}),
+        })),
         fonts: result.fonts.map((f) => ({
           familia: f.familia,
           estilo: f.estilo,

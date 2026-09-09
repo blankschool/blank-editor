@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { countPdfPages, extractPageImages, type ExtractedImageElement } from "./extractImages.ts";
+import { countPdfPages, extractPageImages, renderPagePreview, type ExtractedImageElement } from "./extractImages.ts";
 import { extractFontsAndText, type ExtractedPageElement } from "./pythonExtract.ts";
 import { isFlattenedPage } from "./flatDetection.ts";
 
@@ -40,6 +40,11 @@ export interface ImportedPage {
    *  cobre tudo, ou o design realmente não pinta nada por trás). */
   bg: string;
   elements: ImportedElement[];
+  /** PNG da página inteira renderizada (150dpi), só quando algum elemento de texto tem
+   *  `fontOriginal` — é a entrada visual do matching de Google Font por IA
+   *  (server/src/render/googleFontMatch.ts). Omitido nas demais páginas para não gastar
+   *  trabalho/banda com um raster que ninguém vai olhar. */
+  previewPng?: Buffer;
 }
 
 export interface ImportedFont {
@@ -81,7 +86,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
     const pages: ImportedPage[] = [];
     const flaggedPages: number[] = [];
 
-    imagePages.forEach((imageResult, index) => {
+    for (const [index, imageResult] of imagePages.entries()) {
       const pageNumber = index + 1;
       const pageElements = elementsByPage.get(pageNumber) ?? [];
       // Formas atrás de tudo, texto na frente — a única ordem que dá pra afirmar sem
@@ -107,8 +112,20 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
         flaggedPages.push(pageNumber);
       }
 
-      pages.push({ w: imageResult.canvas.w, h: imageResult.canvas.h, bg: bgByPage.get(pageNumber) ?? "#ffffff", elements });
-    });
+      // Só gera o raster da página quando algum bloco de texto caiu no fallback do Python
+      // (fonte não reconstruída) — é a única situação em que o matching por IA tem algo pra
+      // fazer; nas demais páginas seria trabalho e banda gastos sem ninguém pra olhar.
+      const temFallback = textElements.some((el) => "fontOriginal" in el && el.fontOriginal);
+      const previewPng = temFallback
+        ? await renderPagePreview(pdfPath, pageNumber, resolve(workDir, `page-${pageNumber}`))
+        : undefined;
+
+      pages.push({
+        w: imageResult.canvas.w, h: imageResult.canvas.h,
+        bg: bgByPage.get(pageNumber) ?? "#ffffff", elements,
+        ...(previewPng ? { previewPng } : {}),
+      });
+    }
 
     if (flaggedPages.length === pages.length) throw new FlattenedPdfError();
 

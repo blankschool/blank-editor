@@ -216,6 +216,23 @@ export async function extractPageImages(pdfPath: string, page: number, workDir: 
   return { canvas, elements };
 }
 
+/**
+ * Rasteriza a página INTEIRA como um PNG — não as camadas de imagem individuais (isso é
+ * `extractPageImages`), a página completa como ela se vê. Usado só como entrada visual para o
+ * matching de fonte por IA (server/src/render/googleFontMatch.ts): a página completa dá ao
+ * modelo o contexto de layout/estilo que uma camada de texto isolada não tem.
+ *
+ * 150dpi é suficiente para o modelo de visão reconhecer o estilo de uma fonte sem gerar um PNG
+ * gigante por página — este raster nunca vai para o design final, só para o prompt.
+ */
+export async function renderPagePreview(pdfPath: string, page: number, workDir: string): Promise<Buffer> {
+  const pngPath = resolve(workDir, `preview-${String(page).padStart(3, "0")}.png`);
+  await run("pdftocairo", ["-png", "-r", "150", "-f", String(page), "-l", String(page), pdfPath, pngPath.replace(/\.png$/, "")]);
+  // pdftocairo com -f/-l == a mesma página aplica o sufixo "-1" mesmo pedindo só uma — grava em
+  // <base>-1.png, não <base>.png; ler daí em vez de adivinhar o nome duas vezes.
+  return readFile(pngPath.replace(/\.png$/, "-1.png"));
+}
+
 /** Conta as páginas do PDF, via `pdfinfo` (mesmo pacote poppler-utils). */
 export async function countPdfPages(pdfPath: string): Promise<number> {
   const { stdout } = await run("pdfinfo", [pdfPath]);

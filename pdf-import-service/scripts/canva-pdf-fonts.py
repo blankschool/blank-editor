@@ -336,11 +336,17 @@ def extrair_texto(page, peso_por_estilo):
             continue
         familia, estilo = parte(primeiro_span["font"].split("+")[-1])
         peso = peso_por_estilo.get((familia, estilo))
+        # Guardado ANTES do fallback trocar `familia`: é o nome que um matching por IA
+        # (feature 3, server/src/render/googleFontMatch.ts) usa como pista de qual Google
+        # Font parece com o que a arte original usava — sem isso, uma vez substituído por
+        # "Inter" não haveria como saber que aquele bloco é candidato a um match melhor.
+        font_original = None
         if peso is None:
             # A fonte deste bloco nao foi reconstruida (sem arquivo embutido ou sem ToUnicode).
             # Antes isso descartava o bloco em silencio; agora cai pra Inter, que o servidor
             # sempre tem embutida (server/src/render/builtinFaces.ts) — o texto sobrevive com
             # uma fonte parecida em vez de desaparecer do design importado sem aviso.
+            font_original = f"{familia}-{estilo}"
             print(f"  {familia}-{estilo}: fonte nao reconstruida, usando Inter peso "
                   f"{ESTILO_PESO.get(estilo, 400)} como substituta")
             familia, peso = "Inter", ESTILO_PESO.get(estilo, 400)
@@ -358,6 +364,7 @@ def extrair_texto(page, peso_por_estilo):
             size=round(primeiro_span.get("size", 12), 2),
             fill="#%06x" % (primeiro_span.get("color", 0) & 0xFFFFFF),
             rot=round(math.degrees(ang), 2),
+            **({"fontOriginal": font_original} if font_original else {}),
         ))
     return elementos
 

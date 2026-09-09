@@ -39,6 +39,11 @@ export interface ExtractedTextElement {
   size: number;
   fill: string;
   rot: number;
+  /** Só presente quando a fonte original do bloco não pôde ser reconstruída e o Python já
+   *  trocou `font` para "Inter" (canva-pdf-fonts.py, `extrair_texto`). Guarda o nome original
+   *  ("DMSans-Bold") como pista para o matching de Google Font por IA — sem isso não haveria
+   *  como saber, depois da troca, qual fonte a arte realmente usava. */
+  fontOriginal?: string;
 }
 
 /** Retângulo de cor sólida (preenchimento vetorial cujo desenho é só um `re` no PDF) que

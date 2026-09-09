@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { buildApp, type AppDeps, type AuthDeps, type MediaDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
+import { buildApp, type AppDeps, type AuthDeps, type GoogleFontsDeps, type MediaDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
@@ -41,6 +41,8 @@ import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.
 import { configureFontStorage } from "./render/fontCache.ts";
 import { createMediaAcquisitionService } from "./mediaAcquisition.ts";
 import { createHttpPdfImportService } from "./pdfImportService.ts";
+import { createGoogleFontMatcher } from "./render/googleFontMatch.ts";
+import { fetchGoogleFontFace } from "./render/googleFontFetch.ts";
 
 // Só em dev: `.env` não existe em produção (env vars vêm injetadas pelo runtime lá), e não faz
 // sentido nenhum exigir esse arquivo pra rodar o servidor de verdade — daí o existsSync antes.
@@ -159,7 +161,18 @@ if (PDF_IMPORT_SERVICE_URL) {
   console.warn("PDF_IMPORT_SERVICE_URL not set — POST /api/v1/imports/pdf will respond 501");
 }
 
-const app = buildApp(deps, auth, storage, media, pdfImport);
+// Melhora, quando dá, um bloco de texto que o import de PDF já teve que trocar por Inter
+// (fonte original não reconstruída — ver pdf-import-service/scripts/canva-pdf-fonts.py) para
+// uma Google Font parecida. Reusa a MESMA chave já configurada pra geração de imagem (acima) —
+// nenhuma credencial nova. Sem a chave, o dep fica null e o import continua funcionando como
+// hoje (Inter), só sem essa melhoria.
+let googleFonts: GoogleFontsDeps | null = null;
+if (OPENAI_API_KEY) {
+  const matcher = createGoogleFontMatcher({ openAiApiKey: OPENAI_API_KEY });
+  googleFonts = { match: matcher.match, fetchFace: fetchGoogleFontFace };
+}
+
+const app = buildApp(deps, auth, storage, media, pdfImport, googleFonts);
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })
