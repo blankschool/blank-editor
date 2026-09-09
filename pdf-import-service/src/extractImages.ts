@@ -30,6 +30,10 @@ export interface ExtractedImageElement {
 export interface PageImageResult {
   canvas: { w: number; h: number };
   elements: ExtractedImageElement[];
+  /** pt → px desta página, exposto pra `orchestrate.ts` escalar texto/forma (que saem do
+   *  Python em pontos do PDF, não em pixels) com o MESMO fator usado aqui pro canvas —
+   *  reaproveitar em vez de recalcular evita as duas contas divergirem por arredondamento. */
+  ptToPx: number;
 }
 
 interface ListedImage {
@@ -213,7 +217,7 @@ export async function extractPageImages(pdfPath: string, page: number, workDir: 
     });
   }
 
-  return { canvas, elements };
+  return { canvas, elements, ptToPx };
 }
 
 /**

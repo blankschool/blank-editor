@@ -67,6 +67,23 @@ export interface ImportResult {
 
 const TARGET_WIDTH_PX = 1080;
 
+/**
+ * Texto e forma saem do Python em PONTOS do PDF (a unidade que `page.get_text`/`get_drawings`
+ * usa); a página final e as camadas de imagem já saem em PIXELS, escaladas por `ptToPx`
+ * (extractImages.ts). Sem aplicar a MESMA escala aqui, um PDF cuja largura em pontos não seja
+ * exatamente `TARGET_WIDTH_PX` (ou seja, quase todo PDF real) importa com texto ~25%-30% menor
+ * e caixas mais estreitas do que deveriam — o efeito visível é texto quebrando linha onde o
+ * Canva original não quebrava (achado testando com um PDF real de 810×1012.5pt).
+ *
+ * `rot` (ângulo) e `fillPath` (coordenadas normalizadas 0..1 dentro da própria caixa) não são
+ * afetados por escala nenhuma — só x/y/w/h (e `size`, só em texto) são pontos lineares.
+ */
+function comEscalaDePagina(el: ExtractedPageElement, ptToPx: number): ExtractedPageElement {
+  const posicao = { x: el.x * ptToPx, y: el.y * ptToPx, w: el.w * ptToPx, h: el.h * ptToPx };
+  if (el.type === "text") return { ...el, ...posicao, size: el.size * ptToPx };
+  return { ...el, ...posicao };
+}
+
 export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
   const workDir = await mkdtemp(join(tmpdir(), "canva-pdf-"));
   try {
@@ -88,7 +105,8 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
 
     for (const [index, imageResult] of imagePages.entries()) {
       const pageNumber = index + 1;
-      const pageElements = elementsByPage.get(pageNumber) ?? [];
+      const pageElements = (elementsByPage.get(pageNumber) ?? [])
+        .map((el) => comEscalaDePagina(el, imageResult.ptToPx));
       // Formas atrás de tudo, texto na frente — a única ordem que dá pra afirmar sem
       // ambiguidade: formas e texto vêm do mesmo passo em Python (nessa ordem relativa,
       // já correta), mas imagem vem de um passo totalmente separado (poppler-utils), sem
