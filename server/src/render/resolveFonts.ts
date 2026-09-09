@@ -100,6 +100,54 @@ function faceParaElemento(faces: readonly FaceRef[], family: string, weight: num
 }
 
 /**
+ * Devolve `page.els` com `font`/`weight` trocados para a família de `fallback` (a Inter
+ * embutida, sempre completa) em qualquer elemento de texto cuja face declarada seja um SUBSET
+ * que não cubra o texto que ele realmente vai desenhar.
+ *
+ * Precisa mudar o ELEMENTO, não só o arquivo carregado: o resvg casa `font-family` do SVG pelo
+ * nome que o próprio arquivo de fonte declara por dentro (tabela `name`), então trocar o
+ * arquivo sem trocar o `font-family` do texto deixa a camada sem nenhuma face que bata —
+ * mesmo efeito de família ausente, mas silencioso (nenhum glifo desenha, sem erro).
+ *
+ * Existe porque um subset extraído de PDF só tem os glifos que a arte original usava (ver
+ * `assertGlyphCoverage`); editar o texto de uma camada por API pode pedir uma letra que nunca
+ * esteve lá. Antes disso o render inteiro recusava. Preferimos desenhar com uma fonte PARECIDA
+ * do que travar — a mesma escolha já feita para família totalmente ausente (`builtinFaces.ts`)
+ * e para fonte de PDF não reconstruída (`canva-pdf-fonts.py`).
+ *
+ * Quando não há fallback pra aquele peso, o elemento sai como veio — `assertGlyphCoverage`
+ * continua como rede de segurança final.
+ */
+export function elementsWithGlyphFallback(
+  page: { els?: unknown } | null | undefined,
+  texts: Record<string, string>,
+  faces: readonly FaceRef[],
+  fallback: readonly FaceRef[],
+): unknown[] {
+  const els = Array.isArray(page?.els) ? (page.els as Array<Textish & { weight?: number; text?: unknown }>) : [];
+  return els.map((el) => {
+    if (!el || el.type !== "text" || el.hidden) return el;
+    const family = (el.font || "").trim() || DEFAULT_FONT_FAMILY;
+    const weight = Number(el.weight) || 400;
+    const face = faceParaElemento(faces, family, weight);
+    if (!face?.glyphs) return el;
+
+    const disponiveis = new Set([...face.glyphs]);
+    const cobre = [...new Set([...textoDe(el, texts)])]
+      .every((ch) => ch === "\n" || ch === "\r" || disponiveis.has(ch));
+    if (cobre) return el;
+
+    const substituta = faceParaElemento(fallback, DEFAULT_FONT_FAMILY, weight);
+    if (!substituta) return el;
+    console.warn(
+      `camada "${el.name || "(sem nome)"}": fonte "${family}" peso ${face.weight} é um subset sem os ` +
+        `glifos pedidos, usando ${DEFAULT_FONT_FAMILY} peso ${substituta.weight} como substituta`,
+    );
+    return { ...el, font: DEFAULT_FONT_FAMILY, weight: substituta.weight };
+  });
+}
+
+/**
  * Recusa um texto que a fonte não sabe desenhar.
  *
  * Uma face extraída de PDF é um SUBSET: traz só os glifos que a arte original usava.

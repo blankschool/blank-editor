@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { renderAsync } from "@resvg/resvg-js";
 import { buildTemplateSvg, listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
 import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
-import { assertGlyphCoverage, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { assertGlyphCoverage, elementsWithGlyphFallback, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
 import { builtinFaces } from "./builtinFaces.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
@@ -87,14 +87,30 @@ export async function renderTemplatePng(
     acumuladas.push(f);
   }
   const disponiveis = acumuladas;
-  const faces = resolveFaces(disponiveis, listUsedFamilies(page));
-  // Um subset vindo de PDF não cobre o alfabeto: conferir ANTES de rasterizar transforma
-  // "a manchete saiu com um buraco" em erro nomeando a camada e o caractere.
-  assertGlyphCoverage(page, layers.texts, faces);
+  const facesDeclaradas = resolveFaces(disponiveis, listUsedFamilies(page));
+  // Um subset vindo de PDF não cobre o alfabeto inteiro: qualquer camada de texto cuja face
+  // declarada não tenha os glifos pedidos passa a pedir Inter (completa) em vez da família
+  // original — troca o ELEMENTO, não só o arquivo carregado, porque o resvg casa font-family
+  // pelo nome que o arquivo declara por dentro (ver elementsWithGlyphFallback).
+  const elsAjustados = elementsWithGlyphFallback(page, layers.texts, facesDeclaradas, builtinFaces());
+  const pageAjustada = { ...page, els: elsAjustados };
+  const faces = resolveFaces(disponiveis, listUsedFamilies(pageAjustada));
+  // Rede de segurança final: se nem a substituta cobrir o texto, ainda recusamos em vez de
+  // desenhar em branco.
+  assertGlyphCoverage(pageAjustada, layers.texts, faces);
   const fontFiles = await ensureFontFiles(faces);
 
+  // O SVG precisa nascer da página AJUSTADA (com os fallbacks de fonte já aplicados), não da
+  // original — por isso troca a página correspondente dentro de uma cópia do documento em vez
+  // de passar `document` direto para buildTemplateSvg.
+  const paginas = (document as { pages?: unknown[] })?.pages;
+  const indice = Array.isArray(paginas) ? paginas.indexOf(page) : -1;
+  const documentoParaSvg = indice >= 0
+    ? { ...(document as object), pages: paginas!.map((p, i) => (i === indice ? pageAjustada : p)) }
+    : document;
+
   const overrides: TemplateOverrides = { texts: layers.texts, hidden: layers.hidden };
-  const svg = buildTemplateSvg(document, overrides, resolvedImages, pageIndex);
+  const svg = buildTemplateSvg(documentoParaSvg, overrides, resolvedImages, pageIndex);
 
   // resvg, não sharp/librsvg, para desenhar o SVG.
   //

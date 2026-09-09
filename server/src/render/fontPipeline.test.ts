@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { renderTemplatePng } from "./renderTweet.ts";
-import { listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { elementsWithGlyphFallback, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
 import { FIXTURE_ADVANCE_EM, FIXTURE_FAMILY, FIXTURE_SHA256, fixtureDocFont } from "./__fixtures__/fixtureFont.ts";
 
 const noLayers = { texts: {}, images: {}, hidden: new Set<string>() };
@@ -104,37 +104,65 @@ test("a fixture tem o sha256 que os testes declaram (pega troca acidental do arq
   assert.match(FIXTURE_SHA256, /^[0-9a-f]{64}$/);
 });
 
-test("subset de PDF: pedir uma letra que a face não tem para o render e nomeia a camada e o caractere", async () => {
+test("subset de PDF: pedir uma letra que a face não tem cai para Inter em vez de recusar o render", async () => {
   // NYTFranklin-Light saiu do PDF com 16 glifos: " ?acdegilmnoruvó". Um "b" não existe nela.
+  // Antes isso recusava o render inteiro; agora elementsWithGlyphFallback troca o elemento para
+  // Inter (sempre embutida) antes do rasterizador rodar — o texto sai com uma fonte parecida.
   const d = {
     active: 0,
     fonts: [{ family: "Subset", weight: 300, sha256: "x", ttf: "/nao/importa.ttf", woff2: "",
               glyphs: " ?acdegilmnoruvó" }],
     pages: [{ w: 200, h: 80, bg: "#FFF", els: [
-      { type: "text", name: "manchete", x: 0, y: 0, w: 200, h: 40, text: "bola", size: 20, font: "Subset", weight: 300 },
+      { type: "text", name: "manchete", x: 0, y: 0, w: 200, h: 40, text: "bola", size: 20,
+        font: "Subset", weight: 300, fill: "#000000" },
     ] }],
   };
-  await assert.rejects(() => renderTemplatePng(d, noLayers), (e: Error) => {
-    assert.match(e.message, /"manchete"/);
-    assert.match(e.message, /"b" \(U\+0062\)/);
-    assert.match(e.message, /subset/);
-    return true;
-  });
+  const png = await renderTemplatePng(d, noLayers);
+  assert.ok(await larguraDaTinta(png) > 0, "sem tinta na página: o texto saiu em branco mesmo com a substituta");
 });
 
-test("a verificação de cobertura olha o texto do OVERRIDE, não o que o documento guardou", async () => {
+test("a substituição olha o texto do OVERRIDE, não o que o documento guardou", async () => {
   const d = {
     active: 0,
     fonts: [{ family: "Subset", weight: 400, sha256: "x", ttf: "/nao/importa.ttf", woff2: "", glyphs: "abc " }],
     pages: [{ w: 200, h: 80, bg: "#FFF", els: [
-      { type: "text", name: "t", x: 0, y: 0, w: 200, h: 40, text: "abc", size: 20, font: "Subset" },
+      { type: "text", name: "t", x: 0, y: 0, w: 200, h: 40, text: "abc", size: 20, font: "Subset", fill: "#000000" },
     ] }],
   };
-  // O documento sozinho é coberto; o texto que a API manda desenhar não é.
-  await assert.rejects(
-    () => renderTemplatePng(d, { texts: { t: "abz" }, images: {}, hidden: new Set() }),
-    /"z" \(U\+007A\)/,
-  );
+  // O documento sozinho é coberto pela face original (não dispararia a troca); o texto que a
+  // API manda desenhar não é — precisa cair para Inter mesmo assim, em vez de tentar carregar
+  // "/nao/importa.ttf" (que não existe) com a letra que falta.
+  const png = await renderTemplatePng(d, { texts: { t: "abz" }, images: {}, hidden: new Set() });
+  assert.ok(await larguraDaTinta(png) > 0, "sem tinta na página: o texto saiu em branco mesmo com a substituta");
+});
+
+test("elementsWithGlyphFallback troca só o elemento que não é coberto, deixando os outros intactos", () => {
+  const subset = { family: "Subset", weight: 300, sha256: "x", src: "/nao/importa.ttf", glyphs: "ab " };
+  const interFallback = { family: "Inter", weight: 400, sha256: "i", src: "/inter.ttf" };
+  const semTroca = { type: "text", name: "2", font: "Outra", text: "qualquer coisa" };
+  const page = { els: [
+    { type: "text", name: "1", font: "Subset", weight: 300, text: "abz" },
+    semTroca,
+  ] };
+  const resultado = elementsWithGlyphFallback(page, {}, [subset], [interFallback]);
+  assert.equal(resultado[1], semTroca, "elemento coberto não deveria mudar (mesma referência)");
+  assert.deepEqual(resultado[0], { type: "text", name: "1", font: "Inter", weight: 400, text: "abz" });
+});
+
+test("elementsWithGlyphFallback não troca nada quando a face já cobre o texto", () => {
+  const subset = { family: "Subset", weight: 300, sha256: "x", src: "/nao/importa.ttf", glyphs: "ab " };
+  const el = { type: "text", name: "1", font: "Subset", weight: 300, text: "aba" };
+  const page = { els: [el] };
+  const resultado = elementsWithGlyphFallback(page, {}, [subset], []);
+  assert.equal(resultado[0], el, "sem descobertura, o elemento deveria vir intacto (mesma referência)");
+});
+
+test("sem fallback disponível para o peso, elementsWithGlyphFallback deixa o elemento original — assertGlyphCoverage ainda recusa", () => {
+  const subset = { family: "Subset", weight: 300, sha256: "x", src: "/nao/importa.ttf", glyphs: "ab " };
+  const el = { type: "text", name: "1", font: "Subset", weight: 300, text: "abz" };
+  const page = { els: [el] };
+  const resultado = elementsWithGlyphFallback(page, {}, [subset], []);
+  assert.equal(resultado[0], el);
 });
 
 test("fonte completa (sem `glyphs` declarado) não é verificada — só subsets têm o que provar", async () => {
