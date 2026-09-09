@@ -105,6 +105,23 @@ const RESULT_COM_FALLBACK: PdfImportResult = {
   }],
 };
 
+/** Duas camadas de texto diferentes, ambas em fallback e ambas apontando pra MESMA Google Font
+ *  (mesmo `fontOriginal`, casos comuns quando um design repete uma fonte não reconstruída em
+ *  mais de um bloco) — o que dá pra provar que `obterOuBaixarFace` deduplica em vez de baixar/
+ *  subir a mesma face duas vezes em paralelo. */
+const RESULT_COM_DOIS_FALLBACKS_MESMA_FONTE: PdfImportResult = {
+  ...SAMPLE_RESULT,
+  pages: [{
+    ...SAMPLE_RESULT.pages[0],
+    previewPng: Buffer.from("fake-page-preview-png"),
+    elements: [
+      ...SAMPLE_RESULT.pages[0].elements.filter((el) => el.type !== "text"),
+      { type: "text", x: 10, y: 20, w: 300, h: 60, text: "Bloco 1", font: "Inter", weight: 400, size: 24, fill: "#111", rot: 0, fontOriginal: "DMSans-Bold" },
+      { type: "text", x: 10, y: 300, w: 300, h: 60, text: "Bloco 2", font: "Inter", weight: 400, size: 24, fill: "#111", rot: 0, fontOriginal: "DMSans-Bold" },
+    ],
+  }],
+};
+
 function fakeGoogleFonts(overrides: Partial<GoogleFontsDeps> = {}): GoogleFontsDeps {
   return {
     match: async (_png, hints) => new Map(hints.map((h) => [h.chave, { family: "Montserrat", weight: 700 }])),
@@ -273,4 +290,32 @@ test("googleFonts.match lançando não derruba o import — mesma proteção de 
   const app = buildApp(deps(), null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), quebrado);
   const res = await postPdf(app, pdfForm());
   assert.equal(res.statusCode, 201);
+});
+
+test("duas camadas pedindo a mesma Google Font baixam/registram a face uma vez só, não uma por camada", async () => {
+  let chamadasFetchFace = 0;
+  const deduplicado = fakeGoogleFonts({
+    fetchFace: async () => {
+      chamadasFetchFace++;
+      return {
+        ttf: Buffer.from("fake-google-ttf"), woff2: Buffer.from("fake-google-woff2"),
+        sha256: "fake-google-sha256-0000000000000000000000000000000000000000000000",
+      };
+    },
+  });
+  let createdDocument: unknown;
+  const app = buildApp(
+    deps({ createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; } }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_DOIS_FALLBACKS_MESMA_FONTE), deduplicado,
+  );
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
+  assert.equal(chamadasFetchFace, 1, "fetchFace deveria ter sido chamado uma vez só, não uma por camada");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc = createdDocument as any;
+  const textos = doc.pages[0].els.filter((el: { type: string }) => el.type === "text");
+  assert.equal(textos.length, 2);
+  assert.ok(textos.every((t: { font: string }) => t.font === "Montserrat"), "as duas camadas deveriam ter trocado para a mesma face");
+  assert.equal(doc.fonts.filter((f: { family: string }) => f.family === "Montserrat").length, 1, "Doc.fonts não deveria ter a mesma face duplicada");
 });

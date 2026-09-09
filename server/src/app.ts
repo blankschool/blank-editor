@@ -1256,7 +1256,34 @@ export function buildApp(
     fonts: Array<{ family: string; weight: number; sha256: string; ttf: string; woff2: string; glyphs?: string }>;
   }> {
     if (!googleFonts) return { pages, fonts: [] };
-    const registradas = new Map<string, { family: string; weight: number; sha256: string; ttf: string; woff2: string }>();
+    type Face = { family: string; weight: number; sha256: string; ttf: string; woff2: string };
+    // Guarda a PROMESSA, não o resultado: várias camadas concorrentes pedindo a mesma família+
+    // peso (comum numa página com vários blocos em fallback) chegariam aqui todas com
+    // `registradas.get(chaveFace)` ainda vazio se só o valor resolvido fosse cacheado — cada
+    // uma baixaria/subiria/registraria a MESMA face em paralelo. Cachear a promessa faz a
+    // segunda chamada esperar a primeira em vez de duplicar o trabalho.
+    const registradas = new Map<string, Promise<Face | null>>();
+
+    function obterOuBaixarFace(escolhida: FontMatch): Promise<Face | null> {
+      const chaveFace = `${escolhida.family}::${escolhida.weight}`;
+      let promessa = registradas.get(chaveFace);
+      if (!promessa) {
+        promessa = (async () => {
+          const baixada = await googleFonts!.fetchFace(escolhida.family, escolhida.weight).catch(() => null);
+          if (!baixada) return null;
+          const { sfntPath, woff2Path } = await uploadFontFace(
+            storage!.client, baixada.sha256, { ext: "ttf", bytes: baixada.ttf }, baixada.woff2);
+          await deps.upsertFontFace({
+            id: randomUUID(), ownerId, sha256: baixada.sha256,
+            internalFamily: escolhida.family, weight: escolhida.weight, style: "Regular",
+            sfntPath, woff2Path,
+          });
+          return { family: escolhida.family, weight: escolhida.weight, sha256: baixada.sha256, ttf: sfntPath, woff2: woff2Path };
+        })();
+        registradas.set(chaveFace, promessa);
+      }
+      return promessa;
+    }
 
     const novasPaginas = await Promise.all(pages.map(async (page) => {
       const textos = page.elements.filter((el): el is Extract<typeof el, { type: "text" }> => el.type === "text");
@@ -1272,28 +1299,16 @@ export function buildApp(
         if (el.type !== "text" || !el.fontOriginal) return el;
         const escolhida = matches.get(el.fontOriginal);
         if (!escolhida) return el;
-
-        const chaveFace = `${escolhida.family}::${escolhida.weight}`;
-        let face = registradas.get(chaveFace);
-        if (!face) {
-          const baixada = await googleFonts!.fetchFace(escolhida.family, escolhida.weight).catch(() => null);
-          if (!baixada) return el;
-          const { sfntPath, woff2Path } = await uploadFontFace(
-            storage!.client, baixada.sha256, { ext: "ttf", bytes: baixada.ttf }, baixada.woff2);
-          await deps.upsertFontFace({
-            id: randomUUID(), ownerId, sha256: baixada.sha256,
-            internalFamily: escolhida.family, weight: escolhida.weight, style: "Regular",
-            sfntPath, woff2Path,
-          });
-          face = { family: escolhida.family, weight: escolhida.weight, sha256: baixada.sha256, ttf: sfntPath, woff2: woff2Path };
-          registradas.set(chaveFace, face);
-        }
+        const face = await obterOuBaixarFace(escolhida);
+        if (!face) return el;
         return { ...el, font: face.family, weight: face.weight };
       }));
       return { ...page, elements };
     }));
 
-    return { pages: novasPaginas, fonts: [...registradas.values()] };
+    const resolvidas = await Promise.all(registradas.values());
+    const fonts = resolvidas.filter((f): f is Face => f !== null);
+    return { pages: novasPaginas, fonts };
   }
 
   // Junta páginas+elementos do microsserviço num Doc do editor (src/types.ts). Cada El exige um

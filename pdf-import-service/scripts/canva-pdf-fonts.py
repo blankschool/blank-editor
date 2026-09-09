@@ -35,34 +35,61 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 
-# (sufixo, estilo normalizado). Precisa ser par explícito, não `sufixo[1:]`: o Canva usa MAIS
-# de uma abreviação para o mesmo estilo em pontos diferentes do PDF — `page.get_fonts()` relata
-# "LibreCaslonCondensed-Regular" mas `span["font"]` relata "LibreCaslonCondensed-Reg" para a
-# MESMA fonte (achado testando com um PDF real: a fonte reconstruía com sucesso em fonts.json,
-# mas `extrair_texto` nunca achava o par e descartava pro fallback Inter mesmo assim). Sem
-# normalizar as duas abreviações pro mesmo "Regular", os dois caminhos calculam família/estilo
-# diferentes e a chave nunca bate — o mesmo modo de falha que o comentário de `parte()` já
-# descrevia para espaço vs hífen, só que entre "Reg"/"Regular" e "Ita"/"Italic".
-SUFIXOS = (
-    ("-Bd", "Bold"), ("-Bold", "Bold"),
-    ("-Rg", "Regular"), ("-Reg", "Regular"), ("-Regular", "Regular"),
-    ("-Lt", "Light"), ("-Light", "Light"),
-    ("-Md", "Medium"), ("-Medium", "Medium"),
-    ("-Sb", "Semibold"), ("-Semibold", "Semibold"), ("-SemiBold", "Semibold"),
-    ("-Blk", "Black"), ("-Black", "Black"),
-    ("-It", "Italic"), ("-Ita", "Italic"), ("-Italic", "Italic"),
-    ("-Th", "Thin"), ("-Thin", "Thin"),
+# (abreviação, estilo normalizado) por peso — a base pra gerar SUFIXOS. Separado de PESOS pra
+# poder combinar cada peso com "Italic" sem repetir a lista à mão (ver `_sufixos` abaixo).
+PESOS = (
+    ("Bd", "Bold"), ("Bold", "Bold"),
+    ("Rg", "Regular"), ("Reg", "Regular"), ("Regular", "Regular"),
+    ("Xlt", "ExtraLight"), ("ExtraLight", "ExtraLight"),
+    ("Lt", "Light"), ("Light", "Light"),
+    ("Md", "Medium"), ("Medium", "Medium"),
+    ("Sb", "Semibold"), ("Semibold", "Semibold"), ("SemiBold", "Semibold"),
+    ("Db", "Semibold"), ("DemiBold", "Semibold"), ("Demi", "Semibold"),
+    ("Xbd", "ExtraBold"), ("ExtraBold", "ExtraBold"),
+    ("Blk", "Black"), ("Black", "Black"), ("Hv", "Black"), ("Heavy", "Black"),
+    ("Th", "Thin"), ("Thin", "Thin"),
 )
+ITALICOS = ("Italic", "Ita", "It")
+
+def _sufixos():
+    """Gera (sufixo, estilo normalizado) a partir de PESOS x ITALICOS, em vez de listado à mão:
+    precisa ser par explícito, não `sufixo[1:]`, porque o Canva usa MAIS de uma abreviação para
+    o mesmo estilo em pontos diferentes do PDF — `page.get_fonts()` relata
+    "LibreCaslonCondensed-Regular" mas `span["font"]` relata "LibreCaslonCondensed-Reg" para a
+    MESMA fonte (achado testando com um PDF real: a fonte reconstruía com sucesso em
+    fonts.json, mas `extrair_texto` nunca achava o par e descartava pro fallback Inter mesmo
+    assim, ea0f8fa). Sem normalizar as abreviações pro mesmo estilo, os dois caminhos calculam
+    família/estilo diferentes e a chave nunca bate.
+
+    A combinação com Italic existe pelo mesmo motivo: exportadores costumam colar o peso e
+    "Italic" sem separador no meio ("Roboto-BoldItalic"), então um sufixo só de peso (`-Bold`)
+    ou só de itálico (`-Italic`) não fecha com o final da string — cai no default (família
+    errada) do mesmo jeito que "-Reg" caía antes de existir na lista.
+
+    Ordenado do sufixo mais longo pro mais curto: paranoia contra um sufixo curto (`-It`)
+    aparecer antes de um composto (`-BoldItalic`) que também terminaria batendo — na prática
+    `endswith` já não colide aqui (nenhum sufixo curto é sufixo textual de outro composto), mas
+    ordenar por tamanho custa nada e evita esse tipo de bug reaparecer se a lista crescer."""
+    pares = []
+    for abrev, estilo in PESOS:
+        pares.append((f"-{abrev}", estilo))
+        for ita in ITALICOS:
+            pares.append((f"-{abrev}{ita}", f"{estilo} Italic"))
+    for ita in ITALICOS:
+        pares.append((f"-{ita}", "Italic"))
+    return tuple(sorted(pares, key=lambda par: -len(par[0])))
+
+SUFIXOS = _sufixos()
 
 # Peso aproximado por nome de estilo, usado só quando a fonte original do bloco não pôde
 # ser reconstruída (sem arquivo embutido ou sem ToUnicode — ver os `continue` mais abaixo).
 # Mapeia pro peso mais próximo que a Inter embutida do servidor cobre (server/src/render/
 # builtinFaces.ts: 300/400/500/600/700/800), pra escolher a face substituta certa em vez de
-# cair sempre em 400.
+# cair sempre em 400. Itálico não muda peso, então o lookup abaixo (`extrair_texto`) tira o
+# " Italic" do estilo antes de consultar aqui — sem isso teria que duplicar cada entrada.
 ESTILO_PESO = {
-    "Thin": 300, "Light": 300, "Regular": 400, "Medium": 500,
-    "Semibold": 600, "SemiBold": 600, "Bold": 700, "Black": 800,
-    "Italic": 400,
+    "Thin": 300, "ExtraLight": 300, "Light": 300, "Regular": 400, "Medium": 500,
+    "Semibold": 600, "Bold": 700, "ExtraBold": 800, "Black": 800,
 }
 
 def parte(base):
@@ -363,9 +390,10 @@ def extrair_texto(page, peso_por_estilo):
             # sempre tem embutida (server/src/render/builtinFaces.ts) — o texto sobrevive com
             # uma fonte parecida em vez de desaparecer do design importado sem aviso.
             font_original = f"{familia}-{estilo}"
+            peso = ESTILO_PESO.get(estilo.removesuffix(" Italic"), 400)
             print(f"  {familia}-{estilo}: fonte nao reconstruida, usando Inter peso "
-                  f"{ESTILO_PESO.get(estilo, 400)} como substituta")
-            familia, peso = "Inter", ESTILO_PESO.get(estilo, 400)
+                  f"{peso} como substituta")
+            familia = "Inter"
         x0, y0, x1, y1 = bloco["bbox"]
         dx, dy = linhas[0].get("dir", (1, 0))
         ang = math.atan2(-dy, dx)
