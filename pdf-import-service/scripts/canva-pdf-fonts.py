@@ -38,6 +38,17 @@ from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 SUFIXOS = ("-Bd","-Bold","-Rg","-Regular","-Lt","-Light","-Md","-Medium",
            "-Sb","-Semibold","-SemiBold","-Blk","-Black","-It","-Italic","-Th","-Thin")
 
+# Peso aproximado por nome de estilo, usado só quando a fonte original do bloco não pôde
+# ser reconstruída (sem arquivo embutido ou sem ToUnicode — ver os `continue` mais abaixo).
+# Mapeia pro peso mais próximo que a Inter embutida do servidor cobre (server/src/render/
+# builtinFaces.ts: 300/400/500/600/700/800), pra escolher a face substituta certa em vez de
+# cair sempre em 400.
+ESTILO_PESO = {
+    "Thin": 300, "Light": 300, "Regular": 400, "Medium": 500,
+    "Semibold": 600, "SemiBold": 600, "Bold": 700, "Black": 800,
+    "Italic": 400,
+}
+
 def parte(base):
     """NYTFranklin-Bold -> ("NYTFranklin", "Bold"). O peso vem do OS/2; manter o
     sufixo no nome da família faria Bold e Light virarem famílias diferentes e o
@@ -326,10 +337,13 @@ def extrair_texto(page, peso_por_estilo):
         familia, estilo = parte(primeiro_span["font"].split("+")[-1])
         peso = peso_por_estilo.get((familia, estilo))
         if peso is None:
-            # A fonte deste bloco nao foi reconstruida (sem arquivo embutido ou sem ToUnicode) —
-            # sem uma DocFont correspondente, o bloco ficaria apontando pra familia que o editor
-            # nao acha. Melhor deixar de fora do que desenhar com a fonte errada.
-            continue
+            # A fonte deste bloco nao foi reconstruida (sem arquivo embutido ou sem ToUnicode).
+            # Antes isso descartava o bloco em silencio; agora cai pra Inter, que o servidor
+            # sempre tem embutida (server/src/render/builtinFaces.ts) — o texto sobrevive com
+            # uma fonte parecida em vez de desaparecer do design importado sem aviso.
+            print(f"  {familia}-{estilo}: fonte nao reconstruida, usando Inter peso "
+                  f"{ESTILO_PESO.get(estilo, 400)} como substituta")
+            familia, peso = "Inter", ESTILO_PESO.get(estilo, 400)
         x0, y0, x1, y1 = bloco["bbox"]
         dx, dy = linhas[0].get("dir", (1, 0))
         ang = math.atan2(-dy, dx)
