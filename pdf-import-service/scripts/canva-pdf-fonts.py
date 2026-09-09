@@ -35,8 +35,24 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
 
-SUFIXOS = ("-Bd","-Bold","-Rg","-Regular","-Lt","-Light","-Md","-Medium",
-           "-Sb","-Semibold","-SemiBold","-Blk","-Black","-It","-Italic","-Th","-Thin")
+# (sufixo, estilo normalizado). Precisa ser par explícito, não `sufixo[1:]`: o Canva usa MAIS
+# de uma abreviação para o mesmo estilo em pontos diferentes do PDF — `page.get_fonts()` relata
+# "LibreCaslonCondensed-Regular" mas `span["font"]` relata "LibreCaslonCondensed-Reg" para a
+# MESMA fonte (achado testando com um PDF real: a fonte reconstruía com sucesso em fonts.json,
+# mas `extrair_texto` nunca achava o par e descartava pro fallback Inter mesmo assim). Sem
+# normalizar as duas abreviações pro mesmo "Regular", os dois caminhos calculam família/estilo
+# diferentes e a chave nunca bate — o mesmo modo de falha que o comentário de `parte()` já
+# descrevia para espaço vs hífen, só que entre "Reg"/"Regular" e "Ita"/"Italic".
+SUFIXOS = (
+    ("-Bd", "Bold"), ("-Bold", "Bold"),
+    ("-Rg", "Regular"), ("-Reg", "Regular"), ("-Regular", "Regular"),
+    ("-Lt", "Light"), ("-Light", "Light"),
+    ("-Md", "Medium"), ("-Medium", "Medium"),
+    ("-Sb", "Semibold"), ("-Semibold", "Semibold"), ("-SemiBold", "Semibold"),
+    ("-Blk", "Black"), ("-Black", "Black"),
+    ("-It", "Italic"), ("-Ita", "Italic"), ("-Italic", "Italic"),
+    ("-Th", "Thin"), ("-Thin", "Thin"),
+)
 
 # Peso aproximado por nome de estilo, usado só quando a fonte original do bloco não pôde
 # ser reconstruída (sem arquivo embutido ou sem ToUnicode — ver os `continue` mais abaixo).
@@ -61,9 +77,9 @@ def parte(base):
     os dois viram (familia, estilo) diferentes e `extrair_texto` descarta o bloco
     inteiro em silêncio, achando que a fonte dele nunca foi reconstruída."""
     base = base.replace(" ", "-")
-    for s in SUFIXOS:
-        if base.endswith(s):
-            return base[:-len(s)], s[1:]
+    for sufixo, estilo in SUFIXOS:
+        if base.endswith(sufixo):
+            return base[:-len(sufixo)], estilo
     return base, "Regular"
 
 def to_unicode(doc, xref):
