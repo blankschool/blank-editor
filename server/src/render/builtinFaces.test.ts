@@ -19,9 +19,9 @@ test("sem as embutidas o mesmo render falha — o teste acima não passa por aci
   assert.throws(() => resolveFaces([], listUsedFamilies(pagina)), /não declara nenhuma face/);
 });
 
-test("cobre os pesos que os templates usam (400 e 700)", () => {
+test("cobre os pesos estáticos usuais da Inter, não só 400 e 700", () => {
   const pesos = builtinFaces().map((f) => f.weight).sort((a, b) => a - b);
-  assert.deepEqual(pesos, [400, 700]);
+  assert.deepEqual(pesos, [300, 400, 500, 600, 700, 800]);
   for (const f of builtinFaces()) assert.equal(f.family, DEFAULT_FONT_FAMILY);
 });
 

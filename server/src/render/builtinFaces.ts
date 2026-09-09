@@ -46,6 +46,13 @@ function face(arquivo: string, weight: number): FaceRef {
 let cache: FaceRef[] | null = null;
 
 export function builtinFaces(): FaceRef[] {
-  cache ??= [face("Inter-Regular.ttf", 400), face("Inter-Bold.ttf", 700)];
+  cache ??= [
+    face("Inter-Light.ttf", 300),
+    face("Inter-Regular.ttf", 400),
+    face("Inter-Medium.ttf", 500),
+    face("Inter-SemiBold.ttf", 600),
+    face("Inter-Bold.ttf", 700),
+    face("Inter-ExtraBold.ttf", 800),
+  ];
   return cache;
 }
