@@ -1,4 +1,5 @@
 import type { Doc, DocFont } from "./types";
+import { replacementFontFiles, REPLACEMENT_PREFIX } from "../server/src/render/replacementFonts.ts";
 
 /**
  * Registra no navegador as fontes que um design carrega consigo (`Doc.fonts`).
@@ -17,28 +18,37 @@ import type { Doc, DocFont } from "./types";
 const loaded = new Set<string>();
 
 function key(font: DocFont): string {
-  return `${font.family}::${font.weight}::${font.sha256}`;
+  return `${font.family}::${font.weight}::${font.style || "normal"}::${font.sha256}`;
 }
 
 async function loadOne(font: DocFont): Promise<void> {
   if (!font.family || !font.woff2 || loaded.has(key(font))) return;
   try {
-    const face = new FontFace(font.family, `url(${font.woff2}) format("woff2")`, {
+    const face = new FontFace(font.family, `url(${JSON.stringify(font.woff2)})`, {
       weight: String(font.weight || 400),
+      style: /italic|oblique/i.test(font.style || "") ? "italic" : "normal",
     });
     await face.load();
     document.fonts.add(face);
     loaded.add(key(font));
-  } catch {
-    // Fonte inacessível: o design ainda abre, só desenha com a fonte de fallback.
+  } catch (error) {
+    throw new Error(`Nao foi possivel carregar a fonte ${font.family}.`, { cause: error });
   }
 }
 
 /** Resolve quando todas as faces do documento terminaram (ou falharam). */
 export async function loadDesignFonts(doc: Doc): Promise<void> {
-  if (!doc.fonts?.length) return;
+  const needed = new Set(doc.pages.flatMap(p => p.els.filter(e => e.type === "text" && e.font?.startsWith(REPLACEMENT_PREFIX)).map(e => e.font)));
+  await Promise.all(replacementFontFiles.filter(f => needed.has(f.family)).map(async f => {
+    const id = `${f.family}::${f.weight}::${f.style}`;
+    if (loaded.has(id)) return;
+    const face = new FontFace(f.family, `url(/api/v1/render-fonts/${f.file}) format("truetype")`, { weight: String(f.weight), style: f.style });
+    await face.load();
+    document.fonts.add(face);
+    loaded.add(id);
+  }));
   // Keep subset precedence identical to the API's ordered @font-face declarations.
-  for (const font of doc.fonts) await loadOne(font);
+  for (const font of doc.fonts ?? []) await loadOne(font);
 }
 
 /**

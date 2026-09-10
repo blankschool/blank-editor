@@ -67,13 +67,15 @@ export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonl
     // Chromium uses ordered @font-face declarations, just like the editor's FontFace
     // registrations. Glyph metadata is optional; the font files provide coverage.
     // The legacy SVG rasterizer still needs an unambiguous family/weight pair.
-    const porPeso = new Map<number, Set<string>>();
+    const porPeso = new Map<string, Set<string>>();
     for (const face of faces) {
-      const shas = porPeso.get(face.weight) ?? new Set<string>();
+      const key = `${face.weight}/${face.style || "normal"}`;
+      const shas = porPeso.get(key) ?? new Set<string>();
       shas.add(face.sha256);
-      porPeso.set(face.weight, shas);
+      porPeso.set(key, shas);
     }
-    for (const [weight, shas] of porPeso) {
+    for (const [variant, shas] of porPeso) {
+      const weight = variant.split("/")[0];
       if (shas.size > 1 && !useBrowserPrecedence) {
         throw new Error(
           `a família "${family}" peso ${weight} foi declarada com ${shas.size} arquivos diferentes ` +

@@ -8,6 +8,7 @@ RUN npm ci
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
 COPY server/src/render/editorText.ts server/src/render/svg.ts ./server/src/render/
+COPY server/src/render/replacementFonts.ts ./server/src/render/
 
 ARG VITE_SUPABASE_FUNCTIONS_URL
 ENV VITE_SUPABASE_FUNCTIONS_URL=${VITE_SUPABASE_FUNCTIONS_URL}

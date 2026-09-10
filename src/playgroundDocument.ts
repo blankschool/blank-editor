@@ -1,5 +1,6 @@
 import type { Doc } from './types.ts';
 import { createTemplateOnServer } from './templateStore.ts';
+import { replaceTemplateText } from '../server/src/render/replacementFonts.ts';
 
 export interface PlaygroundField {
   name: string;
@@ -22,10 +23,10 @@ export function createPlaygroundDocument(source: Doc, page: number, fields: read
     for (const element of document.pages[document.active].els) {
       if (element.name !== field.name || element.type !== field.type) continue;
       if (element.type === 'text') {
-        if (element.text !== field.value) {
-          element.text = field.value;
-          element.autoFit = true;
+        const replacement = replaceTemplateText(element, field.value, document.fonts);
+        if (replacement !== element) {
           delete element.runs;
+          Object.assign(element, replacement);
         }
       }
       else element.src = field.value.trim();

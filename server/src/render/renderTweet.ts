@@ -4,6 +4,8 @@ import { listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides
 import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
 import { listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
 import { renderBrowserPng } from "./browserRender.ts";
+import { applyLayerOverrides } from "./applyLayerOverrides.ts";
+import { completeFontFaces } from "./completeFontFiles.ts";
 import { builtinFaces } from "./builtinFaces.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
@@ -54,6 +56,7 @@ export async function renderTemplatePng(
    */
   registryFaces: readonly FaceRef[] = [],
 ): Promise<Buffer> {
+  document = applyLayerOverrides(document, layers, pageIndex);
   const toFetch: Record<string, string> = {};
   for (const [name, url] of Object.entries(layers.images)) {
     if (!layers.hidden.has(name)) toFetch[name] = url;
@@ -80,10 +83,10 @@ export async function renderTemplatePng(
   // embutidas (builtinFaces.ts) garantem apenas que a família padrão nunca falte.
   const acumuladas: FaceRef[] = [];
   const vistas = new Set<string>();
-  for (const source of [doDocumento, registryFaces, builtinFaces()]) {
+  for (const source of [doDocumento, registryFaces, builtinFaces(), completeFontFaces()]) {
     const sourceKeys = new Set<string>();
     for (const f of source) {
-      const chave = `${f.family}::${f.weight}`;
+      const chave = `${f.family}::${f.weight}::${"style" in f ? f.style : "normal"}`;
       if (vistas.has(chave)) continue;
       sourceKeys.add(chave);
       acumuladas.push(f);

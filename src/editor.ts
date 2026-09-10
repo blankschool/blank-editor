@@ -1,5 +1,6 @@
 import "./styles.css";
 import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
+import { replaceTemplateText, REPLACEMENT_PREFIX } from "../server/src/render/replacementFonts.ts";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
@@ -593,7 +594,8 @@ function renderToolbar() {
   let html = "";
 
   if (one && t === "text") {
-    html += `<select id="tFont" class="qselect" title="Fonte">${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
+    const importedFont = e.font?.startsWith(REPLACEMENT_PREFIX) ? `<option value="${esc(e.font)}" selected>${esc(e.font.slice(REPLACEMENT_PREFIX.length))}</option>` : "";
+    html += `<select id="tFont" class="qselect" title="Fonte">${importedFont}${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
     html += `<div class="qsep"></div>`;
     html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" value="${Math.round(e.size)}" aria-label="Tamanho da fonte"><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
     html += `<div class="qsep"></div>`;
@@ -1221,7 +1223,13 @@ function stopEditing() {
   if (t && el) {
     const v = t.innerText.replace(/ /g, " ").replace(/\n$/, "");
     t.removeAttribute("contenteditable");
-    if (v !== el.text) { el.text = v; commit(); }
+    if (v !== el.text) {
+      const replacement = replaceTemplateText(el, v, doc.fonts);
+      delete el.runs;
+      Object.assign(el, replacement);
+      commit();
+      loadDesignFonts(doc).then(() => { if (editorMounted) renderAll(); }).catch(() => toast("Não foi possível carregar as fontes do design."));
+    }
   }
   editingId = null;
   hideTextSelToolbar();
@@ -3039,12 +3047,12 @@ export async function openTemplateById(id: string) {
   const target = `#/editor/${encodeURIComponent(id)}`;
   if (location.hash !== target) location.hash = target;
   try {
-    openTemplateDocument(await fetchTemplateFromServer(id));
+    await openTemplateDocument(await fetchTemplateFromServer(id));
     return;
   } catch { /* offline, or not created on the server yet — fall back to whatever's local */ }
   finally { if (loadingTemplateId === id) loadingTemplateId = null; }
   const local = loadTemplateLocally(id) ?? (id === TWEET_TEMPLATE_ID ? createTweetTemplateDocument() : null);
-  if (local) openTemplateDocument(local);
+  if (local) await openTemplateDocument(local).catch(() => toast("Não foi possível carregar as fontes do design."));
   else toast("Não foi possível abrir esse template.");
 }
 
@@ -3067,11 +3075,12 @@ function normalizeDoc(d: Doc): Doc {
   return d;
 }
 
-export function openTemplateDocument(templateDoc: Doc) {
+let openingDocumentVersion = 0;
+export async function openTemplateDocument(templateDoc: Doc) {
+  const version = ++openingDocumentVersion;
+  await loadDesignFonts(templateDoc);
+  if (version !== openingDocumentVersion) return;
   doc = normalizeDoc(templateDoc);
-  // As fontes do design chegam junto com o documento e não estão carregadas ainda; redesenha
-  // quando chegarem, senão o canvas fica com a medida da fonte de fallback.
-  loadDesignFonts(doc).then(() => { if (editorMounted) renderAll(); });
   doc.active = clamp(doc.active | 0, 0, doc.pages.length - 1);
   pendingDocument = true;
   sel = [];

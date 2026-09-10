@@ -25,6 +25,7 @@ import { FONT_SFNT_PREFIX, fetchFontSfnt } from "../storage.ts";
 export interface FaceRef {
   family: string;
   weight: number;
+  style?: "normal" | "italic";
   /** sha256 dos bytes do SFNT — a identidade da face e a chave do cache. */
   sha256: string;
   /** De onde buscar em caso de cache miss: URL http(s), ou caminho absoluto local. */

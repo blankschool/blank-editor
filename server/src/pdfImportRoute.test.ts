@@ -192,7 +192,7 @@ test("responde 502 quando o microsserviço falha por outro motivo", async () => 
   assert.match(res.json().error, /respondeu 500/);
 });
 
-test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o template", async () => {
+test("201: salva fontes completas desde o import, sem registrar subsets do PDF", async () => {
   let createdDocument: unknown;
   const app = buildApp(
     deps({
@@ -211,6 +211,7 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
   assert.equal(res.statusCode, 201);
   assert.deepEqual(res.json(), {
     id: "imported-tpl", name: "carrossel", pageCount: 1, layerCount: 4, fontCount: 1, flaggedPages: [],
+    fontSubstitutions: [{ original: "NYTFranklin", replacement: "Inter", reason: "bundled-fallback" }],
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -228,13 +229,13 @@ test("201: monta o Doc a partir do resultado, sobe imagem/fonte e cria o templat
   assert.equal(path.opacity, 0.8);
   assert.equal(text.type, "text");
   assert.equal(text.text, "Título");
-  assert.equal(text.font, "NYTFranklin");
+  assert.equal(text.font, "Blank Complete Inter");
+  assert.equal(text.autoFit, true);
+  assert.equal(doc.fontPolicy, "complete-v1");
   assert.equal(image.type, "image");
   assert.equal(image.name, "Foto de fundo");
   assert.match(image.src, /^supabase:\/\/uploads\//);
-  assert.equal(doc.fonts.length, 1);
-  assert.equal(doc.fonts[0].family, "NYTFranklin");
-  assert.match(doc.fonts[0].ttf, /^supabase:\/\/font-sfnt\//);
+  assert.equal(doc.fonts.length, 0);
 });
 
 test("com googleFonts configurado e a IA achando um match, o bloco em Inter troca para a Google Font escolhida", async () => {
@@ -251,6 +252,10 @@ test("com googleFonts configurado e a IA achando um match, o bloco em Inter troc
   const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
   assert.equal(texto.font, "Montserrat");
   assert.equal(texto.weight, 700);
+  assert.equal(texto.autoFit, true);
+  assert.deepEqual(res.json().fontSubstitutions, [{ original: "DMSans-Bold", replacement: "Montserrat", reason: "ai-suggestion" }]);
+  assert.equal(doc.fonts[0].source, "fontsource");
+  assert.equal(doc.fonts[0].subset, false);
   assert.ok(doc.fonts.some((f: { family: string }) => f.family === "Montserrat"), "a Google Font escolhida deveria entrar em Doc.fonts");
 });
 
@@ -266,7 +271,7 @@ test("sem googleFonts configurado, o bloco em fallback permanece em Inter — re
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = createdDocument as any;
   const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
-  assert.equal(texto.font, "Inter");
+  assert.equal(texto.font, "Blank Complete Inter");
 });
 
 test("googleFonts configurado mas sem match (ou o download falha) — o bloco continua em Inter, sem quebrar o import", async () => {
@@ -282,7 +287,7 @@ test("googleFonts configurado mas sem match (ou o download falha) — o bloco co
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = createdDocument as any;
   const texto = doc.pages[0].els.find((el: { type: string }) => el.type === "text");
-  assert.equal(texto.font, "Inter");
+  assert.equal(texto.font, "Blank Complete Inter");
 });
 
 test("googleFonts.match lançando não derruba o import — mesma proteção de rede fora do ar", async () => {
@@ -292,7 +297,7 @@ test("googleFonts.match lançando não derruba o import — mesma proteção de 
   assert.equal(res.statusCode, 201);
 });
 
-test("duas camadas pedindo a mesma Google Font baixam/registram a face uma vez só, não uma por camada", async () => {
+test("duas camadas com sugestao da IA compartilham a face empacotada pelo Fontsource", async () => {
   let chamadasFetchFace = 0;
   const deduplicado = fakeGoogleFonts({
     fetchFace: async () => {
@@ -310,7 +315,7 @@ test("duas camadas pedindo a mesma Google Font baixam/registram a face uma vez s
   );
   const res = await postPdf(app, pdfForm());
   assert.equal(res.statusCode, 201);
-  assert.equal(chamadasFetchFace, 1, "fetchFace deveria ter sido chamado uma vez só, não uma por camada");
+  assert.equal(chamadasFetchFace, 0, "Fontsource supplies the face without the legacy downloader");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const doc = createdDocument as any;

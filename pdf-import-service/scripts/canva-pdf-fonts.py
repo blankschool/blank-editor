@@ -404,6 +404,8 @@ def extrair_texto(page, peso_por_estilo):
             w=round(w, 2), h=round(h, 2),
             text=texto,
             font=familia,
+            fontStyle=estilo,
+            fontCategory="mono" if primeiro_span.get("flags", 0) & 8 else "serif" if primeiro_span.get("flags", 0) & 4 else "sans",
             weight=peso,
             size=round(primeiro_span.get("size", 12), 2),
             fill="#%06x" % (primeiro_span.get("color", 0) & 0xFFFFFF),

@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { completeFontPath } from "./render/completeFontFiles.ts";
+import { normalizeImportedText } from "./render/replacementFonts.ts";
+import { createImportFontResolver } from "./render/importFontResolver.ts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
@@ -26,7 +30,7 @@ import type { ApiKeyOwner, ApiKeySummary, BrandKitRow, DesignCommentReply, Desig
 import { buildGeneratedDocument, GenerationDocumentError, type GenerationPageInput } from "./generationDocument.ts";
 import { createMemoryGenerationRepository, hashJson, type GenerationRepository, type GenerationRun } from "./generationWorkflow.ts";
 import type { AcquiredMedia, MediaAcquisitionService, MediaAssetRequest } from "./mediaAcquisition.ts";
-import { FlattenedPdfError, type ImportedPage, type ImportedFont, type ImportedImage, type PdfImportService } from "./pdfImportService.ts";
+import { FlattenedPdfError, type ImportedPage, type ImportedImage, type PdfImportService } from "./pdfImportService.ts";
 import type { FontMatch, FontMatchHint } from "./render/googleFontMatch.ts";
 import type { FetchedGoogleFont } from "./render/googleFontFetch.ts";
 import {
@@ -178,6 +182,7 @@ export function buildApp(
   media: MediaDeps | null = null,
   pdfImport: PdfImportDeps | null = null,
   googleFonts: GoogleFontsDeps | null = null,
+  resolveImportFont = createImportFontResolver({ apiKey: process.env.GOOGLE_FONTS_API_KEY }),
 ): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
   // O logger do Fastify está desligado (`Fastify({...})` sem `logger`) — sem isto, qualquer
@@ -191,6 +196,11 @@ export function buildApp(
   const generations = deps.generations ?? createMemoryGenerationRepository();
   app.register(fastifyCookie);
   app.register(fastifyMultipart, { limits: { fileSize: BODY_LIMIT_BYTES } });
+  app.get<{ Params: { file: string } }>("/api/v1/render-fonts/:file", async (request, reply) => {
+    const path = completeFontPath(request.params.file);
+    if (!path) return reply.code(404).send({ error: "font not found" });
+    return reply.type("font/ttf").header("Cache-Control", "public, max-age=3600").send(await readFile(path));
+  });
 
   /**
    * Resolve quem está chamando, em três caminhos possíveis (nessa ordem):
@@ -1216,101 +1226,6 @@ export function buildApp(
     return bySrc;
   }
 
-  // Mesmo par uploadFontFace+upsertFontFace que POST /api/v1/fonts usa, só que chamado direto em
-  // vez de via HTTP — este código já roda com a identidade do dono, sem precisar de uma chave de
-  // API pra falar consigo mesmo. O sha256 é recalculado aqui pela mesma razão que em
-  // POST /api/v1/fonts: é a identidade da face, nunca aceita do que o PDF/microsserviço disser.
-  async function registerImportedFonts(ownerId: string, fonts: ImportedFont[]) {
-    return Promise.all(fonts.map(async (font) => {
-      const sha256 = createHash("sha256").update(font.ttf).digest("hex");
-      const { sfntPath, woff2Path } = await uploadFontFace(storage!.client, sha256, { ext: "ttf", bytes: font.ttf }, font.woff2);
-      await deps.upsertFontFace({
-        id: randomUUID(),
-        ownerId,
-        sha256,
-        internalFamily: font.familia,
-        postscriptName: font.postscriptName ?? null,
-        weight: font.peso,
-        style: font.estilo,
-        sfntPath,
-        woff2Path,
-      });
-      return { family: font.familia, weight: font.peso, sha256, woff2: woff2Path, ttf: sfntPath, glyphs: font.glifos };
-    }));
-  }
-
-  /**
-   * Melhora, quando possível, blocos que o Fix 2 (canva-pdf-fonts.py) já trocou por Inter
-   * porque não conseguiu reconstruir a fonte original — pergunta a uma IA (googleFonts.match)
-   * qual Google Font parece com o que a arte usava e, se achar, baixa e registra essa face
-   * (googleFonts.fetchFace), trocando `font`/`weight` só NESSE elemento.
-   *
-   * Estritamente aditivo: sem `googleFonts` configurado, sem match, ou sem conseguir baixar a
-   * face, os elementos ficam exatamente como o Fix 2 já deixa hoje (Inter) — nenhuma etapa
-   * daqui pode fazer um import que funcionava parar de funcionar.
-   */
-  async function upgradeFallbackFontsWithGoogleMatch(
-    ownerId: string, pages: ImportedPage[],
-  ): Promise<{
-    pages: ImportedPage[];
-    fonts: Array<{ family: string; weight: number; sha256: string; ttf: string; woff2: string; glyphs?: string }>;
-  }> {
-    if (!googleFonts) return { pages, fonts: [] };
-    type Face = { family: string; weight: number; sha256: string; ttf: string; woff2: string };
-    // Guarda a PROMESSA, não o resultado: várias camadas concorrentes pedindo a mesma família+
-    // peso (comum numa página com vários blocos em fallback) chegariam aqui todas com
-    // `registradas.get(chaveFace)` ainda vazio se só o valor resolvido fosse cacheado — cada
-    // uma baixaria/subiria/registraria a MESMA face em paralelo. Cachear a promessa faz a
-    // segunda chamada esperar a primeira em vez de duplicar o trabalho.
-    const registradas = new Map<string, Promise<Face | null>>();
-
-    function obterOuBaixarFace(escolhida: FontMatch): Promise<Face | null> {
-      const chaveFace = `${escolhida.family}::${escolhida.weight}`;
-      let promessa = registradas.get(chaveFace);
-      if (!promessa) {
-        promessa = (async () => {
-          const baixada = await googleFonts!.fetchFace(escolhida.family, escolhida.weight).catch(() => null);
-          if (!baixada) return null;
-          const { sfntPath, woff2Path } = await uploadFontFace(
-            storage!.client, baixada.sha256, { ext: "ttf", bytes: baixada.ttf }, baixada.woff2);
-          await deps.upsertFontFace({
-            id: randomUUID(), ownerId, sha256: baixada.sha256,
-            internalFamily: escolhida.family, weight: escolhida.weight, style: "Regular",
-            sfntPath, woff2Path,
-          });
-          return { family: escolhida.family, weight: escolhida.weight, sha256: baixada.sha256, ttf: sfntPath, woff2: woff2Path };
-        })();
-        registradas.set(chaveFace, promessa);
-      }
-      return promessa;
-    }
-
-    const novasPaginas = await Promise.all(pages.map(async (page) => {
-      const textos = page.elements.filter((el): el is Extract<typeof el, { type: "text" }> => el.type === "text");
-      const pistas: FontMatchHint[] = textos
-        .filter((el) => el.fontOriginal)
-        .map((el) => ({ chave: el.fontOriginal!, bbox: { x: el.x, y: el.y, w: el.w, h: el.h } }));
-      if (!pistas.length || !page.previewPng) return page;
-
-      const matches = await googleFonts!.match(page.previewPng, pistas).catch(() => new Map<string, FontMatch>());
-      if (!matches.size) return page;
-
-      const elements = await Promise.all(page.elements.map(async (el) => {
-        if (el.type !== "text" || !el.fontOriginal) return el;
-        const escolhida = matches.get(el.fontOriginal);
-        if (!escolhida) return el;
-        const face = await obterOuBaixarFace(escolhida);
-        if (!face) return el;
-        return { ...el, font: face.family, weight: face.weight };
-      }));
-      return { ...page, elements };
-    }));
-
-    const resolvidas = await Promise.all(registradas.values());
-    const fonts = resolvidas.filter((f): f is Face => f !== null);
-    return { pages: novasPaginas, fonts };
-  }
-
   // Junta páginas+elementos do microsserviço num Doc do editor (src/types.ts). Cada El exige um
   // conjunto de campos que a extração não tem motivo pra saber (rot/opacity/locked/...) — os
   // mesmos defaults que canva-import.ts já usa para o caminho manual de importação.
@@ -1355,6 +1270,9 @@ export function buildApp(
           rot: el.rot, opacity: 1, locked: false, hidden: false,
           fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
           text: el.text, font: el.font, weight: el.weight, size: el.size,
+          ...(el.italic !== undefined ? { italic: el.italic } : {}),
+          ...(el.autoFit ? { autoFit: true } : {}),
+          ...(el.fontCategory ? { fontCategory: el.fontCategory } : {}),
           // `lh` não é opcional na prática: o render em canvas (editor.ts) faz `size * lh` pra
           // posicionar cada linha — undefined vira NaN, e `fillText` com coordenada NaN não
           // desenha nada, em silêncio (achado exportando um design importado de verdade: a foto
@@ -1390,17 +1308,49 @@ export function buildApp(
     let row;
     let pages;
     let fonts;
+    const fontSubstitutions: Array<{ original: string; replacement: string; reason: string }> = [];
     try {
       const imageSrcById = await uploadImportedImages(ownerId, result.images);
-      fonts = await registerImportedFonts(ownerId, result.fonts);
-      // Depois de registrar as fontes reconstruídas do PDF: tenta melhorar os blocos que ainda
-      // ficaram em Inter (fallback do Fix 2) para uma Google Font parecida — devolve páginas
-      // NOVAS (não muta `result.pages`), então `buildImportedPages` precisa ler a partir daqui.
-      const upgrade = await upgradeFallbackFontsWithGoogleMatch(ownerId, result.pages);
-      fonts = [...fonts, ...upgrade.fonts];
-      pages = buildImportedPages(upgrade.pages, imageSrcById);
+      const registered = new Map<string, { family: string; weight: number; style: "normal" | "italic"; sha256: string; ttf: string; woff2: string; source: string; subset: false }>();
+      const normalized: ImportedPage[] = [];
+      for (const page of result.pages) {
+        const elements: ImportedPage["elements"] = [];
+        let suggestions: Map<string, FontMatch> | undefined;
+        for (const el of page.elements) {
+          if (el.type !== "text") { elements.push(el); continue; }
+          const pdfFace = result.fonts.find(f => f.familia === el.font && f.peso === el.weight && [...el.text].every(c => f.glifos.includes(c)));
+          const fallback = normalizeImportedText({ ...el, fontStyle: el.fontStyle || pdfFace?.estilo });
+          let resolved = await resolveImportFont({ family: el.fontOriginal || el.font, weight: el.weight, italic: Boolean(fallback.italic), text: el.text });
+          let usedAi = false;
+          if (!resolved && googleFonts && page.previewPng) {
+            suggestions ??= await googleFonts.match(page.previewPng, page.elements.filter(e => e.type === "text").map(e => ({
+              chave: e.fontOriginal || e.font, bbox: { x: e.x, y: e.y, w: e.w, h: e.h },
+            }))).catch(() => new Map<string, FontMatch>());
+            const suggestion = suggestions.get(el.fontOriginal || el.font);
+            if (suggestion) {
+              resolved = await resolveImportFont({ family: suggestion.family, weight: suggestion.weight, italic: Boolean(fallback.italic), text: el.text });
+              usedAi = Boolean(resolved);
+            }
+          }
+          if (!resolved) {
+            fontSubstitutions.push({ original: el.fontOriginal || el.font, replacement: fallback.font!.replace("Blank Complete ", ""), reason: "bundled-fallback" });
+            elements.push(fallback); continue;
+          }
+          if (usedAi) fontSubstitutions.push({ original: el.fontOriginal || el.font, replacement: resolved.family, reason: "ai-suggestion" });
+          const key = `${resolved.family}/${resolved.weight}/${resolved.style}`;
+          if (!registered.has(key)) {
+            const paths = await uploadFontFace(storage!.client, resolved.sha256, { ext: resolved.ext, bytes: resolved.bytes }, resolved.bytes, resolved.ext);
+            registered.set(key, { family: resolved.family, weight: resolved.weight, style: resolved.style,
+              sha256: resolved.sha256, ttf: paths.sfntPath, woff2: paths.woff2Path, source: resolved.source, subset: false });
+          }
+          elements.push({ ...el, font: resolved.family, weight: resolved.weight, italic: resolved.style === "italic", autoFit: true });
+        }
+        normalized.push({ ...page, elements });
+      }
+      pages = buildImportedPages(normalized, imageSrcById);
+      fonts = [...new Set(pages.flatMap(page => page.els.filter(el => el.type === "text").map(el => `${el.font}/${el.weight}/${el.italic}`)))];
       const name = file.filename?.replace(/\.pdf$/i, "").trim() || "PDF importado";
-      const document = { name, active: 0, pages, ...(fonts.length ? { fonts } : {}) };
+      const document = { name, active: 0, pages, fonts: [...registered.values()], fontPolicy: "complete-v1", fontSubstitutions };
       row = await deps.createTemplate(ownerId, { name, document });
     } catch (err) {
       // Sem isto, um erro daqui em diante (upload de imagem/fonte, montagem das páginas, criar o
@@ -1417,6 +1367,7 @@ export function buildApp(
       layerCount: pages.reduce((sum, page) => sum + page.els.length, 0),
       fontCount: fonts.length,
       flaggedPages: result.flaggedPages,
+      fontSubstitutions,
     });
   });
 

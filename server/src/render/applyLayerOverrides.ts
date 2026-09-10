@@ -1,5 +1,6 @@
 import { resolvePageIndex } from "./editableTweetTemplate.ts";
 import type { ParsedLayers } from "./layers.ts";
+import { replaceTemplateText } from "./replacementFonts.ts";
 
 interface OverridableElement {
   name?: string;
@@ -15,6 +16,7 @@ interface OverridablePage {
 }
 
 interface OverridableDocument {
+  fonts?: Array<{ family: string; glyphs?: string; subset?: boolean; style?: string }>;
   pages?: OverridablePage[];
   [key: string]: unknown;
 }
@@ -44,9 +46,7 @@ export function applyLayerOverrides(document: unknown, layers: ParsedLayers, pag
       const name = el?.name;
       if (!name) return el;
       if (el.type === "text" && layers.texts[name] !== undefined) {
-        if (layers.texts[name] === el.text) return el;
-        const { runs: _runs, ...base } = el;
-        return { ...base, text: layers.texts[name], autoFit: true };
+        return replaceTemplateText(el, layers.texts[name], doc.fonts);
       }
       if (el.type === "image" && layers.images[name] !== undefined) return { ...el, src: layers.images[name] };
       return el;

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Layers } from "./render/layers.ts";
 import type { MediaAssetRequest } from "./mediaAcquisition.ts";
+import { replaceTemplateText } from "./render/replacementFonts.ts";
 
 interface GeneratedElement {
   id?: string;
@@ -19,6 +20,7 @@ interface GeneratedPage {
 }
 
 export interface GeneratedDocument {
+  fonts?: Array<{ family: string; glyphs?: string; subset?: boolean; style?: string }>;
   name: string;
   active: number;
   pages: GeneratedPage[];
@@ -80,7 +82,7 @@ export function buildGeneratedDocument(
       const override = element.name ? requested.layers[element.name] : undefined;
       if (!override) return element;
       let generated = element;
-      if (element.type === "text" && override.text !== undefined) generated = { ...generated, text: override.text };
+      if (element.type === "text" && override.text !== undefined) generated = replaceTemplateText(generated, override.text, sourceDocument.fonts);
       if (element.type === "image" && override.image_url !== undefined) generated = { ...generated, src: override.image_url };
       if (override.hide !== undefined) generated = { ...generated, hidden: override.hide };
       return generated;

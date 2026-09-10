@@ -5,6 +5,10 @@
  */
 
 export type ImportedTextElement = {
+  fontCategory?: "sans" | "serif" | "mono";
+  fontStyle?: string;
+  italic?: boolean;
+  autoFit?: boolean;
   type: "text";
   x: number;
   y: number;

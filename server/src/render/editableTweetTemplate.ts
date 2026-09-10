@@ -202,13 +202,14 @@ export function listImageLayers(document: unknown, pageIndex?: number): Array<{ 
 
 /** As faces que este documento carrega consigo — ver Doc.fonts em src/types.ts. Uma entrada sem
  *  `sha256` é descartada: sem identidade não há cache confiável nem detecção de ambiguidade. */
-export function listDesignFonts(document: unknown): Array<{ family: string; weight: number; sha256: string; src: string; browserSrc?: string; glyphs?: string }> {
+export function listDesignFonts(document: unknown): Array<{ family: string; weight: number; style?: "normal" | "italic"; sha256: string; src: string; browserSrc?: string; glyphs?: string }> {
   const fonts = (document as { fonts?: unknown } | null)?.fonts;
   if (!Array.isArray(fonts)) return [];
   return fonts
-    .filter((f): f is { family: string; weight: number; sha256: string; ttf: string; woff2?: string; glyphs?: string } =>
+    .filter((f): f is { family: string; weight: number; style?: string; sha256: string; ttf: string; woff2?: string; glyphs?: string } =>
       Boolean(f && typeof f.family === "string" && typeof f.ttf === "string" && typeof f.sha256 === "string" && f.sha256))
     .map((f) => ({ family: f.family, weight: Number(f.weight) || 400, sha256: f.sha256, src: f.ttf,
+                   ...(f.style ? { style: /italic|oblique/i.test(f.style) ? "italic" as const : "normal" as const } : {}),
                    ...(f.woff2 ? { browserSrc: f.woff2 } : {}),
                    ...(typeof (f as { glyphs?: unknown }).glyphs === "string" ? { glyphs: (f as { glyphs: string }).glyphs } : {}) }));
 }

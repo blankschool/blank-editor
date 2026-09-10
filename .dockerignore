@@ -11,4 +11,5 @@ server/**
 server/src/render/*
 !server/src/render/editorText.ts
 !server/src/render/svg.ts
+!server/src/render/replacementFonts.ts
 *.log

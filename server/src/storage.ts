@@ -131,12 +131,14 @@ export async function uploadFontFace(
   sha256: string,
   sfnt: { ext: string; bytes: Buffer },
   woff2: Buffer,
+  browserFormat = "woff2",
 ): Promise<{ sfntPath: string; woff2Path: string }> {
   const sfntName = `${sha256}.${sfnt.ext}`;
-  const woff2Name = `${sha256}.woff2`;
+  const browserExt = browserFormat;
+  const woff2Name = `${sha256}.${browserExt}`;
   const [sfntRes, woff2Res] = await Promise.all([
-    client.storage.from(FONT_SFNT_BUCKET).upload(sfntName, sfnt.bytes, { contentType: "font/ttf", upsert: true }),
-    client.storage.from(FONTS_BUCKET).upload(woff2Name, woff2, { contentType: "font/woff2", upsert: true }),
+    client.storage.from(FONT_SFNT_BUCKET).upload(sfntName, sfnt.bytes, { contentType: `font/${sfnt.ext}`, upsert: true }),
+    client.storage.from(FONTS_BUCKET).upload(woff2Name, woff2, { contentType: `font/${browserExt}`, upsert: true }),
   ]);
   if (sfntRes.error) throw sfntRes.error;
   if (woff2Res.error) throw woff2Res.error;

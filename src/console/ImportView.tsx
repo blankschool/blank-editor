@@ -77,6 +77,9 @@ export function ImportView() {
                   : ""}.
               </span>
             </div>
+            {[...new Set(s.pdfImportResult.fontSubstitutions?.map(f => `${f.original} → ${f.replacement}`) ?? [])].map(change => (
+              <span key={change} className="text-faint">Fonte substituída: {change}</span>
+            ))}
             {s.pdfImportResult.flaggedPages.length > 0 && (
               <span className="text-faint">
                 {s.pdfImportResult.flaggedPages.length === 1 ? "A página" : "As páginas"}{" "}

@@ -130,11 +130,8 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
         flaggedPages.push(pageNumber);
       }
 
-      // Só gera o raster da página quando algum bloco de texto caiu no fallback do Python
-      // (fonte não reconstruída) — é a única situação em que o matching por IA tem algo pra
-      // fazer; nas demais páginas seria trabalho e banda gastos sem ninguém pra olhar.
-      const temFallback = textElements.some((el) => "fontOriginal" in el && el.fontOriginal);
-      const previewPng = temFallback
+      // Even a reconstructed PDF subset may have no complete, licensed counterpart.
+      const previewPng = textElements.length > 0
         ? await renderPagePreview(pdfPath, pageNumber, resolve(workDir, `page-${pageNumber}`))
         : undefined;
 

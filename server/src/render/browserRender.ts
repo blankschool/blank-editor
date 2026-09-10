@@ -44,8 +44,8 @@ export async function renderBrowserPng(
   const fontCss = (await Promise.all(faces.map(async (face, i) => {
     const bytes = face.browserSrc ? await fetchImage(face.browserSrc) : await readFile(fontFiles[i]);
     const family = JSON.stringify(face.family).replace(/</g, "\\3c ");
-    const format = face.browserSrc ? "woff2" : "truetype";
-    return `@font-face{font-family:${family};font-weight:${face.weight};src:url(data:font/${format};base64,${bytes.toString("base64")}) format('${format}');}`;
+    const format = bytes.subarray(0, 4).toString() === "wOF2" ? "woff2" : "truetype";
+    return `@font-face{font-family:${family};font-weight:${face.weight};font-style:${face.style || "normal"};src:url(data:font/${format};base64,${bytes.toString("base64")}) format('${format}');}`;
   }))).join("");
   await acquire();
   try {

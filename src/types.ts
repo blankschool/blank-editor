@@ -47,6 +47,8 @@ export interface TextRun {
 }
 
 export interface El {
+  fontCategory?: "sans" | "serif" | "mono";
+  fontOriginal?: string;
   autoFit?: boolean;
   id: string;
   type: ElType;
@@ -161,6 +163,8 @@ export interface Doc {
 
 /** Uma face de fonte que o design carrega consigo. */
 export interface DocFont {
+  style?: string;
+  subset?: boolean;
   /** O que os elementos põem em `El.font` — a família, sem o estilo ("NYTFranklin"). */
   family: string;
   /** Peso CSS que esta face atende (300, 600, 700…), casado com `El.weight`. */

@@ -68,7 +68,7 @@ export interface State {
    *  de "processando": só existe o request em voo, ou o resultado dele. */
   pdfImportStatus: "idle" | "processando" | "pronto" | "erro";
   pdfImportError: { message: string; codigo?: "achatado" } | null;
-  pdfImportResult: { id: string; name: string; pageCount: number; layerCount: number; fontCount: number; flaggedPages: number[] } | null;
+  pdfImportResult: { id: string; name: string; pageCount: number; layerCount: number; fontCount: number; flaggedPages: number[]; fontSubstitutions?: Array<{ original: string; replacement: string; reason: string }> } | null;
   tab: "preview" | "response";
   lang: Lang;
   /** Desligado por padrão: testar no Playground nunca sobrescreve um template sozinho. */
@@ -434,7 +434,7 @@ export async function openPlaygroundInCanvas(result = false) {
     const saved = await savePlaygroundCopy(document);
     state.templatesLoaded = false;
     // Set the saved document before navigating: the hash listener must not reload the source.
-    openTemplateDocument(saved);
+    await openTemplateDocument(saved);
     location.hash = `/editor/${encodeURIComponent(saved.seedId!)}`;
   } catch {
     state.playgroundError = "Não foi possível criar a cópia editável. Seus campos e resultado foram mantidos; tente novamente.";
