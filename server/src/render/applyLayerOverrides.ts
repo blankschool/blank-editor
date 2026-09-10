@@ -46,7 +46,7 @@ export function applyLayerOverrides(document: unknown, layers: ParsedLayers, pag
       if (el.type === "text" && layers.texts[name] !== undefined) {
         if (layers.texts[name] === el.text) return el;
         const { runs: _runs, ...base } = el;
-        return { ...base, text: layers.texts[name] };
+        return { ...base, text: layers.texts[name], autoFit: true };
       }
       if (el.type === "image" && layers.images[name] !== undefined) return { ...el, src: layers.images[name] };
       return el;

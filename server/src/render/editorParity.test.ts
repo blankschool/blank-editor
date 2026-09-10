@@ -78,3 +78,26 @@ test("API preserves the editor's italic style", async () => {
   const italic = await renderTemplatePng(documentFor({ text: "ABCD", italic: true }), layers);
   assert.notDeepEqual(normal, italic);
 });
+
+test("long replacement text stays inside its authored box", async () => {
+  const doc = documentFor({ text: "AB", w: 202, h: 50 });
+  const png = await renderTemplatePng(doc, { ...layers, texts: { title: "ABCD ABCD ABCD ABCD ABCD ABCD" } });
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let pixels = 0;
+  for (let p = 0; p < info.width * info.height; p++) {
+    if (data[p * info.channels] >= 100) continue;
+    pixels++;
+    const y = Math.floor(p / info.width);
+    assert.ok(y >= 10 && y < 60, `replacement escaped the authored box at y=${y}`);
+  }
+  assert.ok(pixels > 0, "fitting must not hide the replacement");
+});
+
+test("a saved fitted replacement renders exactly like its API preview", async () => {
+  const doc = documentFor({ text: "AB", w: 202, h: 50 });
+  const replacements = { ...layers, texts: { title: "ABCD ABCD ABCD ABCD ABCD ABCD" } };
+  const preview = await renderTemplatePng(doc, replacements);
+  const saved = applyLayerOverrides(doc, replacements, 0);
+  const reopened = await renderTemplatePng(saved, layers);
+  assert.deepEqual(preview, reopened);
+});

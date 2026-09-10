@@ -29,6 +29,19 @@ test('captures values at generation time, detached from subsequent field and tem
   assert.notEqual(result.pages[0].els[3].fill, 'red');
 });
 
+test('changed fields keep their box and enable the same fitting as the API', () => {
+  const original = createTweetTemplateDocument();
+  const text = original.pages[0].els.find(el => el.name === 'tweetText')!;
+  text.runs = [{ text: text.text!, italic: true }];
+  const result = createPlaygroundDocument(original, 1, [{ name: 'tweetText', type: 'text', value: 'Novo texto mais longo' }]);
+  const changed = result.pages[0].els.find(el => el.name === 'tweetText')!;
+  assert.equal(changed.autoFit, true);
+  assert.equal(changed.runs, undefined);
+  assert.deepEqual([changed.x, changed.y, changed.w, changed.h], [text.x, text.y, text.w, text.h]);
+  const unchanged = createPlaygroundDocument(original, 1, [{ name: 'tweetText', type: 'text', value: text.text! }]);
+  assert.deepEqual(unchanged.pages[0].els, original.pages[0].els);
+});
+
 test('applies fields only to the requested page and preserves assets, groups and the other pages', () => {
   const original = createTweetTemplateDocument();
   original.pages.push(structuredClone(original.pages[0]));

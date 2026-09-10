@@ -1,5 +1,5 @@
 import "./styles.css";
-import { editorTextHtml, textRunsHtml } from "../server/src/render/editorText";
+import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
@@ -431,10 +431,11 @@ function renderCanvas() {
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Adicionar página
     </button>`;
+  fitTextElements(stack);
   // text auto-height, across every page
   for (const p of doc.pages) {
     for (const e of p.els) {
-      if (e.type !== "text") continue;
+      if (e.type !== "text" || e.autoFit) continue;
       const node = stack.querySelector(`[data-txt="${e.id}"]`);
       if (node) {
         const h = Math.max(20, Math.ceil(node.scrollHeight));
@@ -2338,6 +2339,18 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     } catch (err) { /* unreadable image, skip */ }
   }
   else if (e.type === "text") {
+    if (e.autoFit) {
+      const measure = document.createElement("div");
+      measure.style.cssText = `position:absolute;left:-10000px;top:0;width:${Number(e.w)}px;visibility:hidden`;
+      measure.innerHTML = editorTextHtml(e);
+      document.body.appendChild(measure);
+      try {
+        fitTextElements(measure);
+        e = { ...e, size: parseFloat((measure.firstElementChild as HTMLElement).style.fontSize) };
+      } finally {
+        measure.remove();
+      }
+    }
     x.textBaseline = "top";
     if (e.runs && e.runs.length) { drawRichText(x, e); return; }
     x.fillStyle = e.fill;

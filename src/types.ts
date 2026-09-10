@@ -47,6 +47,7 @@ export interface TextRun {
 }
 
 export interface El {
+  autoFit?: boolean;
   id: string;
   type: ElType;
   name: string;

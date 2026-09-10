@@ -17,6 +17,7 @@ export interface EditableElement {
   strokeWidth?: number;
   radius?: number;
   text?: string;
+  autoFit?: boolean;
   font?: string;
   size?: number;
   weight?: number;

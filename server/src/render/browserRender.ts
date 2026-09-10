@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { buildTemplateSvg, pageForRender, type EditableElement, type TemplateOverrides } from "./editableTweetTemplate.ts";
-import { editorTextHtml } from "./editorText.ts";
+import { editorTextHtml, fitTextElements } from "./editorText.ts";
 import { escapeXml } from "./svg.ts";
 import type { FaceRef } from "./fontCache.ts";
 import { fetchImage } from "./imageSource.ts";
@@ -28,7 +28,7 @@ export async function renderBrowserPng(
   const textLayout = {
     render(element: EditableElement, value: string): string {
       // Identical values sent by Playground keep the editor's rich runs.
-      const e = value === element.text ? element : { ...element, text: value, runs: undefined };
+      const e = value === element.text ? element : { ...element, text: value, runs: undefined, autoFit: true };
       const x = Number(e.x) || 0, y = Number(e.y) || 0;
       const w = Math.max(1, Number(e.w) || 1), h = Math.max(1, Number(e.h) || 1);
       const rot = Number(e.rot) || 0;
@@ -61,6 +61,7 @@ export async function renderBrowserPng(
         await Promise.all(Array.from(doc.fonts as Iterable<any>, f => f.load()));
         await doc.fonts.ready;
       });
+      await tab.evaluate(`(${fitTextElements.toString()})()`);
       if (page.els?.some(e => e.centerGroup)) {
         const measured: Array<[string, number]> = await tab.evaluate(() => {
           const doc = (globalThis as any).document;
@@ -69,6 +70,7 @@ export async function renderBrowserPng(
         for (const [id, h] of measured) heights.set(id, h);
         const adjusted = buildTemplateSvg(document, overrides, images, pageIndex, textLayout);
         await tab.evaluate(svg => { (globalThis as any).document.querySelector("svg").outerHTML = svg; }, adjusted);
+        await tab.evaluate(`(${fitTextElements.toString()})()`);
       }
       return await tab.screenshot({ type: "png", animations: "disabled", timeout: 30_000 });
     } finally {

@@ -15,6 +15,9 @@ export interface EditorText extends TextStyle {
   lh?: number;
   ls?: number;
   runs?: Array<TextStyle & { text: string }>;
+  autoFit?: boolean;
+  w?: number;
+  h?: number;
 }
 
 function family(value: string): string {
@@ -49,5 +52,24 @@ export function editorTextHtml(e: EditorText): string {
     `line-height:${Number(e.lh) || 1.2}`, `letter-spacing:${Number(e.ls) || 0}px`,
     `color:${color(e.fill || "#000000")}`, "white-space:pre-wrap", "word-break:break-word", "-webkit-font-smoothing:antialiased",
   ].join(";");
-  return `<div class="txt" data-txt="${escapeXml(e.id || "")}" style="${escapeXml(style)}">${textRunsHtml(e)}</div>`;
+  const fit = e.autoFit && e.w && e.h ? ` data-auto-fit="${Number(e.size) || 15}" data-fit-width="${Number(e.w)}" data-fit-height="${Number(e.h)}"` : "";
+  return `<div class="txt" data-txt="${escapeXml(e.id || "")}"${fit} style="${escapeXml(style)}">${textRunsHtml(e)}</div>`;
+}
+
+/** Runs after fonts load, in both the editor and the server's Chromium page. */
+export function fitTextElements(root = (globalThis as any).document): void {
+  for (const node of root.querySelectorAll("[data-auto-fit]") as Iterable<any>) {
+    const original = Number(node.dataset.autoFit);
+    const width = Number(node.dataset.fitWidth), height = Number(node.dataset.fitHeight);
+    const fits = () => node.scrollHeight <= Math.ceil(height) && node.scrollWidth <= Math.ceil(width);
+    node.style.fontSize = `${original}px`;
+    if (fits()) continue;
+    let low = 1, high = original;
+    for (let i = 0; i < 16; i++) {
+      const size = (low + high) / 2;
+      node.style.fontSize = `${size}px`;
+      if (fits()) low = size; else high = size;
+    }
+    node.style.fontSize = `${low}px`;
+  }
 }

@@ -21,7 +21,13 @@ export function createPlaygroundDocument(source: Doc, page: number, fields: read
     if (!field.value.trim()) continue;
     for (const element of document.pages[document.active].els) {
       if (element.name !== field.name || element.type !== field.type) continue;
-      if (element.type === 'text') element.text = field.value;
+      if (element.type === 'text') {
+        if (element.text !== field.value) {
+          element.text = field.value;
+          element.autoFit = true;
+          delete element.runs;
+        }
+      }
       else element.src = field.value.trim();
     }
   }
