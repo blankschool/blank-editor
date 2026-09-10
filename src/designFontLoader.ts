@@ -16,21 +16,27 @@ import { replacementFontFiles, REPLACEMENT_PREFIX } from "../server/src/render/r
 
 /** Família+peso já registrados neste documento — abrir o mesmo design duas vezes não recarrega. */
 const loaded = new Set<string>();
+const documentFaces = new Map<string, FontFace>();
 
 function key(font: DocFont): string {
   return `${font.family}::${font.weight}::${font.style || "normal"}::${font.sha256}`;
 }
 
 async function loadOne(font: DocFont): Promise<void> {
-  if (!font.family || !font.woff2 || loaded.has(key(font))) return;
+  if (!font.family || !font.woff2) return;
   try {
-    const face = new FontFace(font.family, `url(${JSON.stringify(font.woff2)})`, {
-      weight: String(font.weight || 400),
-      style: /italic|oblique/i.test(font.style || "") ? "italic" : "normal",
-    });
-    await face.load();
+    let face = documentFaces.get(key(font));
+    if (!face) {
+      face = new FontFace(font.family, `url(${JSON.stringify(font.woff2)})`, {
+        weight: String(font.weight || 400),
+        style: /italic|oblique/i.test(font.style || "") ? "italic" : "normal",
+      });
+      await face.load();
+      documentFaces.set(key(font), face);
+    }
+    // Reopening a design restores its precedence over faces from other designs.
+    document.fonts.delete(face);
     document.fonts.add(face);
-    loaded.add(key(font));
   } catch (error) {
     throw new Error(`Nao foi possivel carregar a fonte ${font.family}.`, { cause: error });
   }
