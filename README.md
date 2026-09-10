@@ -245,3 +245,13 @@ atual para `draft`, bloqueia seu download e preserva a versão aprovada anterior
 `dist/` (frontend) e `server/` (API) são deploys separados — o frontend é
 estático, o servidor precisa de Node + Postgres. Veja `server/Dockerfile` e
 `server/.env.example`.
+
+Em produção (`blank-editor.ickanz.easypanel.host`) os dois vivem em lugares
+diferentes, e vale saber qual é qual antes de deployar:
+
+| parte | onde roda | como publica |
+| --- | --- | --- |
+| frontend | serviço Docker Swarm `blank-editor-frontend` no VPS, roteado por um arquivo Traefik à mão, imagem taggeada pelo commit | `ssh painel-vps 'cd /root/blank-editor && deploy/frontend/deploy.sh'` |
+| API | serviço EasyPanel `sites_blank-editor-api-v2` (projeto `sites`), build do path `/server` | painel do EasyPanel — `autoDeploy` está desligado |
+
+O `Dockerfile` e o `nginx.conf` do frontend estão em `deploy/frontend/`.
