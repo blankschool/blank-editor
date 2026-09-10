@@ -1213,7 +1213,29 @@ function startEditingText(id) {
   t.setAttribute("contenteditable", "true");
   t.focus();
   document.getSelection().selectAllChildren(t);
+  t.addEventListener("input", refitEditingText);
   t.addEventListener("blur", stopEditing, { once: true });
+}
+
+/**
+ * Enquanto se digita, o `.txt` e contenteditable: o texto muda sem passar por renderCanvas, e
+ * nada reaplicava o ajuste de corpo. Uma manchete importada (autoFit) continuava desenhada no
+ * corpo original e transbordava a caixa; o tamanho certo so voltava ao sair da edicao, quando
+ * renderAll roda o fit de novo - dai parecerem dois textos, um "fixo" e outro "real". Refazer
+ * o ajuste a cada tecla deixa na tela, o tempo todo, o texto que vai ser gravado.
+ */
+function refitEditingText() {
+  if (!editingId) return;
+  const el = byId(editingId);
+  const t = $("pagestack").querySelector(`[data-txt="${editingId}"]`) as HTMLElement | null;
+  const box = t?.parentElement as HTMLElement | undefined;
+  if (!el || !t || !box) return;
+  // Uma caixa com autoFit tem altura fixa e o corpo e que cede; sem autoFit e o contrario,
+  // a caixa cresce - o mesmo par de regras que renderCanvas aplica depois de montar o HTML.
+  if (el.autoFit) { fitTextElements(box); return; }
+  const h = Math.max(20, Math.ceil(t.scrollHeight));
+  if (!Number.isFinite(el.h) || Math.abs(h - el.h) > 1) { el.h = h; box.style.height = h + "px"; }
+  renderOverlay();
 }
 function stopEditing() {
   if (!editingId) return;
@@ -1221,6 +1243,7 @@ function stopEditing() {
   const el = byId(editingId);
   if (t && el) {
     const v = t.innerText.replace(/ /g, " ").replace(/\n$/, "");
+    t.removeEventListener("input", refitEditingText);
     t.removeAttribute("contenteditable");
     if (v !== el.text) {
       const replacement = replaceTemplateText(el, v, doc.fonts);
