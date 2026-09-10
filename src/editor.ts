@@ -2,7 +2,7 @@ import "./styles.css";
 import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
 import { replaceTemplateText } from "../server/src/render/replacementFonts.ts";
 import {
-  FONT_CATEGORIES, catalogStylesheetUrls, designFamilies, fontLabel, searchFontLibrary,
+  FONT_CATEGORIES, catalogStylesheetUrls, designFamilies, fontLabel, localFontFaceCss, searchFontLibrary,
   type FontCategory,
 } from "./fontLibrary.ts";
 import { loadDesignFonts } from "./designFontLoader";
@@ -1542,6 +1542,11 @@ let catalogRequested = false;
 function ensureFontCatalogLoaded() {
   if (catalogRequested) return;
   catalogRequested = true;
+  // As famílias auto-hospedadas (Chirp) não estão em folha nenhuma do Google — o @font-face
+  // delas vem daqui, apontando para os arquivos que servimos em /fonts.
+  const style = document.createElement("style");
+  style.textContent = localFontFaceCss();
+  document.head.appendChild(style);
   for (const href of catalogStylesheetUrls()) {
     const link = document.createElement("link");
     link.rel = "stylesheet";

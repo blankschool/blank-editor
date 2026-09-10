@@ -16,6 +16,11 @@ export interface LibraryFont {
   category: FontCategory;
   /** Pesos pedidos ao Google Fonts. Uma família de peso único não leva eixo `wght` na URL. */
   weights: number[];
+  /**
+   * Arquivos servidos por nós, um por peso, quando a família NÃO está no Google Fonts.
+   * Nesse caso o catálogo não pede folha nenhuma: o @font-face é escrito aqui mesmo.
+   */
+  files?: { weight: number; url: string }[];
 }
 
 export const FONT_CATEGORIES: { id: FontCategory; label: string }[] = [
@@ -31,6 +36,10 @@ export const PRELOADED_FAMILIES = [
   "Inter", "Montserrat", "Space Grotesk", "IBM Plex Mono", "Playfair Display",
   "Bebas Neue", "Caveat", "Lora", "Oswald", "DM Serif Display",
 ];
+
+/** Uma família auto-hospedada: os pesos saem dos arquivos, não de uma URL do Google. */
+const local = (family: string, category: FontCategory, files: { weight: number; url: string }[]): LibraryFont =>
+  ({ family, category, weights: files.map((file) => file.weight), files });
 
 const f = (family: string, category: FontCategory, weights: number[] = [400, 700]): LibraryFont => ({ family, category, weights });
 
@@ -57,6 +66,12 @@ export const FONT_LIBRARY: LibraryFont[] = [
   f("Archivo", "sans", [400, 500, 600, 700]),
   f("Public Sans", "sans", [400, 500, 600, 700]),
   f("Mulish", "sans", [400, 600, 700]),
+  local("Chirp", "sans", [
+    { weight: 400, url: "/fonts/chirp/chirp-regular.woff" },
+    { weight: 500, url: "/fonts/chirp/chirp-medium.woff" },
+    { weight: 700, url: "/fonts/chirp/chirp-bold.woff" },
+    { weight: 800, url: "/fonts/chirp/chirp-heavy.woff" },
+  ]),
 
   f("Playfair Display", "serif", [400, 500, 600, 700]),
   f("Lora", "serif", [400, 500, 600, 700]),
@@ -145,6 +160,17 @@ export function fontStylesheetUrl(font: LibraryFont): string {
 }
 
 /**
+ * O CSS das famílias auto-hospedadas — as que têm `files` e por isso não aparecem em folha
+ * nenhuma do Google. `display:swap` e a mesma preguiça do catálogo: declarar o @font-face não
+ * baixa nada, o navegador só busca o arquivo do peso que a página realmente desenhar.
+ */
+export function localFontFaceCss(fonts: LibraryFont[] = FONT_LIBRARY): string {
+  return fonts.flatMap((font) => (font.files ?? []).map((file) =>
+    `@font-face{font-family:"${font.family}";font-style:normal;font-weight:${file.weight};` +
+    `font-display:swap;src:url("${file.url}") format("woff")}`)).join("\n");
+}
+
+/**
  * As folhas que cobrem o catálogo inteiro. O css2 aceita várias famílias por requisição, e uma
  * folha por família seriam 50+ requisições ao abrir o painel; mas a URL não pode crescer sem
  * limite, então isto entrega em blocos. As famílias que o index.html já traz ficam de fora.
@@ -154,7 +180,7 @@ export function fontStylesheetUrl(font: LibraryFont): string {
  * nada mais.
  */
 export function catalogStylesheetUrls(fonts: LibraryFont[] = FONT_LIBRARY, perRequest = 12): string[] {
-  const pending = fonts.filter((font) => !PRELOADED_FAMILIES.includes(font.family));
+  const pending = fonts.filter((font) => !PRELOADED_FAMILIES.includes(font.family) && !font.files);
   const urls: string[] = [];
   for (let i = 0; i < pending.length; i += perRequest) {
     urls.push(`https://fonts.googleapis.com/css2?${pending.slice(i, i + perRequest).map(familyParam).join("&")}&display=swap`);

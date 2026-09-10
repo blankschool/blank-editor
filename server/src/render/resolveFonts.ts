@@ -20,7 +20,8 @@ interface Textish {
   name?: string;
   font?: string;
   hidden?: boolean;
-  runs?: Array<{ font?: string }>;
+  weight?: number;
+  runs?: Array<{ font?: string; weight?: number }>;
 }
 
 /** Famílias que os elementos de texto desta página realmente pedem. */
@@ -35,6 +36,26 @@ export function listUsedFamilies(page: { els?: unknown } | null | undefined): st
     for (const run of el.runs ?? []) if (run.font) used.add(run.font);
   }
   return [...used];
+}
+
+/**
+ * Os pares família+peso que a página pede, para quem precisa buscar a face certa e não só
+ * saber o nome da família — um título em 700 e um corpo em 400 são dois arquivos.
+ */
+export function listUsedFaces(page: { els?: unknown } | null | undefined): { family: string; weight: number }[] {
+  const els = Array.isArray(page?.els) ? (page.els as Textish[]) : [];
+  const used = new Map<string, { family: string; weight: number }>();
+  const add = (family: string | undefined, weight: number | undefined, fallback: Textish) => {
+    const nome = (family || "").trim() || DEFAULT_FONT_FAMILY;
+    const peso = Number(weight ?? fallback.weight) || 400;
+    used.set(`${nome}::${peso}`, { family: nome, weight: peso });
+  };
+  for (const el of els) {
+    if (!el || el.type !== "text" || el.hidden) continue;
+    add(el.font, el.weight, el);
+    for (const run of el.runs ?? []) if (run.font || run.weight) add(run.font || el.font, run.weight, el);
+  }
+  return [...used.values()];
 }
 
 /**

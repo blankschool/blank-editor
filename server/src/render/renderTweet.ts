@@ -2,10 +2,12 @@ import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
 import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
-import { listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { listUsedFaces, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
 import { renderBrowserPng } from "./browserRender.ts";
 import { applyLayerOverrides } from "./applyLayerOverrides.ts";
 import { completeFontFaces } from "./completeFontFiles.ts";
+import { catalogFaces } from "./catalogFaces.ts";
+import { fetchMissingCatalogFaces } from "./missingCatalogFaces.ts";
 import { builtinFaces } from "./builtinFaces.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
@@ -83,7 +85,7 @@ export async function renderTemplatePng(
   // embutidas (builtinFaces.ts) garantem apenas que a família padrão nunca falte.
   const acumuladas: FaceRef[] = [];
   const vistas = new Set<string>();
-  for (const source of [doDocumento, registryFaces, builtinFaces(), completeFontFaces()]) {
+  for (const source of [doDocumento, registryFaces, builtinFaces(), catalogFaces(), completeFontFaces()]) {
     const sourceKeys = new Set<string>();
     for (const f of source) {
       const chave = `${f.family}::${f.weight}::${"style" in f ? f.style : "normal"}`;
@@ -93,6 +95,9 @@ export async function renderTemplatePng(
     }
     for (const key of sourceKeys) vistas.add(key);
   }
+  // Último recurso, depois de todas as fontes locais: as famílias do painel que o design usa
+  // mas ninguém declarou, buscadas no Google (missingCatalogFaces.ts).
+  acumuladas.push(...await fetchMissingCatalogFaces(listUsedFaces(page), acumuladas));
   const disponiveis = acumuladas;
   // Match the editor's per-glyph fallback. A missing character must not replace the
   // entire authored layer with Inter, changing all its widths and its appearance.
