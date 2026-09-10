@@ -44,7 +44,7 @@ export function listUsedFamilies(page: { els?: unknown } | null | undefined): st
  * jogado fora, e um design pode declarar faces que a página atual não usa (um carrossel cuja
  * capa não tem a fonte do miolo).
  */
-export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonly string[], allowBrowserSubsets = false): FaceRef[] {
+export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonly string[], useBrowserPrecedence = false): FaceRef[] {
   const byFamily = new Map<string, FaceRef[]>();
   for (const face of declared) {
     const list = byFamily.get(face.family) ?? [];
@@ -64,9 +64,9 @@ export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonl
   const escolhidas: FaceRef[] = [];
   for (const family of usedFamilies) {
     const faces = byFamily.get(family)!;
-    // Duas faces com a mesma família E o mesmo peso, mas bytes diferentes: o rasterizador
-    // escolheria uma das duas por critério próprio, e o resultado viraria loteria entre
-    // deploys. Melhor recusar e obrigar quem montou o documento a desambiguar.
+    // Chromium uses ordered @font-face declarations, just like the editor's FontFace
+    // registrations. Glyph metadata is optional; the font files provide coverage.
+    // The legacy SVG rasterizer still needs an unambiguous family/weight pair.
     const porPeso = new Map<number, Set<string>>();
     for (const face of faces) {
       const shas = porPeso.get(face.weight) ?? new Set<string>();
@@ -74,7 +74,7 @@ export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonl
       porPeso.set(face.weight, shas);
     }
     for (const [weight, shas] of porPeso) {
-      if (shas.size > 1 && !(allowBrowserSubsets && faces.filter(f => f.weight === weight).every(f => f.glyphs))) {
+      if (shas.size > 1 && !useBrowserPrecedence) {
         throw new Error(
           `a família "${family}" peso ${weight} foi declarada com ${shas.size} arquivos diferentes ` +
             `(${[...shas].map((s) => s.slice(0, 12)).join(", ")}). Ambíguo: o render para aqui em vez de sortear.`,

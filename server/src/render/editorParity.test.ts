@@ -5,6 +5,7 @@ import { renderTemplatePng } from "./renderTweet.ts";
 import { fixtureDocFont, FIXTURE_FAMILY } from "./__fixtures__/fixtureFont.ts";
 import { resolveFaces } from "./resolveFonts.ts";
 import { applyLayerOverrides } from "./applyLayerOverrides.ts";
+import { builtinFaces } from "./builtinFaces.ts";
 
 const layers = { texts: {}, images: {}, hidden: new Set<string>() };
 function documentFor(extra: Record<string, unknown>) {
@@ -42,6 +43,26 @@ test("browser accepts complementary subsets of the same family and weight", () =
   const first = { family: "Imported", weight: 400, sha256: "a", src: "/a.ttf", glyphs: "Title" };
   const second = { ...first, sha256: "b", src: "/b.ttf", glyphs: "Subtitle" };
   assert.deepEqual(resolveFaces([first, second], ["Imported"], true), [first, second]);
+});
+
+test("browser preserves four Montserrat 700 faces even without glyph metadata", () => {
+  const faces = ["69c1d32f71fb", "21a2339dba21", "247f052d2f5b", "f774b12bcc77"].map(sha256 => ({
+    family: "Montserrat", weight: 700, sha256, src: `/${sha256}.ttf`,
+  }));
+  assert.deepEqual(resolveFaces(faces, ["Montserrat"], true), faces);
+  assert.throws(() => resolveFaces(faces, ["Montserrat"]), /Ambíguo/);
+});
+
+test("PNG uses the last declared matching face without requiring glyph metadata", async () => {
+  const first = { ...fixtureDocFont(700), family: "Montserrat" };
+  const inter = builtinFaces().find(face => face.weight === 700)!;
+  const last = { family: "Montserrat", weight: 700, sha256: inter.sha256, ttf: inter.src, woff2: "" };
+  const base = documentFor({ font: "Montserrat", weight: 700, text: "ABCD" });
+  const both = await renderTemplatePng({ ...base, fonts: [first, last] }, layers);
+  const expected = await renderTemplatePng({ ...base, fonts: [last] }, layers);
+  const reversed = await renderTemplatePng({ ...base, fonts: [last, first] }, layers);
+  assert.deepEqual(both, expected);
+  assert.notDeepEqual(both, reversed, "declaration order must determine which face renders");
 });
 
 test("saved overrides and PNG use the same rich-text content", () => {
