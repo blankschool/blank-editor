@@ -23,6 +23,7 @@ import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
 import { draggedLayerIds, reorderLayers, type LayerDropSide } from "./layerOrder";
 import { attachLayerDrag } from "./layerDrag";
+import { dedupeLayerNames, uniqueLayerName } from "./layerNames";
 import { canGroupElements, canUngroupElements, groupElements, ungroupElements } from "./elementGroups";
 
 declare global {
@@ -182,6 +183,10 @@ const snap = () => JSON.stringify({ d: doc, s: sel });
 // was BEFORE the current mutation, otherwise the first undo is a no-op.
 let baseline = snap();
 function commit() {
+  // Ponto único onde duplicar, colar ou renomear uma camada vira estado salvo — e o único
+  // lugar que precisa garantir que dois elementos da mesma página não dividam um nome, que é
+  // a chave do `layers` na API de render (layerNames.ts).
+  dedupeLayerNames(doc);
   past.push(baseline);
   if (past.length > 80) past.shift();
   baseline = snap();
@@ -269,7 +274,9 @@ function loadPersisted() {
 function makeEl(type: string, over: Partial<El> = {}): El {
   const p = page();
   const base = {
-    id: uid(), type, name: TYPE_PT[type] || type,
+    // O nome é a chave que `layers` usa na API de render: dois "Texto" na mesma página fariam
+    // um override escrever nos dois (ver layerNames.ts).
+    id: uid(), type, name: uniqueLayerName(TYPE_PT[type] || type, p.els.map((e) => e.name || "")),
     x: 0, y: 0, w: 200, h: 200, rot: 0, opacity: 1, locked: false, hidden: false,
     fill: "#8296A1", stroke: "", strokeWidth: 0, radius: 0,
   };
@@ -3204,6 +3211,9 @@ function normalizeDoc(d: Doc): Doc {
       if (!Number.isFinite(e.h)) e.h = 20;
     }
   }
+  // Designs salvos antes de os nomes serem únicos continuam por aí, e é justamente neles que
+  // o override da API escreve no elemento errado. Abrir e salvar conserta.
+  dedupeLayerNames(d);
   return d;
 }
 
