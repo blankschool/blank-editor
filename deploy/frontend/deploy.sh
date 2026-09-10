@@ -18,7 +18,14 @@ npm run build
 
 sha=$(git rev-parse --short HEAD)
 imagem="blank-editor-frontend:${sha}"
-docker build -f deploy/frontend/Dockerfile -t "$imagem" .
+
+# Contexto montado à parte: o .dockerignore da raiz exclui `dist` (ele existe para a imagem da
+# API), então buildar da raiz entregaria um nginx sem site nenhum.
+contexto=$(mktemp -d)
+trap 'rm -rf "$contexto"' EXIT
+cp -r dist "$contexto/dist"
+cp deploy/frontend/nginx.conf "$contexto/nginx.conf"
+docker build -f deploy/frontend/Dockerfile -t "$imagem" "$contexto"
 
 # Valida a config ANTES de trocar o serviço, na rede onde os upstreams resolvem: um
 # `proxy_pass` para host inexistente derruba o nginx no boot, e o Swarm só descobre isso
