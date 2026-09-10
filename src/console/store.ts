@@ -5,6 +5,7 @@ import type { Doc } from "../types";
 import { clearDefaultApiKey, getDefaultApiKey, getSession, saveDefaultApiKey } from "../session";
 import { ensurePlaygroundApiKey } from "../playgroundApiKey";
 import { STARTERS, blankDocument, type Starter } from "./starterTemplates";
+import { canonicalLayerNames } from "../../server/src/render/layerNames.ts";
 
 /**
  * O estado e as ações do console, portados de src/pages/console.ts sem mudança
@@ -563,7 +564,13 @@ export async function loadLayersForTemplate(id: string) {
     // camadas diferentes, e mostrar sempre as da capa daria um formulário errado.
     const page = pages[state.page - 1] as { els?: unknown[] } | undefined;
     const els: Array<{ name?: string; type?: string; text?: string; src?: string }> = Array.isArray(page?.els) ? page.els : [];
+    // Os nomes que a API entende, não os nomes crus: um template salvo com duas camadas
+    // "Texto" mostrava dois campos idênticos aqui, e o `layers` do request — que é um objeto
+    // com o nome na chave — colapsava os dois num só. Mesmo cálculo do render, mesma ordem
+    // (layerNames.ts), então "Texto 2" endereça a segunda camada de verdade.
+    const nomes = canonicalLayerNames({ els });
     state.layers = els
+      .map((el, i) => ({ ...el, name: nomes[i] }))
       .filter((el): el is { name: string; type: string; text?: string; src?: string } => Boolean(el?.name) && (el?.type === "text" || el?.type === "image"))
       .map((el, i) => ({
         id: i + 1,

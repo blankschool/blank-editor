@@ -1,4 +1,3 @@
-import type { Doc, El } from "./types";
 
 /**
  * Nomes de camada únicos dentro de uma página.
@@ -28,12 +27,32 @@ export function uniqueLayerName(base: string, taken: Iterable<string>): string {
  * antigo continua respondendo ao nome que quem chama a API já conhece, e só as camadas que
  * estavam roubando esse nome mudam. Devolve os nomes que mudaram, para a UI poder avisar.
  */
-export function dedupeLayerNames(doc: Doc): { page: number; from: string; to: string }[] {
+interface NamedElement { name?: string }
+interface NamedPage { els?: NamedElement[] }
+
+/**
+ * Os nomes que a API enxerga numa página, na ordem dos elementos: o primeiro "Texto" continua
+ * "Texto", o segundo vira "Texto 2". Derivar isto dos dois lados — o formulário que lista os
+ * campos e o render que aplica os overrides — é o que faz um template ANTIGO, salvo com nomes
+ * repetidos, virar endereçável sem ninguém precisar reabrir e salvar o design.
+ */
+export function canonicalLayerNames(page: NamedPage | null | undefined): string[] {
+  const usados = new Set<string>();
+  return (page?.els ?? []).map((el) => {
+    const nome = el?.name || "";
+    if (!nome) return nome;
+    const unico = uniqueLayerName(nome, usados);
+    usados.add(unico);
+    return unico;
+  });
+}
+
+export function dedupeLayerNames(doc: { pages: NamedPage[] }): { page: number; from: string; to: string }[] {
   const mudancas: { page: number; from: string; to: string }[] = [];
   doc.pages.forEach((page, index) => {
     const usados = new Set<string>();
-    for (const el of page.els as El[]) {
-      const nome = el.name || "";
+    for (const el of page.els ?? []) {
+      const nome = el?.name || "";
       if (!nome) continue;
       if (!usados.has(nome)) { usados.add(nome); continue; }
       const novo = uniqueLayerName(nome, usados);

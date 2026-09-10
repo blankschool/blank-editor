@@ -23,7 +23,7 @@ import { relativeTime } from "./console/relativeTime.ts";
 import { pageOffset, pageAtY, zoomedPanY, verticalBounds } from "./editorViewport";
 import { draggedLayerIds, reorderLayers, type LayerDropSide } from "./layerOrder";
 import { attachLayerDrag } from "./layerDrag";
-import { dedupeLayerNames, uniqueLayerName } from "./layerNames";
+import { dedupeLayerNames, uniqueLayerName } from "../server/src/render/layerNames.ts";
 import { canGroupElements, canUngroupElements, groupElements, ungroupElements } from "./elementGroups";
 
 declare global {
