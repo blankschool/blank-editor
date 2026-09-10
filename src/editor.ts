@@ -940,6 +940,12 @@ function startMove(ev) {
     g.style.cssText = elStyle(o.e);
     g.innerHTML = elInner(o.e);
     $("ovl").appendChild(g);
+    // O fantasma e HTML recem-montado, com o corpo original em `data-auto-fit`. So o
+    // renderCanvas roda o ajuste, e ele nao alcanca o `#ovl` — sem isto uma manchete
+    // importada era arrastada no corpo cheio, transbordando a pagina, enquanto o elemento
+    // ajustado seguia parado no lugar de origem: dois textos na tela, um "fixo" e um "real".
+    // Depois do appendChild porque o ajuste mede o layout.
+    fitTextElements(g);
     return g;
   });
   const place = (dx: number, dy: number) => {
