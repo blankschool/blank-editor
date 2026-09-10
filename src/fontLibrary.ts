@@ -131,9 +131,33 @@ export function designFamilies(families: (string | undefined)[]): string[] {
   return result;
 }
 
+/** Trecho `family=` de uma família, no formato que o css2 do Google Fonts espera. */
+function familyParam(font: LibraryFont): string {
+  const name = font.family.replace(/ /g, "+");
+  const weights = [...font.weights].sort((a, b) => a - b);
+  const axis = weights.length > 1 || weights[0] !== 400 ? `:wght@${weights.join(";")}` : "";
+  return `family=${name}${axis}`;
+}
+
 /** URL da folha de estilo do Google Fonts para uma família do catálogo. */
 export function fontStylesheetUrl(font: LibraryFont): string {
-  const name = font.family.replace(/ /g, "+");
-  const axis = font.weights.length > 1 || font.weights[0] !== 400 ? `:wght@${[...font.weights].sort((a, b) => a - b).join(";")}` : "";
-  return `https://fonts.googleapis.com/css2?family=${name}${axis}&display=swap`;
+  return `https://fonts.googleapis.com/css2?${familyParam(font)}&display=swap`;
+}
+
+/**
+ * As folhas que cobrem o catálogo inteiro. O css2 aceita várias famílias por requisição, e uma
+ * folha por família seriam 50+ requisições ao abrir o painel; mas a URL não pode crescer sem
+ * limite, então isto entrega em blocos. As famílias que o index.html já traz ficam de fora.
+ *
+ * A folha só declara os `@font-face` — o navegador só baixa o arquivo da família que a página
+ * realmente desenhar, que é o que faz o preview de cada nome custar o seu próprio arquivo e
+ * nada mais.
+ */
+export function catalogStylesheetUrls(fonts: LibraryFont[] = FONT_LIBRARY, perRequest = 12): string[] {
+  const pending = fonts.filter((font) => !PRELOADED_FAMILIES.includes(font.family));
+  const urls: string[] = [];
+  for (let i = 0; i < pending.length; i += perRequest) {
+    urls.push(`https://fonts.googleapis.com/css2?${pending.slice(i, i + perRequest).map(familyParam).join("&")}&display=swap`);
+  }
+  return urls;
 }

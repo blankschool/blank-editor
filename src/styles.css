@@ -304,6 +304,33 @@ button { cursor: pointer; background: none; border: none; }
   padding: 8px 12px; text-align: left; margin-bottom: 6px; color: var(--text);
 }
 .texttile:hover { border-color: var(--accent); }
+.qfont {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-width: 132px; max-width: 190px; height: 30px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  color: var(--text); font-size: 12px;
+}
+.qfont span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qfont:hover, .qfont[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.fontsearch {
+  width: 100%; height: 30px; padding: 0 10px; margin-bottom: 8px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  color: var(--text); font-size: 12px; outline: none;
+}
+.fontsearch:focus { border-color: var(--accent); }
+.fontcats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.fontcat {
+  padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--muted); font-size: 10.5px;
+}
+.fontcat[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.fonttile {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  padding: 9px 12px; text-align: left; margin-bottom: 5px; color: var(--text);
+  font-size: 17px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fonttile:hover { border-color: var(--accent); }
+.fonttile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .swatch { height: 38px; border-radius: 8px; border: 1px solid var(--border-strong); position: relative; }
 .swatch[aria-pressed="true"]::after {
   content: ""; position: absolute; inset: -3px; border: 2px solid var(--accent); border-radius: 10px;

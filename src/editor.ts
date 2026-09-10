@@ -1,7 +1,10 @@
 import "./styles.css";
 import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
 import { replaceTemplateText } from "../server/src/render/replacementFonts.ts";
-import { fontOptions } from "./fontPicker.ts";
+import {
+  FONT_CATEGORIES, catalogStylesheetUrls, designFamilies, fontLabel, searchFontLibrary,
+  type FontCategory,
+} from "./fontLibrary.ts";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
@@ -606,7 +609,7 @@ function renderToolbar() {
   let html = "";
 
   if (one && t === "text") {
-    html += `<select id="tFont" class="qselect" title="Fonte">${fontOptions(e.font).map((o) => `<option value="${esc(o.value)}" ${o.selected ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
+    html += `<button class="qfont" id="tFont" aria-pressed="${activeTab === "fonts"}" title="Fonte — abrir a biblioteca"><span>${esc(fontLabel(e.font || "Inter"))}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>`;
     html += `<div class="qsep"></div>`;
     html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" value="${Math.round(e.size)}" aria-label="Tamanho da fonte"><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
     html += `<div class="qsep"></div>`;
@@ -666,12 +669,12 @@ $("toolbar").addEventListener("click", (ev) => {
   if (t.closest("#tRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderToolbar(); return; }
   if (t.closest("#tRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderToolbar(); return; }
   if (t.closest("#tReplace")) { $("fileImgReplace").click(); return; }
+  if (t.closest("#tFont")) { setPanel(activeTab === "fonts" ? null : "fonts"); return; }
   if (t.closest("#tPosition")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
 });
 $("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
   if (t.id === "tFill") patch({ fill: t.value });
-  if (t.id === "tFont") patch({ font: t.value }, true);
   if (t.id === "tSize" && Number(t.value) >= 6) patch({ size: clamp(Number(t.value), 6, 512) });
   if (t.id === "tStroke") patch({ stroke: t.value });
   if (t.id === "tOp") patch({ opacity: clamp(parseFloat(t.value) / 100, 0, 1) });
@@ -1500,6 +1503,7 @@ function patch(props: Partial<El>, immediate?: boolean) {
 /* ============================ left rail + panels ============================ */
 const TABS = [
   { id: "text", label: "Texto", icon: `<path d="M4 6h16"/><path d="M12 6v14"/>` },
+  { id: "fonts", label: "Fontes", icon: `<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>` },
   { id: "elements", label: "Formas", icon: `<circle cx="9" cy="9" r="5"/><rect x="11" y="11" width="9" height="9" rx="1.5"/>` },
   { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
   { id: "draw", label: "Desenho", icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
@@ -1526,6 +1530,54 @@ function setPanel(tab: string | null) {
   else { clampView(); applyWorld(); renderOverlay(); }
 }
 
+let fontQuery = "";
+let fontCategory: FontCategory | null = null;
+let catalogRequested = false;
+
+/**
+ * Puxa as folhas do catálogo uma vez, na primeira abertura do painel. Fora daqui ninguém
+ * precisa delas: o index.html já traz as famílias que um design em branco usa, e um design
+ * importado carrega as suas por FontFace (designFontLoader).
+ */
+function ensureFontCatalogLoaded() {
+  if (catalogRequested) return;
+  catalogRequested = true;
+  for (const href of catalogStylesheetUrls()) {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
+  }
+}
+
+/** As famílias que este design carrega consigo — as resolvidas na importação de PDF. */
+function docFontFamilies(): string[] {
+  return designFamilies([
+    ...(doc.fonts ?? []).map((f) => f.family),
+    ...doc.pages.flatMap((p) => p.els.filter((e) => e.type === "text").map((e) => e.font)),
+  ]);
+}
+
+function fontTile(family: string, current: string | undefined): string {
+  return `<button class="fonttile" data-font="${esc(family)}" aria-pressed="${family === current}" title="Aplicar ${esc(fontLabel(family))}"
+    style="font-family:${esc(JSON.stringify(family))},Inter,system-ui,sans-serif">${esc(fontLabel(family))}</button>`;
+}
+
+/** Só a lista, para digitar na busca não recriar (e desfocar) o próprio campo. */
+function fontListHtml(): string {
+  const current = selEls().find((e) => e.type === "text")?.font;
+  const mine = fontQuery || fontCategory ? [] : docFontFamilies();
+  const found = searchFontLibrary({ query: fontQuery, category: fontCategory });
+  if (!found.length && !mine.length) return `<p class="phint">Nenhuma fonte com esse nome.</p>`;
+  return (mine.length ? `<div class="sec"><h4>Neste design</h4>${mine.map((f) => fontTile(f, current)).join("")}</div>` : "")
+    + (found.length ? `<div class="sec"><h4>Biblioteca</h4>${found.map((f) => fontTile(f.family, current)).join("")}</div>` : "");
+}
+
+function renderFontList() {
+  const list = $("fontList");
+  if (list) list.innerHTML = fontListHtml();
+}
+
 function renderPanel() {
   const el = $("panel");
   el.classList.remove("pages-index");
@@ -1537,6 +1589,14 @@ function renderPanel() {
       <button class="texttile" data-add="text" data-size="88" data-weight="700" title="Adicionar título" style="font-size:21px;font-weight:700">Título</button>
       <button class="texttile" data-add="text" data-size="52" data-weight="600" title="Adicionar subtítulo" style="font-size:16px;font-weight:600">Subtítulo</button>
       <button class="texttile" data-add="text" data-size="30" data-weight="400" title="Adicionar corpo de texto" style="font-size:13px">Corpo de texto</button>`;
+  }
+  if (activeTab === "fonts") {
+    ensureFontCatalogLoaded();
+    el.innerHTML = `<h4 class="ptitle">Fontes</h4><p class="phint">Clique numa fonte para aplicar ao texto selecionado.</p>
+      <input class="fontsearch" id="fontSearch" type="search" placeholder="Buscar fonte…" aria-label="Buscar fonte" value="${esc(fontQuery)}">
+      <div class="fontcats">${[{ id: null, label: "Todas" }, ...FONT_CATEGORIES].map((c) => `
+        <button class="fontcat" data-fontcat="${c.id ?? ""}" aria-pressed="${fontCategory === c.id}">${c.label}</button>`).join("")}</div>
+      <div id="fontList">${fontListHtml()}</div>`;
   }
   if (activeTab === "elements") {
     const shapes = [
@@ -1679,10 +1739,28 @@ $("panel").addEventListener("click", (ev) => {
     for (const p of doc.pages) { p.w = w; p.h = h; }
     commit(); renderAll(); zoomFit(); return;
   }
+  const font = ev.target.closest("[data-font]");
+  if (font) {
+    // `immediate`: aplicar uma fonte e um gesto acabado, não o meio de um arrasto — vale
+    // um ponto no histórico e uma gravação na hora, como o resto dos botões do painel.
+    patch({ font: font.dataset.font }, true);
+    renderFontList();
+    renderToolbar();
+    return;
+  }
+  const cat = ev.target.closest("[data-fontcat]");
+  if (cat) {
+    fontCategory = (cat.dataset.fontcat || null) as FontCategory | null;
+    renderPanel();
+    return;
+  }
   if (ev.target.closest("#pickImg")) { $("fileImg").click(); return; }
   if (ev.target.closest("#drawOn")) { setTool(tool === "draw" ? "select" : "draw"); return; }
 });
 $("panel").addEventListener("input", (ev) => {
+  // Só a lista é redesenhada: um renderPanel() inteiro recriaria o próprio campo de busca e
+  // o cursor sairia dele a cada tecla.
+  if (ev.target.id === "fontSearch") { fontQuery = ev.target.value; renderFontList(); return; }
   if (ev.target.id === "bgPick") { page().bg = ev.target.value; renderCanvas(); }
   if (ev.target.id === "stageBgPick") { stageBg = ev.target.value; applyStageBg(); }
   if (ev.target.id === "pgW" || ev.target.id === "pgH") {
