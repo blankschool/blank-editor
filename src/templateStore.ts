@@ -27,19 +27,28 @@ export function loadTemplateLocally(id: string): Doc | null {
   }
 }
 
-export async function syncTemplateToServer(doc: Doc): Promise<boolean> {
-  if (!doc.seedId) return true;
+/**
+ * `gone` e o design nao existe mais no servidor — foi excluido, aqui ou em outra aba. E um
+ * caso permanente, ao contrario de `failed` (rede caida, servidor fora), e quem chama precisa
+ * distinguir os dois: insistir numa gravacao que devolve 404 nunca vai dar certo, e chamar
+ * isso de "erro ao salvar" faz a pessoa procurar problema de conexao que nao existe.
+ */
+export type SyncResult = "saved" | "gone" | "failed";
+
+export async function syncTemplateToServer(doc: Doc): Promise<SyncResult> {
+  if (!doc.seedId) return "saved";
   try {
     const res = await fetch(`/api/v1/templates/${doc.seedId}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: doc.name, document: doc }),
     });
-    if (!res.ok) return false;
+    if (res.status === 404) return "gone";
+    if (!res.ok) return "failed";
     emitSaved();
-    return true;
+    return "saved";
   } catch {
-    return false;
+    return "failed";
   }
 }
 

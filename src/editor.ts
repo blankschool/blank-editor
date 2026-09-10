@@ -219,6 +219,17 @@ function syncHistory() {
 const LS = "blank-editor-doc-v1";
 let persistTimer = null;
 let persistSeq = 0;
+/**
+ * O design aberto foi excluido no servidor. Uma aba aberta sobrevive a exclusao feita na
+ * lista (ou noutra aba), e sem isto ela seguia gravando contra um id morto: cada tecla no
+ * nome disparava um PUT que voltava 404 e a barra dizia "Erro ao salvar" para sempre.
+ * Some da lista de abas e para de tentar; abrir outro design limpa a marca.
+ */
+let designGone = false;
+function forgetDeletedDesign(id: string | undefined) {
+  designGone = true;
+  if (id) forgetRecentDesign(id);
+}
 function persist() {
   clearTimeout(persistTimer);
   const seq = ++persistSeq;
@@ -227,12 +238,13 @@ function persist() {
   persistTimer = setTimeout(async () => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
     saveTemplateLocally(doc);
-    const synced = await syncTemplateToServer(doc);
-    if (synced && looksGenerated(doc.seedId)) void refreshGenerationReview();
+    const result = designGone ? "gone" : await syncTemplateToServer(doc);
+    if (result === "saved" && looksGenerated(doc.seedId)) void refreshGenerationReview();
+    if (result === "gone") forgetDeletedDesign(doc.seedId);
     if (seq !== persistSeq) return;
     if (st) {
-      st.textContent = synced ? "Salvo" : "Erro ao salvar";
-      st.dataset.state = synced ? "saved" : "error";
+      st.textContent = { saved: "Salvo", gone: "Design excluído", failed: "Erro ao salvar" }[result];
+      st.dataset.state = result === "saved" ? "saved" : "error";
     }
   }, 400);
 }
@@ -2563,6 +2575,7 @@ $("confirmGo").addEventListener("click", async () => {
   if (!id) return;
   try {
     await deleteTemplateOnServer(id);
+    forgetDeletedDesign(id);
     toast("Template excluído");
     location.hash = "/console/templates";
   } catch { toast("Não foi possível excluir."); }
@@ -2949,7 +2962,14 @@ $("zoomval").onclick = () => { const r = $("stage").getBoundingClientRect(); zoo
 $("zoomin").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom * 1.2); };
 $("zoomout").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom / 1.2); };
 $("zoomfit").onclick = zoomFit;
-$("docname").addEventListener("input", (e) => { doc.name = e.target.value; persist(); });
+$("docname").addEventListener("input", (e) => {
+  doc.name = e.target.value;
+  // A aba guarda o nome que tinha quando o design foi aberto. Sem isto, renomear deixava a
+  // aba com o nome velho ate a proxima recarga — e a lista de abas e como a pessoa reconhece
+  // qual design e qual.
+  renameRecentDesign(doc.seedId, doc.name);
+  persist();
+});
 $("docname").addEventListener("change", commit);
 $("undoBtn").addEventListener("click", undo);
 $("redoBtn").addEventListener("click", redo);
@@ -3067,6 +3087,7 @@ let loadingTemplateId: string | null = null;
 export async function openTemplateById(id: string) {
   if (loadingTemplateId === id) return;
   loadingTemplateId = id;
+  designGone = false;
   // Encodes which template is open in the URL itself — without this, reloading (or opening a
   // shared link) has no way to know which document to restore and falls back to a blank one.
   // A real hash assignment (not history.replaceState) so the top-level router's hashchange
@@ -3153,6 +3174,23 @@ function readRecentTabs(): RecentTab[] {
 
 function writeRecentTabs(tabs: RecentTab[]) {
   try { localStorage.setItem(RECENT_TABS_KEY, JSON.stringify(tabs)); } catch { /* quota ou storage bloqueado */ }
+}
+
+/** Mantem o rotulo da aba igual ao nome do design, enquanto ele e digitado. */
+function renameRecentDesign(id: string | undefined, name: string) {
+  if (!id) return;
+  const tabs = readRecentTabs();
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab || tab.name === name) return;
+  tab.name = name;
+  writeRecentTabs(tabs);
+  renderRecentTabs();
+}
+
+/** Tira da lista de abas um design que nao existe mais — chamado ao excluir e ao ver um 404. */
+export function forgetRecentDesign(id: string) {
+  writeRecentTabs(readRecentTabs().filter((t) => t.id !== id));
+  renderRecentTabs();
 }
 
 function pushRecentDesign(id: string, name: string) {

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { openTemplateById, openTemplateDocument } from "../editor";
+import { forgetRecentDesign, openTemplateById, openTemplateDocument } from "../editor";
 import { createPlaygroundDocument, savePlaygroundCopy } from "../playgroundDocument";
 import type { Doc } from "../types";
 import { clearDefaultApiKey, getDefaultApiKey, getSession, saveDefaultApiKey } from "../session";
@@ -233,7 +233,11 @@ export function enterView(view: View) {
   state.view = view;
   if (view === "keys" && !state.keysLoaded) loadKeys();
   // O playground escolhe da mesma lista, então também precisa dos designs carregados, não só a home.
-  if ((view === "designs" || view === "playground") && !state.templatesLoaded) loadTemplates();
+  // "designs" recarrega sempre, e não só quando nunca carregou: é a tela que mostra nome, data
+  // de edição e capa de cada design, e todos os três mudam fora do console. Voltar da Conta
+  // para cá mostrava a lista de quando ela foi carregada pela primeira vez.
+  if (view === "designs") loadTemplates();
+  else if (view === "playground" && !state.templatesLoaded) loadTemplates();
   if (view === "playground" && state.templateId && state.layersLoadedForId !== state.templateId) {
     loadLayersForTemplate(state.templateId);
   }
@@ -486,6 +490,19 @@ export async function uploadLayerPhoto(id: number, file: File) {
  * a lista era buscada duas vezes em toda abertura.
  */
 let templatesInFlight: Promise<void> | null = null;
+
+/**
+ * O editor avisa cada gravação com este evento — salvar, renomear, importar, duplicar. Ele
+ * existia e ninguém escutava, então a lista de designs continuava com o nome e a data de
+ * edição de quando foi carregada, e só um refresh da página a corrigia.
+ *
+ * Aqui a gravação só invalida; quem recarrega é a volta ao console (`openConsole`) ou a
+ * entrada na tela (`enterView`). Buscar a lista a cada tecla digitada num nome seria uma
+ * rajada de fetches para uma tela que, nesse momento, nem está na frente da pessoa.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("blank-editor-saved", () => { state.templatesLoaded = false; });
+}
 
 export function loadTemplates(): Promise<void> {
   templatesInFlight ??= fetchTemplates().finally(() => { templatesInFlight = null; });
@@ -778,7 +795,12 @@ export async function runConfirmDialog() {
   state.confirmDialog = null;
   if (d.kind === "delete-template") {
     const res = await fetch(`/api/v1/templates/${d.id}`, { method: "DELETE" });
-    if (res.ok) state.templates = state.templates.filter((t) => t.id !== d.id);
+    if (res.ok) {
+      state.templates = state.templates.filter((t) => t.id !== d.id);
+      // A aba do editor sobrevive a esta exclusao; sem tira-la de la, voltar para ela grava
+      // contra um id morto e a barra fica em "Erro ao salvar".
+      forgetRecentDesign(d.id);
+    }
   }
   notify();
 }

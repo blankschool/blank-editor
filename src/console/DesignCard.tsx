@@ -28,8 +28,16 @@ import {
  * main.ts injetava esse <img> em toda `.tplcard` que aparecesse, porque o card
  * nascia de innerHTML e não havia onde pendurar o onError. Agora o card é dono
  * da própria capa, e a falha de carga é só um estado local.
+ *
+ * `version` é o `updatedAt` do design, e existe porque o endpoint responde com
+ * `cache-control: private, max-age=20` e a URL era fixa: depois de editar, o
+ * navegador reservia a capa antiga e o card só mostrava a nova depois de um
+ * refresh. Como chave, o `updatedAt` muda a cada gravação e fica estável entre
+ * elas — a capa continua cacheável, mas nunca velha. O mesmo valor vai no `key`
+ * do componente, para o estado `broken` de uma capa que falhou não grudar na
+ * próxima tentativa.
  */
-function Cover({ id }: { id: string }) {
+function Cover({ id, version }: { id: string; version: string }) {
   const [broken, setBroken] = useState(false);
 
   if (broken) {
@@ -46,7 +54,7 @@ function Cover({ id }: { id: string }) {
   // de designs existe justamente para você reconhecer a peça pela miniatura.
   return (
     <img
-      src={`/api/v1/templates/${encodeURIComponent(id)}/cover`}
+      src={`/api/v1/templates/${encodeURIComponent(id)}/cover?v=${encodeURIComponent(version)}`}
       alt=""
       loading="lazy"
       onError={() => setBroken(true)}
@@ -139,7 +147,7 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
               16:9) e o quadrado é o que menos desperdiça para todos eles ao mesmo tempo.
               Num tile 4:3 um post ficava com tarja nos dois lados e a miniatura minguava. */}
           <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-inset p-3">
-            <Cover id={id} />
+            <Cover key={template.updatedAt} id={id} version={template.updatedAt} />
             <button
               type="button"
               onClick={(event) => {
