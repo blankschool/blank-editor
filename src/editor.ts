@@ -1,6 +1,7 @@
 import "./styles.css";
 import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
-import { replaceTemplateText, REPLACEMENT_PREFIX } from "../server/src/render/replacementFonts.ts";
+import { replaceTemplateText } from "../server/src/render/replacementFonts.ts";
+import { fontOptions } from "./fontPicker.ts";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
@@ -40,7 +41,6 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Playfair Display", "Lora", "Oswald", "Bebas Neue", "DM Serif Display", "Caveat"];
 const PAGE_SIZES = [
   { n: "Post", w: 1080, h: 1080 }, { n: "Post 4:5", w: 1080, h: 1350 }, { n: "Story", w: 1080, h: 1920 },
   { n: "Slide", w: 1920, h: 1080 }, { n: "A4", w: 794, h: 1123 },
@@ -594,8 +594,7 @@ function renderToolbar() {
   let html = "";
 
   if (one && t === "text") {
-    const importedFont = e.font?.startsWith(REPLACEMENT_PREFIX) ? `<option value="${esc(e.font)}" selected>${esc(e.font.slice(REPLACEMENT_PREFIX.length))}</option>` : "";
-    html += `<select id="tFont" class="qselect" title="Fonte">${importedFont}${FONTS.map((f) => `<option ${e.font === f ? "selected" : ""}>${f}</option>`).join("")}</select>`;
+    html += `<select id="tFont" class="qselect" title="Fonte">${fontOptions(e.font).map((o) => `<option value="${esc(o.value)}" ${o.selected ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
     html += `<div class="qsep"></div>`;
     html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" value="${Math.round(e.size)}" aria-label="Tamanho da fonte"><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
     html += `<div class="qsep"></div>`;
