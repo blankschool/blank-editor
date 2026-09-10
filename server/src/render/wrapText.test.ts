@@ -24,6 +24,11 @@ test("wraps a long line without splitting words", () => {
   assert.equal(lines.join(" "), "this is a fairly long sentence that should wrap across more than one line");
 });
 
+test("keeps imported condensed headlines on one line when they fit the authored box", () => {
+  const lines = wrapText("O Pânico na Band acabou ", 803, 74.98666666666666, "LibreCaslonCondensed");
+  assert.deepEqual(lines, ["O Pânico na Band acabou "]);
+});
+
 test("treats explicit newlines as paragraph breaks", () => {
   const lines = wrapText("first paragraph\n\nsecond paragraph", 1000, 15);
   assert.deepEqual(lines, ["first paragraph", "", "second paragraph"]);

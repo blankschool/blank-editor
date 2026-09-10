@@ -6,12 +6,17 @@
  * caller (wrapping, single-line layout) shares one number instead of drifting.
  */
 const AVG_CHAR_WIDTH_RATIO = 0.52;
+const CONDENSED_CHAR_WIDTH_RATIO = 0.42;
 
-function estimateTextWidth(text: string, fontSize: number): number {
-  return text.length * fontSize * AVG_CHAR_WIDTH_RATIO;
+function widthRatio(fontFamily?: string): number {
+  return /condensed|condensad/i.test(fontFamily ?? "") ? CONDENSED_CHAR_WIDTH_RATIO : AVG_CHAR_WIDTH_RATIO;
 }
 
-function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): string[] {
+function estimateTextWidth(text: string, fontSize: number, fontFamily?: string): number {
+  return text.length * fontSize * widthRatio(fontFamily);
+}
+
+function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number, fontFamily?: string): string[] {
   if (paragraph === "") return [""];
 
   const words = paragraph.split(" ");
@@ -20,7 +25,7 @@ function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): s
 
   for (const word of words) {
     const candidate = current === "" ? word : `${current} ${word}`;
-    if (estimateTextWidth(candidate, fontSize) <= maxWidth || current === "") {
+    if (estimateTextWidth(candidate, fontSize, fontFamily) <= maxWidth || current === "") {
       current = candidate;
       continue;
     }
@@ -29,13 +34,13 @@ function wrapParagraph(paragraph: string, maxWidth: number, fontSize: number): s
   }
   if (current !== "") lines.push(current);
 
-  return lines.flatMap((line) => breakLongWord(line, maxWidth, fontSize));
+  return lines.flatMap((line) => breakLongWord(line, maxWidth, fontSize, fontFamily));
 }
 
-function breakLongWord(line: string, maxWidth: number, fontSize: number): string[] {
-  if (estimateTextWidth(line, fontSize) <= maxWidth) return [line];
+function breakLongWord(line: string, maxWidth: number, fontSize: number, fontFamily?: string): string[] {
+  if (estimateTextWidth(line, fontSize, fontFamily) <= maxWidth) return [line];
 
-  const maxChars = Math.max(1, Math.floor(maxWidth / (fontSize * AVG_CHAR_WIDTH_RATIO)));
+  const maxChars = Math.max(1, Math.floor(maxWidth / (fontSize * widthRatio(fontFamily))));
   const chunks: string[] = [];
   for (let i = 0; i < line.length; i += maxChars) {
     chunks.push(line.slice(i, i + maxChars));
@@ -44,6 +49,6 @@ function breakLongWord(line: string, maxWidth: number, fontSize: number): string
 }
 
 /** Wraps `text` into lines that fit `maxWidth` px at `fontSize`, honouring `\n` paragraph breaks. */
-export function wrapText(text: string, maxWidth: number, fontSize: number): string[] {
-  return text.split("\n").flatMap((paragraph) => wrapParagraph(paragraph, maxWidth, fontSize));
+export function wrapText(text: string, maxWidth: number, fontSize: number, fontFamily?: string): string[] {
+  return text.split("\n").flatMap((paragraph) => wrapParagraph(paragraph, maxWidth, fontSize, fontFamily));
 }

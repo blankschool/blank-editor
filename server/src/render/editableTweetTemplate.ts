@@ -85,7 +85,7 @@ function renderText(element: EditableElement, value: string): string {
   const lineHeight = size * Math.max(0.5, finite(element.lh, 1.2));
   const align = element.align === "center" ? "middle" : element.align === "right" ? "end" : "start";
   const anchorX = align === "middle" ? x + width / 2 : align === "end" ? x + width : x;
-  const lines = wrapText(value, width, size);
+  const lines = wrapText(value, width, size, element.font);
   const tspans = lines
     .map((line, index) => `<tspan x="${anchorX}" y="${y + index * lineHeight}">${escapeXml(line || " ")}</tspan>`)
     .join("");
@@ -100,7 +100,7 @@ function naturalElementHeight(element: EditableElement, textValue?: string): num
     const width = Math.max(1, finite(element.w, 1));
     const size = Math.max(1, finite(element.size, 15));
     const lineHeight = size * Math.max(0.5, finite(element.lh, 1.2));
-    const lines = wrapText(textValue ?? "", width, size);
+    const lines = wrapText(textValue ?? "", width, size, element.font);
     return lines.length * lineHeight;
   }
   return Math.max(0, finite(element.h));

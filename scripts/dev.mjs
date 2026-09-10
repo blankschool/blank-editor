@@ -132,7 +132,11 @@ start("api", process.execPath, ["src/server.ts"], {
   // e faria a API tentar subir na MESMA porta do Vite — o proxy de /api do
   // vite.config.ts aponta pra 127.0.0.1:8787 fixo, então sem isto ele erra
   // com ECONNREFUSED e o console abre "vazio" sem explicar por quê.
-  env: { ...process.env, LOCAL_API_KEY: "blk_local_dev", PORT: "8787" },
+  //
+  // DATABASE_URL também precisa ser apagado explicitamente: server/src/server.ts
+  // carrega server/.env no bootstrap, e um banco local/túnel configurado ali
+  // venceria o LOCAL_API_KEY e tiraria o dev do modo em memória.
+  env: { ...process.env, DATABASE_URL: "", LOCAL_API_KEY: "blk_local_dev", PORT: "8787" },
 });
 
 start("web", process.execPath, [join(root, "node_modules", "vite", "bin", "vite.js")], {
