@@ -5,6 +5,10 @@
 .env.*
 node_modules
 dist
-server
+server/**
+!server/src/
+!server/src/render/
+server/src/render/*
+!server/src/render/editorText.ts
+!server/src/render/svg.ts
 *.log
-

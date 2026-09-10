@@ -104,14 +104,11 @@ test("a fixture tem o sha256 que os testes declaram (pega troca acidental do arq
   assert.match(FIXTURE_SHA256, /^[0-9a-f]{64}$/);
 });
 
-test("subset de PDF: pedir uma letra que a face não tem cai para Inter em vez de recusar o render", async () => {
-  // NYTFranklin-Light saiu do PDF com 16 glifos: " ?acdegilmnoruvó". Um "b" não existe nela.
-  // Antes isso recusava o render inteiro; agora elementsWithGlyphFallback troca o elemento para
-  // Inter (sempre embutida) antes do rasterizador rodar — o texto sai com uma fonte parecida.
+test("subset de PDF: o navegador resolve os glifos ausentes sem descartar a face original", async () => {
+  // The declared subset remains loaded. Chromium resolves missing glyphs through Inter.
   const d = {
     active: 0,
-    fonts: [{ family: "Subset", weight: 300, sha256: "x", ttf: "/nao/importa.ttf", woff2: "",
-              glyphs: " ?acdegilmnoruvó" }],
+    fonts: [{ ...fixtureDocFont(), family: "Subset", weight: 300, glyphs: "ABCD" }],
     pages: [{ w: 200, h: 80, bg: "#FFF", els: [
       { type: "text", name: "manchete", x: 0, y: 0, w: 200, h: 40, text: "bola", size: 20,
         font: "Subset", weight: 300, fill: "#000000" },
@@ -124,14 +121,12 @@ test("subset de PDF: pedir uma letra que a face não tem cai para Inter em vez d
 test("a substituição olha o texto do OVERRIDE, não o que o documento guardou", async () => {
   const d = {
     active: 0,
-    fonts: [{ family: "Subset", weight: 400, sha256: "x", ttf: "/nao/importa.ttf", woff2: "", glyphs: "abc " }],
+    fonts: [{ ...fixtureDocFont(), family: "Subset", weight: 400, glyphs: "ABCD" }],
     pages: [{ w: 200, h: 80, bg: "#FFF", els: [
       { type: "text", name: "t", x: 0, y: 0, w: 200, h: 40, text: "abc", size: 20, font: "Subset", fill: "#000000" },
     ] }],
   };
-  // O documento sozinho é coberto pela face original (não dispararia a troca); o texto que a
-  // API manda desenhar não é — precisa cair para Inter mesmo assim, em vez de tentar carregar
-  // "/nao/importa.ttf" (que não existe) com a letra que falta.
+  // Overrides must also receive browser fallback when they introduce missing glyphs.
   const png = await renderTemplatePng(d, { texts: { t: "abz" }, images: {}, hidden: new Set() });
   assert.ok(await larguraDaTinta(png) > 0, "sem tinta na página: o texto saiu em branco mesmo com a substituta");
 });

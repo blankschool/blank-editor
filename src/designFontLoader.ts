@@ -17,7 +17,7 @@ import type { Doc, DocFont } from "./types";
 const loaded = new Set<string>();
 
 function key(font: DocFont): string {
-  return `${font.family}::${font.weight}`;
+  return `${font.family}::${font.weight}::${font.sha256}`;
 }
 
 async function loadOne(font: DocFont): Promise<void> {
@@ -37,7 +37,8 @@ async function loadOne(font: DocFont): Promise<void> {
 /** Resolve quando todas as faces do documento terminaram (ou falharam). */
 export async function loadDesignFonts(doc: Doc): Promise<void> {
   if (!doc.fonts?.length) return;
-  await Promise.all(doc.fonts.map(loadOne));
+  // Keep subset precedence identical to the API's ordered @font-face declarations.
+  for (const font of doc.fonts) await loadOne(font);
 }
 
 /**

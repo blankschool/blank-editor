@@ -57,6 +57,7 @@ providencia.
 ```bash
 npm install              # uma vez
 cd server && npm install # uma vez, as deps da API
+npx playwright install chromium # uma vez, o renderizador usa o layout do navegador
 cd ..
 
 npm run dev              # front + API juntos, Ctrl+C encerra os dois

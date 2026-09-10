@@ -1,7 +1,7 @@
 import { escapeXml } from "./svg.ts";
 import { wrapText } from "./wrapText.ts";
 
-interface EditableElement {
+export interface EditableElement {
   id?: string;
   type?: string;
   name?: string;
@@ -28,6 +28,7 @@ interface EditableElement {
   lh?: number;
   ls?: number;
   src?: string;
+  runs?: Array<import("./editorText.ts").TextStyle & { text: string }>;
 }
 
 interface EditablePage {
@@ -117,6 +118,7 @@ function computeGroupShifts(
   els: EditableElement[],
   overrides: TemplateOverrides,
   pageHeight: number,
+  measureHeight = naturalElementHeight,
 ): Map<string, number> {
   const groups = new Map<string, EditableElement[]>();
   for (const element of els) {
@@ -134,7 +136,7 @@ function computeGroupShifts(
     for (const element of members) {
       const textValue = element.type === "text" ? overrides.texts[element.name || ""] ?? String(element.text || "") : undefined;
       const y0 = finite(element.y);
-      const y1 = y0 + naturalElementHeight(element, textValue);
+      const y1 = y0 + measureHeight(element, textValue);
       top = Math.min(top, y0);
       bottom = Math.max(bottom, y1);
     }
@@ -199,13 +201,14 @@ export function listImageLayers(document: unknown, pageIndex?: number): Array<{ 
 
 /** As faces que este documento carrega consigo — ver Doc.fonts em src/types.ts. Uma entrada sem
  *  `sha256` é descartada: sem identidade não há cache confiável nem detecção de ambiguidade. */
-export function listDesignFonts(document: unknown): Array<{ family: string; weight: number; sha256: string; src: string; glyphs?: string }> {
+export function listDesignFonts(document: unknown): Array<{ family: string; weight: number; sha256: string; src: string; browserSrc?: string; glyphs?: string }> {
   const fonts = (document as { fonts?: unknown } | null)?.fonts;
   if (!Array.isArray(fonts)) return [];
   return fonts
-    .filter((f): f is { family: string; weight: number; sha256: string; ttf: string; glyphs?: string } =>
+    .filter((f): f is { family: string; weight: number; sha256: string; ttf: string; woff2?: string; glyphs?: string } =>
       Boolean(f && typeof f.family === "string" && typeof f.ttf === "string" && typeof f.sha256 === "string" && f.sha256))
     .map((f) => ({ family: f.family, weight: Number(f.weight) || 400, sha256: f.sha256, src: f.ttf,
+                   ...(f.woff2 ? { browserSrc: f.woff2 } : {}),
                    ...(typeof (f as { glyphs?: unknown }).glyphs === "string" ? { glyphs: (f as { glyphs: string }).glyphs } : {}) }));
 }
 
@@ -227,6 +230,10 @@ export function buildTemplateSvg(
   overrides: TemplateOverrides,
   resolvedImages: Record<string, string>,
   pageIndex?: number,
+  textLayout?: {
+    render: (element: EditableElement, value: string) => string;
+    height?: (element: EditableElement, value?: string) => number;
+  },
 ): string {
   const page = pageAt(document, pageIndex);
   if (!page) throw new Error("template must contain a page");
@@ -234,7 +241,7 @@ export function buildTemplateSvg(
   const height = boundedDimension(page.h, "height");
   if (!Array.isArray(page.els) || page.els.length > 200) throw new Error("invalid template elements");
 
-  const groupShifts = computeGroupShifts(page.els, overrides, height);
+  const groupShifts = computeGroupShifts(page.els, overrides, height, textLayout?.height);
 
   const definitions: string[] = [];
   const content: string[] = [];
@@ -253,7 +260,7 @@ export function buildTemplateSvg(
     const radius = Math.max(0, finite(element.radius));
 
     if (element.type === "text") {
-      content.push(renderText(element, overrides.texts[name] ?? String(element.text || "")));
+      content.push((textLayout?.render ?? renderText)(element, overrides.texts[name] ?? String(element.text || "")));
       return;
     }
     if (element.type === "image") {

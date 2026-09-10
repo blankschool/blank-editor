@@ -1,15 +1,12 @@
 FROM node:22-slim
 
-# O texto do SVG é rasterizado pelo @resvg/resvg-js com `loadSystemFonts: false`: as fontes vêm
-# do registry (Doc.fonts -> storage -> cache em /tmp), não do sistema. Por isso não há mais
-# fontconfig nem pacote de fontes aqui — nada instalado na imagem influencia o desenho, que é
-# justamente a propriedade que se quer. O binário nativo do resvg vem por optionalDependencies
-# do npm, então não acrescente --no-optional ao install abaixo.
+# Chromium provides the same HTML/CSS text layout as the editor.
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
+RUN npx playwright install --with-deps chromium
 
 COPY src ./src
 

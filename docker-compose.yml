@@ -41,7 +41,7 @@ services:
   api:
     image: node:22-slim
     working_dir: /app/server
-    command: sh -c "npm ci --no-audit --no-fund && node --experimental-strip-types --watch src/server.ts"
+    command: sh -c "npm ci --no-audit --no-fund && npx playwright install --with-deps chromium && node --experimental-strip-types --watch src/server.ts"
     environment:
       PORT: "8787"
       DATABASE_URL: postgres://blank:blank@db:5432/blank

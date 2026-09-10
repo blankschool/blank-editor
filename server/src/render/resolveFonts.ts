@@ -20,6 +20,7 @@ interface Textish {
   name?: string;
   font?: string;
   hidden?: boolean;
+  runs?: Array<{ font?: string }>;
 }
 
 /** Famílias que os elementos de texto desta página realmente pedem. */
@@ -31,6 +32,7 @@ export function listUsedFamilies(page: { els?: unknown } | null | undefined): st
     // O default entra na conta: o SVG vai pedir essa família de qualquer forma, então ela
     // precisa ser exigida aqui também.
     used.add((el.font || "").trim() || DEFAULT_FONT_FAMILY);
+    for (const run of el.runs ?? []) if (run.font) used.add(run.font);
   }
   return [...used];
 }
@@ -42,7 +44,7 @@ export function listUsedFamilies(page: { els?: unknown } | null | undefined): st
  * jogado fora, e um design pode declarar faces que a página atual não usa (um carrossel cuja
  * capa não tem a fonte do miolo).
  */
-export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonly string[]): FaceRef[] {
+export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonly string[], allowBrowserSubsets = false): FaceRef[] {
   const byFamily = new Map<string, FaceRef[]>();
   for (const face of declared) {
     const list = byFamily.get(face.family) ?? [];
@@ -72,7 +74,7 @@ export function resolveFaces(declared: readonly FaceRef[], usedFamilies: readonl
       porPeso.set(face.weight, shas);
     }
     for (const [weight, shas] of porPeso) {
-      if (shas.size > 1) {
+      if (shas.size > 1 && !(allowBrowserSubsets && faces.filter(f => f.weight === weight).every(f => f.glyphs))) {
         throw new Error(
           `a família "${family}" peso ${weight} foi declarada com ${shas.size} arquivos diferentes ` +
             `(${[...shas].map((s) => s.slice(0, 12)).join(", ")}). Ambíguo: o render para aqui em vez de sortear.`,

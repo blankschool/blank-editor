@@ -1,9 +1,9 @@
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { renderAsync } from "@resvg/resvg-js";
-import { buildTemplateSvg, listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
+import { listDesignFonts, listImageLayers, pageForRender, type TemplateOverrides } from "./editableTweetTemplate.ts";
 import { ensureFontFiles, type FaceRef } from "./fontCache.ts";
-import { assertGlyphCoverage, elementsWithGlyphFallback, listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { listUsedFamilies, resolveFaces } from "./resolveFonts.ts";
+import { renderBrowserPng } from "./browserRender.ts";
 import { builtinFaces } from "./builtinFaces.ts";
 import { fetchImage } from "./imageSource.ts";
 import { PRIVATE_UPLOAD_PREFIX, fetchPrivateUpload } from "../storage.ts";
@@ -80,50 +80,22 @@ export async function renderTemplatePng(
   // embutidas (builtinFaces.ts) garantem apenas que a família padrão nunca falte.
   const acumuladas: FaceRef[] = [];
   const vistas = new Set<string>();
-  for (const f of [...doDocumento, ...registryFaces, ...builtinFaces()]) {
-    const chave = `${f.family}::${f.weight}`;
-    if (vistas.has(chave)) continue;
-    vistas.add(chave);
-    acumuladas.push(f);
+  for (const source of [doDocumento, registryFaces, builtinFaces()]) {
+    const sourceKeys = new Set<string>();
+    for (const f of source) {
+      const chave = `${f.family}::${f.weight}`;
+      if (vistas.has(chave)) continue;
+      sourceKeys.add(chave);
+      acumuladas.push(f);
+    }
+    for (const key of sourceKeys) vistas.add(key);
   }
   const disponiveis = acumuladas;
-  const facesDeclaradas = resolveFaces(disponiveis, listUsedFamilies(page));
-  // Um subset vindo de PDF não cobre o alfabeto inteiro: qualquer camada de texto cuja face
-  // declarada não tenha os glifos pedidos passa a pedir Inter (completa) em vez da família
-  // original — troca o ELEMENTO, não só o arquivo carregado, porque o resvg casa font-family
-  // pelo nome que o arquivo declara por dentro (ver elementsWithGlyphFallback).
-  const elsAjustados = elementsWithGlyphFallback(page, layers.texts, facesDeclaradas, builtinFaces());
-  const pageAjustada = { ...page, els: elsAjustados };
-  const faces = resolveFaces(disponiveis, listUsedFamilies(pageAjustada));
-  // Rede de segurança final: se nem a substituta cobrir o texto, ainda recusamos em vez de
-  // desenhar em branco.
-  assertGlyphCoverage(pageAjustada, layers.texts, faces);
+  // Match the editor's per-glyph fallback. A missing character must not replace the
+  // entire authored layer with Inter, changing all its widths and its appearance.
+  const faces = resolveFaces(disponiveis, [...new Set([...listUsedFamilies(page), "Inter"])], true);
   const fontFiles = await ensureFontFiles(faces);
 
-  // O SVG precisa nascer da página AJUSTADA (com os fallbacks de fonte já aplicados), não da
-  // original — por isso troca a página correspondente dentro de uma cópia do documento em vez
-  // de passar `document` direto para buildTemplateSvg.
-  const paginas = (document as { pages?: unknown[] })?.pages;
-  const indice = Array.isArray(paginas) ? paginas.indexOf(page) : -1;
-  const documentoParaSvg = indice >= 0
-    ? { ...(document as object), pages: paginas!.map((p, i) => (i === indice ? pageAjustada : p)) }
-    : document;
-
   const overrides: TemplateOverrides = { texts: layers.texts, hidden: layers.hidden };
-  const svg = buildTemplateSvg(documentoParaSvg, overrides, resolvedImages, pageIndex);
-
-  // resvg, não sharp/librsvg, para desenhar o SVG.
-  //
-  // Duas razões, as duas medidas nesta migração. (1) O librsvg resolve fonte pelo fontconfig do
-  // PROCESSO, que lê a configuração uma vez e ignora mudanças — não há como entregar a ele uma
-  // fonte que chegou junto com o documento. O resvg monta um banco de fontes por renderização a
-  // partir dos arquivos que recebe. (2) O librsvg era o desalinhado: no mesmo SVG e com a mesma
-  // fonte, ele posiciona `dominant-baseline="text-before-edge"` de 6 a 31px acima do Chrome,
-  // enquanto o resvg bate com o navegador em 0-1px. Trocar aproximou o render do canvas do
-  // editor, em vez de afastar.
-  // `renderAsync`, não `new Resvg(...).render()`: a versão síncrona rasteriza no thread do Node
-  // e trava o event loop do Fastify pelo tempo do desenho — numa página de 1080x1440 com fotos,
-  // tempo suficiente para segurar todas as outras requisições.
-  const png = await renderAsync(svg, { font: { fontFiles, loadSystemFonts: false } });
-  return sharp(png.asPng()).png().toBuffer();
+  return renderBrowserPng(document, overrides, resolvedImages, faces, fontFiles, pageIndex);
 }

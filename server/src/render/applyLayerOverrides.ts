@@ -43,7 +43,11 @@ export function applyLayerOverrides(document: unknown, layers: ParsedLayers, pag
     const els = page.els.map((el) => {
       const name = el?.name;
       if (!name) return el;
-      if (el.type === "text" && layers.texts[name] !== undefined) return { ...el, text: layers.texts[name] };
+      if (el.type === "text" && layers.texts[name] !== undefined) {
+        if (layers.texts[name] === el.text) return el;
+        const { runs: _runs, ...base } = el;
+        return { ...base, text: layers.texts[name] };
+      }
       if (el.type === "image" && layers.images[name] !== undefined) return { ...el, src: layers.images[name] };
       return el;
     });

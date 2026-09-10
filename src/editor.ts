@@ -1,4 +1,5 @@
 import "./styles.css";
+import { editorTextHtml, textRunsHtml } from "../server/src/render/editorText";
 import { loadDesignFonts } from "./designFontLoader";
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, El, Page } from "./types";
@@ -343,19 +344,6 @@ function elStyle(e: any) {
  *  cada um só declarando o que DIVERGE do estilo base do elemento). Extraída pra ser reusada
  *  fora do render normal também: depois de aplicar cor a um trecho selecionado (item "seleção de
  *  trecho de texto"), só esse `.txt` precisa ser reconstruído, não a página inteira. */
-function textRunsHtml(e: any): string {
-  if (!e.runs || !e.runs.length) return esc(e.text);
-  return e.runs.map((r) => {
-    const over = [
-      r.font ? `font-family:'${r.font}',Inter,system-ui,sans-serif` : "",
-      r.weight !== undefined ? `font-weight:${r.weight}` : "",
-      r.italic !== undefined ? `font-style:${r.italic ? "italic" : "normal"}` : "",
-      r.underline !== undefined ? `text-decoration:${r.underline ? "underline" : "none"}` : "",
-      r.fill ? `color:${r.fill}` : "",
-    ].filter(Boolean).join(";");
-    return `<span style="${over}">${esc(r.text)}</span>`;
-  }).join("");
-}
 function elInner(e: any) {
   const bd = e.stroke && e.strokeWidth ? `border:${e.strokeWidth}px solid ${e.stroke};` : "";
   const sh = e.shadow ? `box-shadow:${e.shadow.x}px ${e.shadow.y}px ${e.shadow.blur}px ${e.shadow.spread || 0}px ${e.shadow.color};` : "";
@@ -406,13 +394,7 @@ function elInner(e: any) {
     case "text": {
       // A base é o estilo do elemento — cada run só declara o que DIVERGE dela, então um run
       // sem `weight`/`fill`/etc. herda naturalmente por estar dentro do mesmo <div>.
-      const st = [
-        `font-family:'${e.font}',Inter,system-ui,sans-serif`, `font-size:${e.size}px`,
-        `font-weight:${e.weight}`, `font-style:${e.italic ? "italic" : "normal"}`,
-        `text-decoration:${e.underline ? "underline" : "none"}`, `text-align:${e.align}`,
-        `line-height:${e.lh}`, `letter-spacing:${e.ls}px`, `color:${e.fill}`,
-      ].join(";");
-      return `<div class="txt" data-txt="${e.id}" style="${st}">${textRunsHtml(e)}</div>`;
+      return editorTextHtml(e);
     }
   }
   return "";

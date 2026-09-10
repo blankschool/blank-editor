@@ -40,7 +40,7 @@ test("listDesignFonts lê as faces do documento e descarta entrada sem sha256 �
     { family: "SemTtf", weight: 400, sha256: "def" },
     null,
   ] };
-  assert.deepEqual(listDesignFonts(doc), [{ family: "NYTFranklin", weight: 300, sha256: "abc", src: "https://e/x.ttf" }]);
+  assert.deepEqual(listDesignFonts(doc), [{ family: "NYTFranklin", weight: 300, sha256: "abc", src: "https://e/x.ttf", browserSrc: "https://e/x.woff2" }]);
 });
 
 test("um documento sem fonts não quebra nem inventa faces", () => {

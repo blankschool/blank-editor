@@ -29,6 +29,8 @@ export interface FaceRef {
   sha256: string;
   /** De onde buscar em caso de cache miss: URL http(s), ou caminho absoluto local. */
   src: string;
+  /** Browser font used by the editor; PDF conversion may give the TTF different metrics. */
+  browserSrc?: string;
   /** Só os glifos que esta face contém, quando ela é um subset (o caso de fonte extraída de
    *  PDF). Ausente = fonte completa, sem restrição a verificar. */
   glyphs?: string;
