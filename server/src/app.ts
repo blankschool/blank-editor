@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { completeFontPath } from "./render/completeFontFiles.ts";
 import { normalizeImportedText } from "./render/replacementFonts.ts";
+import { type StockPhotoLibrary } from "./stockPhotos.ts";
 import { createImportFontResolver } from "./render/importFontResolver.ts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyCookie from "@fastify/cookie";
@@ -111,6 +112,8 @@ export interface AppDeps {
 
 export interface MediaDeps {
   service: MediaAcquisitionService;
+  /** Busca do banco de imagens para o painel do editor — ausente quando não há PEXELS_API_KEY. */
+  stock?: StockPhotoLibrary | null;
 }
 
 export interface PdfImportDeps {
@@ -1389,6 +1392,42 @@ export function buildApp(
 
   // As faces que este dono já registrou — o console usa para mostrar o que um design carrega e
   // avisar sobre embedding restrito (os2FsType).
+  /**
+   * O banco de imagens do painel "Imagens". Duas rotas porque são dois papéis: uma devolve a
+   * página de resultados (JSON com miniaturas hospedadas pelo Pexels) e a outra devolve os BYTES
+   * da foto escolhida, pelo nosso domínio.
+   *
+   * Passar os bytes por aqui não é frescura: o editor desenha tudo num <canvas> e exporta dele;
+   * uma imagem de outra origem sem CORS contamina o canvas e faz a exportação inteira falhar.
+   * Servindo do mesmo domínio isso não acontece — e a chave do Pexels continua só no servidor.
+   */
+  app.get<{ Querystring: { q?: string; page?: string; orientation?: string } }>("/api/v1/stock/photos", async (request, reply) => {
+    if (!media?.stock) return reply.code(501).send({ error: "stock photo search is not configured on this server (PEXELS_API_KEY)" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    const query = (request.query.q || "").trim();
+    if (!query) return { photos: [], hasMore: false };
+    try {
+      return await media.stock.search(query, { page: Number(request.query.page), orientation: request.query.orientation });
+    } catch (err) {
+      return reply.code(502).send({ error: `busca de imagens falhou: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/stock/photos/:id/file", async (request, reply) => {
+    if (!media?.stock) return reply.code(501).send({ error: "stock photo search is not configured on this server (PEXELS_API_KEY)" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+    try {
+      const { bytes, contentType } = await media.stock.file(request.params.id);
+      // A foto é imutável no Pexels, então o cache longo é seguro e poupa uma ida ao provedor
+      // toda vez que alguém insere a mesma imagem.
+      return reply.type(contentType).header("Cache-Control", "private, max-age=86400").send(bytes);
+    } catch (err) {
+      return reply.code(502).send({ error: `não foi possível baixar a foto: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
   app.get("/api/v1/fonts", async (request, reply) => {
     const ownerId = await requireOwner(request, reply);
     if (!ownerId) return;

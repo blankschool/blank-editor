@@ -1590,6 +1590,92 @@ function renderFontList() {
   if (list) list.innerHTML = fontListHtml();
 }
 
+/* --------------------------- banco de imagens --------------------------- */
+/**
+ * Busca de fotos do Pexels. O editor nunca fala com api.pexels.com: a chave é do servidor, e a
+ * foto escolhida chega pelo nosso domínio (/api/v1/stock) porque uma imagem de outra origem
+ * contamina o <canvas> e faz a exportação inteira falhar.
+ */
+let stockQuery = "";
+let stockPhotos: Array<{ id: string; thumb: string; alt: string; photographer: string; pageUrl: string }> = [];
+let stockState: "vazio" | "buscando" | "ok" | "erro" | "desligado" = "vazio";
+let stockPage = 1;
+let stockHasMore = false;
+let stockBusca = 0;
+let stockDebounce: ReturnType<typeof setTimeout> | undefined;
+
+function stockListHtml(): string {
+  if (stockState === "desligado") return `<p class="phint">O banco de imagens não está configurado neste servidor.</p>`;
+  if (stockState === "erro") return `<p class="phint">Não foi possível buscar agora. Tente de novo.</p>`;
+  if (stockState === "buscando" && !stockPhotos.length) return `<p class="phint">Buscando…</p>`;
+  if (!stockPhotos.length) {
+    return `<p class="phint">${stockQuery.trim() ? "Nenhuma foto com esse termo." : "Digite um termo para buscar."}</p>`;
+  }
+  return `<div class="stockgrid">${stockPhotos.map((photo) => `
+    <button class="stocktile" data-stock="${esc(photo.id)}" title="Inserir foto de ${esc(photo.photographer || "autor desconhecido")}">
+      <img src="${esc(photo.thumb)}" alt="${esc(photo.alt)}" loading="lazy">
+      <span class="stockcredit">${esc(photo.photographer || "Pexels")}</span>
+    </button>`).join("")}</div>`
+    + (stockHasMore ? `<button class="tbtn ghost" id="stockMore" style="width:100%;height:30px;margin-top:6px;font-size:11.5px">Carregar mais</button>` : "");
+}
+
+function renderStockList() {
+  const list = $("stockList");
+  if (list) list.innerHTML = stockListHtml();
+}
+
+async function buscarStock(page = 1) {
+  const termo = stockQuery.trim();
+  // Cada busca carrega o seu número: uma resposta lenta de um termo já apagado não pode
+  // sobrescrever o resultado do termo que a pessoa está vendo agora.
+  const busca = ++stockBusca;
+  if (!termo) { stockPhotos = []; stockState = "vazio"; stockHasMore = false; renderStockList(); return; }
+  stockState = "buscando";
+  if (page === 1) stockPhotos = [];
+  renderStockList();
+  try {
+    const res = await fetch(`/api/v1/stock/photos?q=${encodeURIComponent(termo)}&page=${page}`, { credentials: "include" });
+    if (busca !== stockBusca) return;
+    if (res.status === 501) { stockState = "desligado"; renderStockList(); return; }
+    if (!res.ok) throw new Error(String(res.status));
+    const body = await res.json();
+    if (busca !== stockBusca) return;
+    stockPage = page;
+    stockPhotos = page === 1 ? body.photos : [...stockPhotos, ...body.photos];
+    stockHasMore = Boolean(body.hasMore);
+    stockState = "ok";
+  } catch {
+    if (busca !== stockBusca) return;
+    stockState = "erro";
+  }
+  renderStockList();
+}
+
+async function inserirStock(id: string, tile: HTMLElement) {
+  const photo = stockPhotos.find((p) => p.id === id);
+  tile.setAttribute("aria-busy", "true");
+  try {
+    const res = await fetch(`/api/v1/stock/photos/${encodeURIComponent(id)}/file`, { credentials: "include" });
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    const src = await new Promise<string>((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result as string); fr.readAsDataURL(blob); });
+    const img = await loadImg(src);
+    const p = page();
+    const s = Math.min(1, (p.w * 0.6) / img.width, (p.h * 0.6) / img.height);
+    // O nome da camada carrega o crédito: a licença do Pexels pede o autor, e é ele que aparece
+    // na lista de Camadas e nos campos do template para quem for usar o design depois.
+    addEl("image", {
+      src, w: Math.round(img.width * s), h: Math.round(img.height * s),
+      name: photo?.photographer ? `Foto de ${photo.photographer}`.slice(0, 40) : "Foto do Pexels",
+    });
+    toast(photo?.photographer ? `Foto de ${photo.photographer} (Pexels)` : "Foto inserida");
+  } catch {
+    toast("Não foi possível inserir essa foto.");
+  } finally {
+    tile.removeAttribute("aria-busy");
+  }
+}
+
 function renderPanel() {
   const el = $("panel");
   el.classList.remove("pages-index");
@@ -1625,7 +1711,11 @@ function renderPanel() {
   if (activeTab === "uploads") {
     el.innerHTML = `<h4 class="ptitle">Imagens</h4><p class="phint">Suas próprias imagens, deste dispositivo. Ficam guardadas dentro do design.</p>
       <button class="dropzone" id="pickImg" title="Escolher imagens do dispositivo">Escolher imagens…</button>
-      <p class="phint">Nada aqui vem de banco de imagens.</p>`;
+      <div class="sec"><h4>Banco de imagens</h4>
+        <p class="phint" style="margin-bottom:8px">Fotos do Pexels, de uso livre. A foto escolhida é copiada para dentro do design.</p>
+        <input class="fontsearch" id="stockSearch" type="search" placeholder="Buscar foto…" aria-label="Buscar foto no banco de imagens" value="${esc(stockQuery)}">
+        <div id="stockList">${stockListHtml()}</div>
+      </div>`;
   }
   if (activeTab === "draw") {
     el.innerHTML = `<h4 class="ptitle">Desenho</h4><p class="phint">Caneta à mão livre. Cada traço vira uma camada editável.</p>
@@ -1767,12 +1857,22 @@ $("panel").addEventListener("click", (ev) => {
     return;
   }
   if (ev.target.closest("#pickImg")) { $("fileImg").click(); return; }
+  const stockTile = ev.target.closest("[data-stock]");
+  if (stockTile) { void inserirStock(stockTile.dataset.stock, stockTile); return; }
+  if (ev.target.closest("#stockMore")) { void buscarStock(stockPage + 1); return; }
   if (ev.target.closest("#drawOn")) { setTool(tool === "draw" ? "select" : "draw"); return; }
 });
 $("panel").addEventListener("input", (ev) => {
   // Só a lista é redesenhada: um renderPanel() inteiro recriaria o próprio campo de busca e
   // o cursor sairia dele a cada tecla.
   if (ev.target.id === "fontSearch") { fontQuery = ev.target.value; renderFontList(); return; }
+  if (ev.target.id === "stockSearch") {
+    // Debounce porque cada tecla aqui seria uma requisição ao provedor, que tem cota por hora.
+    stockQuery = ev.target.value;
+    clearTimeout(stockDebounce);
+    stockDebounce = setTimeout(() => void buscarStock(1), 300);
+    return;
+  }
   if (ev.target.id === "bgPick") { page().bg = ev.target.value; renderCanvas(); }
   if (ev.target.id === "stageBgPick") { stageBg = ev.target.value; applyStageBg(); }
   if (ev.target.id === "pgW" || ev.target.id === "pgH") {

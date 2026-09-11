@@ -39,6 +39,7 @@ import {
 import { createLocalDeps } from "./local.ts";
 import { configureStorageClient, renderTemplatePng } from "./render/renderTweet.ts";
 import { configureFontStorage } from "./render/fontCache.ts";
+import { createStockPhotoLibrary } from "./stockPhotos.ts";
 import { createMediaAcquisitionService } from "./mediaAcquisition.ts";
 import { createHttpPdfImportService } from "./pdfImportService.ts";
 import { createGoogleFontMatcher } from "./render/googleFontMatch.ts";
@@ -118,6 +119,9 @@ if (PEXELS_API_KEY || OPENAI_API_KEY) {
       openAiApiKey: OPENAI_API_KEY,
       openAiImageModel: OPENAI_IMAGE_MODEL,
     }),
+    // Só o Pexels serve o painel de imagens; com apenas OPENAI_API_KEY a busca fica 501 e o
+    // editor esconde o campo, em vez de oferecer uma busca que nunca devolve nada.
+    stock: PEXELS_API_KEY ? createStockPhotoLibrary(PEXELS_API_KEY) : null,
   };
 } else if (DATABASE_URL) {
   console.warn("PEXELS_API_KEY/OPENAI_API_KEY not set — automated stock/AI images are disabled");
