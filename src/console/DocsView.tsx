@@ -82,7 +82,7 @@ function Setting({ name, value }: { name: string; value: string }) {
 }
 
 export function DocsView() {
-  const baseUrl = "https://blank-editor.ickanz.easypanel.host";
+  const baseUrl = "https://renderapi.blankbr.com";
   const renderUrl = `${baseUrl}/api/v1/render`;
   const generationUrl = `${baseUrl}/api/v1/generations`;
   const [llmCopied, setLlmCopied] = useState(false);

@@ -77,7 +77,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "=https://blank-editor.ickanz.easypanel.host/api/v1/curadoria/buscar?tema={{ encodeURIComponent($json.tema) }}&limite=5",
+        "url": "=https://renderapi.blankbr.com/api/v1/curadoria/buscar?tema={{ encodeURIComponent($json.tema) }}&limite=5",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth"
       },

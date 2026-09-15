@@ -221,7 +221,7 @@ novo design e uma URL assinada de preview por página. O preview ainda não é u
 download público. O n8n deve
 guardar a API key numa credencial, enviar `run_id` (ou o ID da execução) como
 `Idempotency-Key` e montar a URL de edição como
-`https://blank-editor.ickanz.easypanel.host${reviewPath}`. Reutilizar a mesma
+`https://renderapi.blankbr.com${reviewPath}`. Reutilizar a mesma
 chave com outro corpo retorna `409 IDEMPOTENCY_CONFLICT`.
 
 ### Aprovação e download
@@ -246,7 +246,7 @@ atual para `draft`, bloqueia seu download e preserva a versão aprovada anterior
 estático, o servidor precisa de Node + Postgres. Veja `server/Dockerfile` e
 `server/.env.example`.
 
-Em produção (`blank-editor.ickanz.easypanel.host`) os dois vivem em lugares
+Em produção (`renderapi.blankbr.com`) os dois vivem em lugares
 diferentes, e vale saber qual é qual antes de deployar:
 
 | parte | onde roda | como publica |

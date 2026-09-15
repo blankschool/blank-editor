@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publica o frontend em blank-editor.ickanz.easypanel.host.
+# Publica o frontend em renderapi.blankbr.com.
 #
 # Rode NO VPS, de dentro do clone do repositório (/root/blank-editor):
 #

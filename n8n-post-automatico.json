@@ -83,7 +83,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://blank-editor.ickanz.easypanel.host/api/v1/templates/32ff6c71-fc57-4934-a404-8679d26ed44f",
+        "url": "https://renderapi.blankbr.com/api/v1/templates/32ff6c71-fc57-4934-a404-8679d26ed44f",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth"
       },
@@ -112,7 +112,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://blank-editor.ickanz.easypanel.host/api/v1/templates",
+        "url": "https://renderapi.blankbr.com/api/v1/templates",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,

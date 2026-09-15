@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const WORKFLOW_ID = process.env.N8N_WORKFLOW_ID || "UwjV9qvUkowgory0";
 const N8N_ORIGIN = process.env.N8N_ORIGIN || "https://n8n.srv909496.hstgr.cloud";
-const BLANK_ORIGIN = process.env.BLANK_ORIGIN || "https://blank-editor.ickanz.easypanel.host";
+const BLANK_ORIGIN = process.env.BLANK_ORIGIN || "https://renderapi.blankbr.com";
 const SUPABASE_ORIGIN = process.env.SUPABASE_ORIGIN || "https://sites-blank-editor-supabase.ickanz.easypanel.host";
 const TEMPLATE_ID = process.env.BLANK_AUTOMATION_TEMPLATE_ID;
 const SMOKE_BRIEFING_ID = process.env.SMOKE_BRIEFING_ID;
