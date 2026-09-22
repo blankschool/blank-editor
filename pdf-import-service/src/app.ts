@@ -5,8 +5,8 @@ import { FlattenedPdfError, importCanvaPdf } from "./orchestrate.ts";
 const IMPORT_SECRET = process.env.IMPORT_SECRET;
 
 export function buildApp() {
-  const app = Fastify({ logger: true, bodyLimit: 60 * 1024 * 1024 });
-  app.register(multipart, { limits: { fileSize: 60 * 1024 * 1024 } });
+  const app = Fastify({ logger: true, bodyLimit: 500 * 1024 * 1024 });
+  app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
 
   app.get("/saude", async () => ({ ok: true }));
 

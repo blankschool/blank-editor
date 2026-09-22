@@ -594,6 +594,110 @@ habilitado, políticas por dono).
     depende de sessão). `npm run check`, `npm test` (41/41) e `npm run build`
     passam.
 
+## 5. Qualidade visual — gate de validação com Jev (TypeSafe)
+
+**Contexto (2026-09-22):** um PDF real importado (carrossel Ozempic/Mounjaro)
+gerou uma página com defeitos visuais claros que a arte original não tem: uma
+linha vermelha que deveria ser reta saiu torta/duplicada, e a composição geral
+não bate com o PDF de origem (ver comparação nesta mesma conversa — a arte
+real tem duas fotos lado a lado ocupando a largura toda, texto menor e mais
+compacto, seta reta no canto; a versão importada tem as fotos em proporções
+erradas, a "linha" quebrada, texto grande demais tomando espaço que devia ser
+da segunda foto). Isso não é só o item 1.4 (recorte em moldura) — é uma classe
+de problema mais ampla: **nada no pipeline hoje valida se o resultado final
+parece certo**, nem no import de PDF nem numa criação via API.
+
+- [ ] **5.1 Gate de qualidade visual pós-import/pós-criação, usando Jev.**
+  Antes de carregar `typesafe-ai`/decidir a forma exata, ler a live doc
+  (`docs.typesafe.ai`) — Jev é um julgamento tipado sobre `state` estruturado
+  (Score/Noul/Choice), NÃO um modelo de visão: não manda screenshot pra
+  comparar pixel a pixel. O gate certo é rodar o julgamento sobre os DADOS
+  estruturados do documento gerado (posição/tamanho/rotação/tipografia de
+  cada `El`, dimensões da página) — os mesmos campos que já existem em
+  `src/types.ts` — não sobre a imagem renderizada.
+  - Depois de `buildImportedPages` (import de PDF, `server/src/app.ts`) e
+    depois de qualquer criação de documento via API (rota de geração/criação
+    de template), rodar uma passada de verificação por elemento e por página
+    contra critérios objetivos, por exemplo:
+    - Um elemento tipo `path`/`rect` que deveria representar uma linha reta
+      (poucos pontos, quase colinear na origem) mas cujos pontos não são
+      colineares de verdade (torto/quebrado) — hoje isso passa direto.
+    - Tamanho de texto desproporcional à caixa/página (fonte grande demais
+      pro espaço, ou pequena demais pra ser legível na proporção da página).
+    - Elemento cortado pra fora da página, ou sobrepondo outro de forma que
+      claramente não era a intenção (ex.: texto cobrindo uma foto inteira).
+    - Proporção/posição de imagens muito diferente do que o PDF de origem
+      descreve (bbox original vs bbox importado).
+  - Cada checagem é um julgamento atômico (Score de "o quão reto/proporcional/
+    bem posicionado isso está" ou Noul de "isso parece um erro de import"),
+    não um prompt aberto pedindo "essa arte tá boa?" — ver
+    `docs.typesafe.ai/concepts/how-to-build-with-system-one`.
+  - Quando o gate marcar baixa confiança/alta probabilidade de defeito: NÃO
+    tentar auto-corrigir geometria às cegas (risco de piorar) — logar/marcar
+    o design pra revisão, ou (se já existir um preview antes de salvar)
+    bloquear o "salvar" até confirmação humana. Decisão de UX exata (bloquear
+    vs avisar) fica pro item 4.x mais próximo que tocar em revisão de design
+    (`generation_runs`/`review_status`, já existe em `0005_generation_review_and_media.sql`).
+  - Cobre os DOIS caminhos que geram documento: import de PDF
+    (`pdf-import-service` + `buildImportedPages`) e criação via API
+    (`generationWorkflow.ts`) — mesma validação nos dois, não só no import.
+  - **Por que isso importa (nas palavras do usuário):** "não deve criar layout
+    ruim, torto, grande demais ou pequeno demais" — isso é requisito de
+    produto, não nice-to-have; qualquer PDF importado ou design gerado por
+    API que sair visualmente quebrado é considerado bug deste item.
+
+  **Exemplo concreto — sem Jev vs. com Jev, pro caso da linha torta do
+  carrossel Ozempic/Mounjaro** (mesma checagem, duas formas de implementar):
+
+  *Sem Jev (código puro, matemática codificada à mão):*
+  ```ts
+  // Exigiria adicionar um campo `points` ao El (hoje `line` não guarda pontos
+  // arbitrários) só pra essa checagem existir.
+  function pareceLinhaTorta(el: El): boolean {
+    if (el.type !== "line" || !el.points || el.points.length < 2) return false;
+    const [p0, pN] = [el.points[0], el.points[el.points.length - 1]];
+    const desvioMax = el.points.reduce(
+      (max, p) => Math.max(max, distanciaAtePonto(p, p0, pN)),
+      0,
+    );
+    const LIMIAR_PX = 2; // chutado; vale pra essa arte, quebra pra outra escala de página
+    return desvioMax > LIMIAR_PX;
+  }
+  ```
+  Problema real disso: cada regra nova ("texto grande demais", "foto com
+  proporção errada") vira uma função matemática nova com um número mágico
+  próprio, tunado no olho, sem saber se o desvio é ERRO de import ou uma
+  curva/ângulo INTENCIONAL do design — o código não tem como diferenciar
+  "essa curva é para ser assim" de "isso quebrou".
+
+  *Com Jev (julgamento sobre os mesmos dados estruturados, sem inventar
+  limiar numérico):*
+  ```json
+  {
+    "state": {
+      "elemento": { "type": "line", "points": [[74, 819], [904, 745]], "page_w": 1080, "page_h": 1350 },
+      "contexto": "Linha decorativa horizontal separando a foto do texto no terço inferior da página."
+    },
+    "model": "jev-latest",
+    "questions": {
+      "linha_parece_quebrada_no_import": {
+        "type": "noul",
+        "instructions": "Dado o contexto (linha decorativa horizontal), os pontos desse elemento formam uma reta plausível, ou parecem um erro de import (torta/em zigue-zague) em vez do que foi pretendido?",
+        "criteria": {
+          "true": "Os pontos não formam uma reta plausível para o papel descrito — ângulo quebrado, pontos quase duplicados formando serrilhado",
+          "false": "Os pontos formam uma reta (ou uma curva claramente intencional, ex. ícone decorativo)"
+        }
+      }
+    }
+  }
+  ```
+  Resposta: `{"linha_parece_quebrada_no_import": {"noul": 0.9x}}` — uma
+  probabilidade calibrada, não um booleano de um limiar chutado; o critério
+  é texto legível e editável (mudar a definição de "reto" é editar uma
+  frase, não recalibrar matemática), e o mesmo padrão (state estruturado +
+  Noul/Score) se repete pra "texto grande demais" e "proporção de imagem
+  errada" sem escrever geometria nova a cada caso.
+
 ## Notas de execução do loop
 
 - Rodar `npm run check && npm test` (raiz, `server/`, e `pdf-import-service/`

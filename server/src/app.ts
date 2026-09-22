@@ -9,10 +9,12 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
-import { familyMatchesFile } from "./fonts/sfntNames.ts";
+import { familyMatchesFile, readFamilyNames, readOs2WeightAndItalic } from "./fonts/sfntNames.ts";
+import { compress as woff2Compress } from "wawoff2";
 import { parseLayers, type Layers } from "./render/layers.ts";
 import { DEFAULT_FONT_FAMILY, pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
 import { canarioDeFonte } from "./render/preflight.ts";
+import { checkDocumentVisualQuality, type JevClient, type QualityElement, type QualityIssue, type QualityPage } from "./render/visualQualityGate.ts";
 import { renderTemplatePng } from "./render/renderTweet.ts";
 import { applyLayerOverrides } from "./render/applyLayerOverrides.ts";
 import {
@@ -128,6 +130,13 @@ export interface GoogleFontsDeps {
   fetchFace: (family: string, weight: number) => Promise<FetchedGoogleFont | null>;
 }
 
+/** Opcional: sem isto, as rotas que montam ou recebem `document.pages` continuam funcionando
+ *  exatamente como hoje, só sem a verificação automática de layout na resposta (degradação
+ *  graciosa, mesmo padrão dos outros deps opcionais acima). */
+export interface QualityDeps {
+  jev: JevClient;
+}
+
 interface RenderBody {
   template?: string;
   layers?: Layers;
@@ -158,7 +167,7 @@ interface GenerationBody {
 
 // 50MB: um carrossel de PDF exportado do Canva com várias fotos em alta resolução passa fácil
 // dos 10-15MB que bastavam para upload de uma foto/fonte avulsa.
-const BODY_LIMIT_BYTES = 50 * 1024 * 1024;
+const BODY_LIMIT_BYTES = 500 * 1024 * 1024;
 
 function generatedDesignId(ownerId: string, idempotencyKey: string): string {
   return `generation-${createHash("sha256").update(`${ownerId}\0${idempotencyKey}`).digest("hex").slice(0, 32)}`;
@@ -170,6 +179,77 @@ function generationId(ownerId: string, idempotencyKey: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Converte `document.pages` (formato solto do editor, ver src/types.ts no front-end) pro shape
+ *  restrito que o gate de verificação automática de layout espera. Tolerante: um elemento sem os
+ *  campos numéricos necessários (x/y/w/h/rot) é apenas omitido — o próprio gate já sabe lidar com
+ *  dados incompletos sem lançar erro, então aqui só filtramos o que nem chega a ser um elemento
+ *  plausível. */
+function toQualityPages(pages: unknown[]): QualityPage[] {
+  return pages.filter(isRecord).map((page) => {
+    const w = typeof page.w === "number" ? page.w : 0;
+    const h = typeof page.h === "number" ? page.h : 0;
+    const rawEls = Array.isArray(page.els) ? page.els : [];
+    const els: QualityElement[] = rawEls.filter(isRecord).flatMap((el): QualityElement[] => {
+      const { id, type, x, y, w: ew, h: eh, rot } = el;
+      if (typeof id !== "string" || typeof type !== "string") return [];
+      if (typeof x !== "number" || typeof y !== "number" || typeof ew !== "number" || typeof eh !== "number" || typeof rot !== "number") return [];
+      return [{
+        id, type, x, y, w: ew, h: eh, rot,
+        ...(typeof el.text === "string" ? { text: el.text } : {}),
+        ...(typeof el.size === "number" ? { size: el.size } : {}),
+        ...(typeof el.font === "string" ? { font: el.font } : {}),
+        ...(typeof el.lh === "number" ? { lh: el.lh } : {}),
+        ...(typeof el.autoFit === "boolean" ? { autoFit: el.autoFit } : {}),
+      }];
+    });
+    return { w, h, els };
+  });
+}
+
+/** Gravidade legível pro chamador da API, derivada da probabilidade calibrada internamente pelo
+ *  gate — não expomos o número cru (implementação interna de scoring), só um rótulo de 3 níveis. */
+function severityFromProbability(probability: number): "low" | "medium" | "high" {
+  if (probability >= 0.85) return "high";
+  if (probability >= 0.65) return "medium";
+  return "low";
+}
+
+interface LayoutWarning {
+  page: number;
+  elementIds: string[];
+  detail: string;
+  severity: "low" | "medium" | "high";
+}
+
+function toLayoutWarnings(results: Array<{ pageIndex: number; issues: QualityIssue[] }>): LayoutWarning[] {
+  return results.flatMap((result) =>
+    result.issues.map((issue) => ({
+      page: result.pageIndex + 1,
+      elementIds: issue.elementIds,
+      detail: issue.detail,
+      severity: severityFromProbability(issue.probability),
+    })));
+}
+
+/** Roda a verificação automática de layout sobre as páginas de um documento, se o dep estiver
+ *  configurado. Nunca lança: qualquer falha (rede, resposta inesperada etc.) é logada e tratada
+ *  como "sem avisos" — este recurso é estritamente aditivo, nunca pode derrubar a rota principal. */
+async function checkLayoutWarnings(
+  quality: QualityDeps | null,
+  pages: unknown,
+): Promise<LayoutWarning[] | undefined> {
+  if (!quality || !Array.isArray(pages)) return undefined;
+  try {
+    const qualityPages = toQualityPages(pages);
+    const results = await checkDocumentVisualQuality(qualityPages, quality.jev);
+    const warnings = toLayoutWarnings(results);
+    return warnings.length > 0 ? warnings : undefined;
+  } catch (err) {
+    console.error("verificação automática de layout falhou:", err);
+    return undefined;
+  }
 }
 
 /** Chaves de API deste app sempre têm esse prefixo — é o que distingue "isto é uma chave de API,
@@ -185,6 +265,7 @@ export function buildApp(
   media: MediaDeps | null = null,
   pdfImport: PdfImportDeps | null = null,
   googleFonts: GoogleFontsDeps | null = null,
+  quality: QualityDeps | null = null,
   resolveImportFont = createImportFontResolver({ apiKey: process.env.GOOGLE_FONTS_API_KEY }),
 ): FastifyInstance {
   const app = Fastify({ bodyLimit: BODY_LIMIT_BYTES });
@@ -402,7 +483,7 @@ export function buildApp(
       deps.renderTemplatePng(document, parseLayers({}), index, faces)));
   }
 
-  async function generationPayload(run: GenerationRun, row: TemplateRow) {
+  async function generationPayload(run: GenerationRun, row: TemplateRow, layoutWarnings?: LayoutWarning[]) {
     const document = row.document as { pages?: unknown[] };
     const total = Array.isArray(document.pages) ? document.pages.length : 0;
     const approvedCurrent = run.reviewStatus === "approved" && run.approvedVersion === run.currentVersion;
@@ -431,6 +512,7 @@ export function buildApp(
         editorPath: `/#/editor/${encodeURIComponent(row.id)}`,
         reviewPath: `/#/editor/${encodeURIComponent(row.id)}?review=1`,
         pages,
+        ...(layoutWarnings && layoutWarnings.length > 0 ? { layoutWarnings } : {}),
       },
     };
   }
@@ -486,6 +568,7 @@ export function buildApp(
     let replay = Boolean(row || run);
     let preRendered: Buffer[] | null = null;
     let acquiredAssets: ResolvedMedia[] = [];
+    let layoutWarnings: LayoutWarning[] | undefined;
 
     if (!row) {
       const source = await deps.findTemplate(ownerId, template);
@@ -502,6 +585,7 @@ export function buildApp(
         return reply.code(err instanceof GenerationDocumentError ? 400 : 502).send({ error: message });
       }
       document.seedId = designId;
+      layoutWarnings = await checkLayoutWarnings(quality, document.pages);
       try {
         preRendered = await renderAllPages(ownerId, document);
       } catch (err) {
@@ -584,7 +668,7 @@ export function buildApp(
       });
     }
 
-    return reply.code(replay ? 200 : 201).send(await generationPayload(run, row));
+    return reply.code(replay ? 200 : 201).send(await generationPayload(run, row, layoutWarnings));
   });
 
   async function findOwnedGeneration(
@@ -811,7 +895,8 @@ export function buildApp(
     const { name, document } = request.body ?? {};
     if (!name || !document) return reply.code(400).send({ error: "missing required field: name, document" });
     const row = await deps.createTemplate(ownerId, { name, document });
-    return reply.code(201).send({ id: row.id, name: row.name });
+    const layoutWarnings = await checkLayoutWarnings(quality, isRecord(document) ? document.pages : undefined);
+    return reply.code(201).send({ id: row.id, name: row.name, ...(layoutWarnings ? { layoutWarnings } : {}) });
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/templates/:id", async (request, reply) => {
@@ -864,7 +949,10 @@ export function buildApp(
       if (request.body?.document !== undefined && before && hashJson(before.document) !== hashJson(row.document)) {
         await generations.markEdited(ownerId, row.id);
       }
-      return { id: row.id, name: row.name, favorite: row.favorite };
+      const layoutWarnings = request.body?.document !== undefined
+        ? await checkLayoutWarnings(quality, isRecord(request.body.document) ? request.body.document.pages : undefined)
+        : undefined;
+      return { id: row.id, name: row.name, favorite: row.favorite, ...(layoutWarnings ? { layoutWarnings } : {}) };
     },
   );
 
@@ -1217,6 +1305,56 @@ export function buildApp(
     return reply.code(201).send(face);
   });
 
+  // Caminho de um arquivo só, para o painel "Fontes" do editor: a pessoa não tem um woff2 pronto
+  // nem sabe o peso/estilo de cabeça, então esta rota deriva os dois do próprio .ttf/.otf em vez
+  // de exigi-los como campos (ao contrário de POST /api/v1/fonts, pensada para quem já chega com
+  // as duas faces prontas, como o import de PDF).
+  app.post("/api/v1/fonts/upload", async (request, reply) => {
+    if (!storage) return reply.code(501).send({ error: "Storage is not configured on this server" });
+    const ownerId = await requireOwner(request, reply);
+    if (!ownerId) return;
+
+    let arquivo: { filename: string; bytes: Buffer } | undefined;
+    const campos: Record<string, string> = {};
+    for await (const part of request.parts()) {
+      if (part.type === "file") {
+        if (part.fieldname !== "font") { await part.toBuffer(); continue; }
+        arquivo = { filename: part.filename, bytes: await part.toBuffer() };
+      } else if (typeof part.value === "string") {
+        campos[part.fieldname] = part.value;
+      }
+    }
+    if (!arquivo) return reply.code(400).send({ error: "envie o arquivo da fonte no campo 'font'" });
+    if (!/\.(ttf|otf)$/i.test(arquivo.filename)) {
+      return reply.code(400).send({ error: "envie um arquivo .ttf ou .otf" });
+    }
+
+    const nomesNoArquivo = readFamilyNames(arquivo.bytes);
+    const internalFamily = (campos.family || "").trim() || nomesNoArquivo[0];
+    if (!internalFamily) {
+      return reply.code(400).send({
+        error: "não foi possível ler o nome da família no arquivo; informe o campo 'family'",
+      });
+    }
+    const detectado = readOs2WeightAndItalic(arquivo.bytes);
+    const weight = campos.weight ? Number(campos.weight) : (detectado.weight ?? 400);
+    if (!Number.isFinite(weight)) return reply.code(400).send({ error: "'weight' inválido" });
+    const style = campos.style || (detectado.italic ? "Italic" : "Regular");
+
+    const sha256 = createHash("sha256").update(arquivo.bytes).digest("hex");
+    const ext = arquivo.filename.toLowerCase().endsWith(".otf") ? "otf" : "ttf";
+    const woff2Bytes = Buffer.from(await woff2Compress(arquivo.bytes));
+    const { sfntPath, woff2Path } = await uploadFontFace(
+      storage.client, sha256, { ext, bytes: arquivo.bytes }, woff2Bytes);
+    const face = await deps.upsertFontFace({
+      id: randomUUID(), ownerId, sha256, internalFamily,
+      postscriptName: null, weight, style,
+      stretch: null, os2FsType: null,
+      sfntPath, woff2Path,
+    });
+    return reply.code(201).send(face);
+  });
+
   // Sobe cada imagem extraída do PDF pro bucket privado do dono e devolve o mapa
   // imageId -> src, na mesma referência que uma layer de imagem já usa (uploadUserPhoto).
   async function uploadImportedImages(ownerId: string, images: ImportedImage[]): Promise<Map<string, string>> {
@@ -1363,6 +1501,7 @@ export function buildApp(
       console.error("[imports/pdf] falhou depois da extração:", err);
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
+    const layoutWarnings = await checkLayoutWarnings(quality, pages);
     return reply.code(201).send({
       id: row.id,
       name: row.name,
@@ -1371,6 +1510,7 @@ export function buildApp(
       fontCount: fonts.length,
       flaggedPages: result.flaggedPages,
       fontSubstitutions,
+      ...(layoutWarnings ? { layoutWarnings } : {}),
     });
   });
 
@@ -1537,10 +1677,11 @@ export function buildApp(
       return reply.code(400).send({ error: message });
     }
     if (!result.session || !result.user) {
-      // E-mail de confirmação exigido no projeto Supabase — não é o caso combinado (sem
-      // confirmação), mas se alguém religar essa opção lá, é melhor um erro claro do que um
-      // 200 com sessão vazia.
-      return reply.code(400).send({ error: "signup succeeded but requires e-mail confirmation, which this app does not expect" });
+      // Projeto Supabase com confirmação de e-mail exigida: a conta já existe, mas sem sessão
+      // até o clique no link do e-mail. Sem cookie pra setar e sem user.id confiável pra criar
+      // a chave de API ainda — isso acontece no primeiro /auth/login bem-sucedido, depois da
+      // confirmação.
+      return reply.code(202).send({ pending: "email_confirmation", email });
     }
 
     setSessionCookies(reply, result.session);
@@ -1563,16 +1704,27 @@ export function buildApp(
     let result;
     try {
       result = await signIn(a.client, { email, password });
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/email not confirmed/i.test(message)) return reply.code(403).send({ error: "email_not_confirmed" });
       return reply.code(401).send({ error: "invalid e-mail or password" });
     }
     if (!result.session || !result.user) return reply.code(401).send({ error: "invalid e-mail or password" });
 
     setSessionCookies(reply, result.session);
+    const name = typeof result.user.user_metadata?.name === "string" ? result.user.user_metadata.name : "";
+
+    // Primeiro login depois de confirmar o e-mail: o signup não pôde criar a "Chave padrão"
+    // porque ainda não havia sessão (fluxo com confirmação de e-mail ligada). Cria agora, uma
+    // única vez — logins seguintes já encontram uma chave e não criam outra.
+    const existingKeys = await deps.listApiKeys(result.user.id);
+    const apiKey = existingKeys.length === 0 ? await deps.createApiKey(result.user.id, "Chave padrão") : undefined;
+
     return {
       id: result.user.id,
-      name: typeof result.user.user_metadata?.name === "string" ? result.user.user_metadata.name : "",
+      name,
       email: result.user.email,
+      ...(apiKey ? { apiKey: { id: apiKey.id, name: apiKey.name, secret: apiKey.secret } } : {}),
     };
   });
 

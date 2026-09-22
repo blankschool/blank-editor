@@ -162,7 +162,7 @@ export function createHttpPdfImportService(
         method: "POST",
         headers: config.secret ? { "X-Import-Secret": config.secret } : undefined,
         body: form,
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(300_000),
       });
       const body = (await response.json()) as RawPdfImportResponse;
       if (!response.ok) {

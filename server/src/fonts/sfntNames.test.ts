@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { readFamilyNames, familyMatchesFile } from "./sfntNames.ts";
+import { readFamilyNames, familyMatchesFile, readOs2WeightAndItalic } from "./sfntNames.ts";
 import { FIXTURE_FONT_PATH, FIXTURE_FAMILY } from "../render/__fixtures__/fixtureFont.ts";
 
 const BYTES = readFileSync(FIXTURE_FONT_PATH);
@@ -34,4 +34,13 @@ test("bytes que não são fonte não derrubam o parser nem viram falso positivo 
 test("uma coleção (ttcf) é recusada — as faces têm que ser separadas antes de registrar", () => {
   const ttc = Buffer.concat([Buffer.from("ttcf"), Buffer.alloc(64)]);
   assert.deepEqual(readFamilyNames(ttc), []);
+});
+
+test("lê peso e itálico da tabela OS/2 do arquivo real, para 'importar fonte' não exigir isso à mão", () => {
+  assert.deepEqual(readOs2WeightAndItalic(BYTES), { weight: 400, italic: false });
+});
+
+test("OS/2 ausente ou curta demais devolve null/false em vez de derrubar o parser", () => {
+  assert.deepEqual(readOs2WeightAndItalic(Buffer.from("nao sou uma fonte")), { weight: null, italic: false });
+  assert.deepEqual(readOs2WeightAndItalic(Buffer.alloc(8)), { weight: null, italic: false });
 });

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { buildApp, type AppDeps, type AuthDeps, type GoogleFontsDeps, type MediaDeps, type PdfImportDeps, type StorageDeps } from "./app.ts";
+import { buildApp, type AppDeps, type AuthDeps, type GoogleFontsDeps, type MediaDeps, type PdfImportDeps, type QualityDeps, type StorageDeps } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { createSupabaseAuthClient } from "./supabaseAuth.ts";
 import { createStorageClient } from "./storage.ts";
@@ -44,6 +44,7 @@ import { createMediaAcquisitionService } from "./mediaAcquisition.ts";
 import { createHttpPdfImportService } from "./pdfImportService.ts";
 import { createGoogleFontMatcher } from "./render/googleFontMatch.ts";
 import { fetchGoogleFontFace } from "./render/googleFontFetch.ts";
+import { createJevClient } from "./render/visualQualityGate.ts";
 
 // Só em dev: `.env` não existe em produção (env vars vêm injetadas pelo runtime lá), e não faz
 // sentido nenhum exigir esse arquivo pra rodar o servidor de verdade — daí o existsSync antes.
@@ -60,6 +61,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL;
 const PDF_IMPORT_SERVICE_URL = process.env.PDF_IMPORT_SERVICE_URL;
 const PDF_IMPORT_SERVICE_SECRET = process.env.PDF_IMPORT_SERVICE_SECRET;
+const TYPESAFE_API_KEY = process.env.TYPESAFE_API_KEY;
 
 if (!DATABASE_URL && !LOCAL_API_KEY) {
   console.error("DATABASE_URL is required in production; use LOCAL_API_KEY for local development");
@@ -176,7 +178,16 @@ if (OPENAI_API_KEY) {
   googleFonts = { match: matcher.match, fetchFace: fetchGoogleFontFace };
 }
 
-const app = buildApp(deps, auth, storage, media, pdfImport, googleFonts);
+// Verificação automática de layout (fase opcional): sem a chave, as rotas de template/import/
+// geração continuam funcionando exatamente como hoje, só sem `layoutWarnings` na resposta.
+let quality: QualityDeps | null = null;
+if (TYPESAFE_API_KEY) {
+  quality = { jev: createJevClient(TYPESAFE_API_KEY) };
+} else {
+  console.warn("TYPESAFE_API_KEY not set — automatic layout checks are disabled");
+}
+
+const app = buildApp(deps, auth, storage, media, pdfImport, googleFonts, quality);
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })

@@ -88,6 +88,7 @@ export function LoginApp() {
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState("");
 
   // Esta tela nunca desmonta (o router só alterna display), então "Sair" por si
   // só não limpa nada aqui — sem isto, quem criava conta e depois saía via
@@ -107,6 +108,7 @@ export function LoginApp() {
       setPassword("");
       setReveal(false);
       setError("");
+      setPendingConfirmation("");
     }
     hadSession.current = session !== null;
   }, [session]);
@@ -127,10 +129,19 @@ export function LoginApp() {
     if (!login && !name.trim()) return setError("Informe seu nome.");
     if (!login && password.length < 8) return setError("A senha precisa de pelo menos 8 caracteres.");
     setError("");
+    setPendingConfirmation("");
     setLoading(true);
     try {
-      const session = login ? await signIn(email.trim(), password) : await signUp(name.trim(), email.trim(), password);
-      setSession(session);
+      if (login) {
+        setSession(await signIn(email.trim(), password));
+      } else {
+        const result = await signUp(name.trim(), email.trim(), password);
+        if ("pending" in result) {
+          setPendingConfirmation(result.email);
+          return;
+        }
+        setSession(result);
+      }
       // O router exige sessão para /console e /editor — sem chamar setSession
       // antes, o próprio navigate seria desfeito pelo gate no primeiro apply().
       navigate("console");
@@ -150,18 +161,20 @@ export function LoginApp() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
+    if (res.status === 403) throw new Error("Confirme seu e-mail antes de entrar — verifique sua caixa de entrada.");
     if (res.status === 401) throw new Error("E-mail ou senha incorretos.");
     if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
     return res.json();
   }
 
-  async function signUp(name: string, email: string, password: string): Promise<Session> {
+  async function signUp(name: string, email: string, password: string): Promise<Session | { pending: true; email: string }> {
     const res = await fetch("/api/v1/auth/signup", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, email, password }),
     });
+    if (res.status === 202) return { pending: true, email };
     if (res.status === 400) throw new Error((await res.json().catch(() => null))?.error ?? "Já existe uma conta com esse e-mail — entre em vez de criar.");
     if (!res.ok) throw new Error("Não deu para falar com o servidor agora.");
     const body = await res.json();
@@ -197,6 +210,25 @@ export function LoginApp() {
           </p>
         </div>
 
+        {pendingConfirmation ? (
+          <div className="w-full rounded-lg border border-line bg-surface p-6 text-center shadow-pop">
+            <p className="text-[14px] font-medium">Confirme seu e-mail</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-muted">
+              Enviamos um link de confirmação para <span className="font-medium text-fg">{pendingConfirmation}</span>.
+              Abra o e-mail e clique no link para poder entrar.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingConfirmation("");
+                setMode("login");
+              }}
+              className="mt-4 text-[13px] font-medium text-accent hover:underline"
+            >
+              Voltar para o login
+            </button>
+          </div>
+        ) : (
         <div className="w-full rounded-lg border border-line bg-surface shadow-pop">
           <form
             className="flex flex-col gap-4 p-6"
@@ -297,6 +329,7 @@ export function LoginApp() {
             </p>
           </form>
         </div>
+        )}
       </div>
     </div>
   );

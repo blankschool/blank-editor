@@ -9,7 +9,14 @@ import type {
 } from "./generationWorkflow.ts";
 
 export function createDb(connectionString: string) {
-  return postgres(connectionString, { max: 5 });
+  // `prepare: false` é obrigatório aqui: o Postgres real está atrás do pooler do Supabase em
+  // modo transação (Supavisor/PgBouncer), que reatribui cada query a uma conexão física
+  // diferente por baixo. Prepared statements (o padrão do postgres.js) ficam presos numa
+  // conexão só — o sintoma foi bem concreto em produção: "prepared statement ... does not
+  // exist" e requisições a /api/v1/templates penduradas por dezenas de segundos até o cliente
+  // desistir. `connect_timeout`/`idle_timeout` existem para o mesmo motivo: sem eles, uma
+  // conexão presa no pooler trava a requisição inteira em vez de falhar rápido e liberar o slot.
+  return postgres(connectionString, { max: 5, prepare: false, connect_timeout: 10, idle_timeout: 20 });
 }
 
 export type Sql = ReturnType<typeof createDb>;

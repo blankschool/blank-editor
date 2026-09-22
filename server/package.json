@@ -25,7 +25,8 @@
     "playwright": "^1.63.0",
     "postgres": "^3.4.5",
     "sharp": "^0.35.4",
-    "undici": "^8.10.0"
+    "undici": "^8.10.0",
+    "wawoff2": "^2.0.1"
   },
   "devDependencies": {
     "@types/fontkit": "^2.0.9",

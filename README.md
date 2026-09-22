@@ -174,7 +174,21 @@ faria o chamador acreditar que gerou o slide que pediu.
 O servidor de produção continua aceitando `DATABASE_URL`; `dev:local` usa
 somente a chave e os templates em memória.
 
+Pra **criar um design do zero** (elementos novos, não preencher camadas de um
+template existente), use `POST /api/v1/templates` com `{ name, document }` —
+`document` é livre, sem schema fixo. Exemplo completo e copiável em
+[`docs/api-design-livre.md`](docs/api-design-livre.md), junto com a diferença
+para `/api/v1/generations` (abaixo).
+
 ## Geração editável pelo n8n
+
+> **`POST /api/v1/generations` não cria elementos novos.** Ela só
+> preenche/sobrescreve camadas já nomeadas de um template-base que já existe.
+> Pra criar um design do zero (com texto, imagem, forma etc. novos), use
+> `POST /api/v1/templates` — veja
+> [`docs/api-design-livre.md`](docs/api-design-livre.md) pra exemplos completos
+> das duas rotas e o erro `unknown layer` que aparece quando essa distinção é
+> ignorada.
 
 `POST /api/v1/generations` cria um design novo a partir de um design salvo, em
 vez de sobrescrever o modelo. A rota exige uma chave de API do Blank e o header

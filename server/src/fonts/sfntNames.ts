@@ -79,3 +79,28 @@ export function familyMatchesFile(declarada: string, bytes: Buffer): { ok: boole
   const alvo = normaliza(declarada);
   return { ok: noArquivo.some((n) => normaliza(n) === alvo), noArquivo };
 }
+
+/**
+ * Peso e itálico da tabela OS/2 (`usWeightClass` no offset 4, `fsSelection` no offset 62 —
+ * ambos presentes desde a versão 0 da tabela). Existe para que "importar fonte" não obrigue
+ * quem sobe o arquivo a digitar peso/estilo à mão: a maioria das fontes já declara isso.
+ * `null`/`false` quando a tabela não existe ou é curta demais para conter esses campos — quem
+ * chama decide o padrão (400/normal).
+ */
+export function readOs2WeightAndItalic(bytes: Buffer): { weight: number | null; italic: boolean } {
+  if (bytes.length < 12) return { weight: null, italic: false };
+  const numTables = bytes.readUInt16BE(4);
+  let os2Offset = 0;
+  for (let i = 0; i < numTables; i++) {
+    const rec = 12 + i * 16;
+    if (rec + 16 > bytes.length) return { weight: null, italic: false };
+    if (bytes.toString("latin1", rec, rec + 4) === "OS/2") {
+      os2Offset = bytes.readUInt32BE(rec + 8);
+      break;
+    }
+  }
+  if (!os2Offset || os2Offset + 64 > bytes.length) return { weight: null, italic: false };
+  const weight = bytes.readUInt16BE(os2Offset + 4);
+  const fsSelection = bytes.readUInt16BE(os2Offset + 62);
+  return { weight: weight > 0 ? weight : null, italic: (fsSelection & 0x01) !== 0 };
+}

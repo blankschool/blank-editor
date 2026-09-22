@@ -1590,6 +1590,56 @@ function renderFontList() {
   if (list) list.innerHTML = fontListHtml();
 }
 
+let fontUploadBusy = false;
+
+/**
+ * Sobe um .ttf/.otf escolhido no painel "Fontes" e deixa a família pronta pra usar: registra em
+ * `doc.fonts` (mesmo formato que o import de PDF já usa, para o render do servidor achar a
+ * face) e carrega o .woff2 no navegador via FontFace, para o texto já aparecer certo no canvas
+ * — sem isso, a família ficaria só de nome, igual uma fonte da biblioteca nunca carregada.
+ */
+async function importarFonte(file: File) {
+  fontUploadBusy = true;
+  renderPanel();
+  try {
+    const form = new FormData();
+    form.append("font", file, file.name);
+    const res = await fetch("/api/v1/fonts/upload", { method: "POST", body: form, credentials: "include" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast(body.error || `Não foi possível importar ${file.name}.`);
+      return;
+    }
+    const raw: { internalFamily: string; weight: number; style: string; sha256: string; sfntPath: string; woff2Path: string } = await res.json();
+    const face = { ...raw, family: raw.internalFamily };
+
+    doc.fonts = [
+      ...(doc.fonts ?? []).filter((f) => f.sha256 !== face.sha256),
+      { family: face.family, weight: face.weight, style: face.style, sha256: face.sha256, ttf: face.sfntPath, woff2: face.woff2Path },
+    ];
+
+    try {
+      const fontFace = new FontFace(face.family, `url(${JSON.stringify(face.woff2Path)})`, { weight: String(face.weight) });
+      await fontFace.load();
+      (document.fonts as any).add(fontFace);
+    } catch {
+      // O canvas cai para uma fonte padrão até recarregar a página; o render final do servidor
+      // usa `doc.fonts` (registrado acima) e sai certo de qualquer forma.
+    }
+
+    const selecionado = selEls().find((e) => e.type === "text");
+    if (selecionado) patch({ font: face.family }, true); else commit();
+    renderFontList();
+    renderToolbar();
+    toast(`Fonte "${fontLabel(face.family)}" importada.`);
+  } catch {
+    toast(`Não foi possível importar ${file.name}.`);
+  } finally {
+    fontUploadBusy = false;
+    renderPanel();
+  }
+}
+
 /* --------------------------- banco de imagens --------------------------- */
 /**
  * Busca de fotos do Pexels. O editor nunca fala com api.pexels.com: a chave é do servidor, e a
@@ -1691,6 +1741,8 @@ function renderPanel() {
   if (activeTab === "fonts") {
     ensureFontCatalogLoaded();
     el.innerHTML = `<h4 class="ptitle">Fontes</h4><p class="phint">Clique numa fonte para aplicar ao texto selecionado.</p>
+      <button class="dropzone" id="pickFont" aria-busy="${fontUploadBusy}" title="Importar um arquivo .ttf ou .otf">
+        ${fontUploadBusy ? "Importando…" : "Importar fonte (.ttf/.otf)…"}</button>
       <input class="fontsearch" id="fontSearch" type="search" placeholder="Buscar fonte…" aria-label="Buscar fonte" value="${esc(fontQuery)}">
       <div class="fontcats">${[{ id: null, label: "Todas" }, ...FONT_CATEGORIES].map((c) => `
         <button class="fontcat" data-fontcat="${c.id ?? ""}" aria-pressed="${fontCategory === c.id}">${c.label}</button>`).join("")}</div>
@@ -1857,6 +1909,7 @@ $("panel").addEventListener("click", (ev) => {
     return;
   }
   if (ev.target.closest("#pickImg")) { $("fileImg").click(); return; }
+  if (ev.target.closest("#pickFont")) { if (!fontUploadBusy) $("fileFont").click(); return; }
   const stockTile = ev.target.closest("[data-stock]");
   if (stockTile) { void inserirStock(stockTile.dataset.stock, stockTile); return; }
   if (ev.target.closest("#stockMore")) { void buscarStock(stockPage + 1); return; }
@@ -3117,6 +3170,14 @@ $("fileJson").addEventListener("change", async (ev) => {
     commit(); renderAll(); zoomFit(); toast("Design aberto");
   } catch (e) { toast("Esse arquivo não é um design criado por este editor."); }
   ev.target.value = "";
+});
+$("fileFont").addEventListener("change", async (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (!/\.(ttf|otf)$/i.test(file.name)) { toast("Envie um arquivo .ttf ou .otf."); return; }
+  if (file.size > 20_000_000) { toast(`${file.name} passa de 20 MB — ignorado.`); return; }
+  await importarFonte(file);
 });
 $("fileImg").addEventListener("change", async (ev) => {
   const files = [...ev.target.files];
