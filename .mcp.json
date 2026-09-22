@@ -8,6 +8,10 @@
         "mcp-remote@latest",
         "https://mcp.canva.com/mcp"
       ]
+    },
+    "supabase": {
+      "type": "http",
+      "url": "https://sites-blank-editor-supabase.ickanz.easypanel.host/mcp?features=docs%2Cdatabase%2Cdebugging%2Cdevelopment"
     }
   }
 }
