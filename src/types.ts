@@ -95,6 +95,13 @@ export interface El {
   underline?: boolean;
   /** Tachado. */
   strike?: boolean;
+  /** Efeito de texto (sombra, contorno, vazado, fundo, degradê) — um por vez, como no Canva. */
+  textFx?: import("../server/src/render/editorText").TextFx;
+  /** Texto curvo: -100 (sorriso) … 100 (arco). */
+  curve?: number;
+  /** Pontas de linha (tipo "line"). */
+  arrowStart?: LineEnd;
+  arrowEnd?: LineEnd;
   /** Mostra o texto em MAIÚSCULAS sem mudar o texto guardado (como o "Aa" do Canva). */
   caps?: boolean;
   align?: string;
@@ -142,11 +149,17 @@ export interface El {
   [k: string]: unknown;
 }
 
+export type LineEnd = "arrow" | "triangle" | "circle" | "bar";
+
 export interface Page {
   id: string;
   w: number;
   h: number;
   bg: string;
+  /** Fundo em degradê (com ele, `bg` guarda a primeira cor, para miniaturas simples). */
+  bgGrad?: Gradient;
+  /** Imagem de fundo (mesmo formato de `El.src`), cobrindo a página. */
+  bgImage?: string;
   els: El[];
   /** Skipped by the "present" mode and by multi-page PDF export; still editable directly. */
   hidden?: boolean;

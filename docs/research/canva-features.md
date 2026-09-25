@@ -160,13 +160,13 @@ Para cada recurso, o Jev recebeu os trechos do código do editor que tratam dele
 | Gráficos editáveis | 0.04 | 2.25 | falta |
 | Exportar PNG/JPG/PDF | 0.92 | 2.24 | já existia |
 | Removedor de fundo de imagem | 0.03 | 2.22 | falta |
-| Linhas com setas nas pontas | 0.24 | 2.18 | falta |
-| Imagem como fundo da página | 0.04 | 2.09 | falta |
-| Texto curvo | 0.22 | 2.08 | falta |
+| Linhas com setas nas pontas | 0.24 | 2.18 | ✅ implementado agora |
+| Imagem como fundo da página | 0.04 | 2.09 | ✅ implementado agora |
+| Texto curvo | 0.22 | 2.08 | ✅ implementado agora |
 | Margens/sangria/marcas de corte | 0.04 | 1.99 | falta |
-| Degradê no texto | 0.03 | 1.98 | falta |
-| Fundo atrás do texto | 0.03 | 1.96 | falta |
-| Fundo da página em degradê | 0.04 | 1.95 | falta |
+| Degradê no texto | 0.03 | 1.98 | ✅ implementado agora |
+| Fundo atrás do texto | 0.03 | 1.96 | ✅ implementado agora |
+| Fundo da página em degradê | 0.04 | 1.95 | ✅ implementado agora |
 | Mover com setas do teclado | 0.83 | 1.93 | já existia |
 | Conectores que grudam em formas | 0.04 | 1.87 | falta |
 | Bloquear elementos | 0.85 | 1.81 | já existia |
@@ -174,7 +174,7 @@ Para cada recurso, o Jev recebeu os trechos do código do editor que tratam dele
 | Conta-gotas | 0.03 | 1.74 | ✅ implementado agora |
 | Exportar SVG | 0.65 | 1.65 | já existia |
 | Tachado (strikethrough) | 0.04 | 1.64 | ✅ implementado agora |
-| Contorno/vazado em texto (outline/hollow) | 0.03 | 1.58 | falta |
+| Contorno/vazado em texto (outline/hollow) | 0.03 | 1.58 | ✅ implementado agora |
 | Brand kit | 0.63 | 1.37 | já existia |
 | Histórico de versões | 0.62 | 1.18 | já existia |
 | Exportar MP4/GIF | 0.03 | 0.93 | falta |

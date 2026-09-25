@@ -1,5 +1,5 @@
 import "./styles.css";
-import { editorTextHtml, textRunsHtml, fitTextElements } from "../server/src/render/editorText";
+import { editorTextHtml, textRunsHtml, fitTextElements, curveGeometry, type TextFx } from "../server/src/render/editorText";
 import { replaceTemplateText } from "../server/src/render/replacementFonts.ts";
 import {
   FONT_CATEGORIES, catalogStylesheetUrls, designFamilies, fontLabel, localFontFaceCss, searchFontLibrary,
@@ -174,6 +174,34 @@ function resolvePrivateSrc(ref: string): string {
   }
   return "";
 }
+/** Fundo da página em CSS: imagem (cobrindo) sobre degradê/cor. */
+/** Pontas de linha: a linha é uma barra de espessura `h`; a ponta tem ~3× a espessura. */
+function lineEndPath(kind: string, x: number, cy: number, t: number, dir: 1 | -1): string {
+  const L = t * 3, W = t * 2.2;
+  if (kind === "circle") return `M${x - dir * W / 2},${cy} a${W / 2},${W / 2} 0 1,0 ${dir * W},0 a${W / 2},${W / 2} 0 1,0 ${-dir * W},0`;
+  if (kind === "bar") return `M${x - dir * t / 2},${cy - W} h${dir * t} v${W * 2} h${-dir * t} Z`;
+  if (kind === "arrow") return `M${x - dir * L},${cy - W} L${x},${cy} L${x - dir * L},${cy + W} L${x - dir * (L - t * 1.2)},${cy} Z`;
+  return `M${x - dir * L},${cy - W} L${x},${cy} L${x - dir * L},${cy + W} Z`;
+}
+function lineGeom(e: any) {
+  const t = e.h, cy = e.h / 2;
+  const inset = (k?: string) => (k === "arrow" || k === "triangle" ? t * 2.4 : 0);
+  return { t, cy, x0: inset(e.arrowStart), x1: e.w - inset(e.arrowEnd) };
+}
+function lineSvg(e: any): string {
+  const { t, cy, x0, x1 } = lineGeom(e);
+  const ends = [e.arrowStart ? lineEndPath(e.arrowStart, 0, cy, t, -1) : "", e.arrowEnd ? lineEndPath(e.arrowEnd, e.w, cy, t, 1) : ""].join(" ");
+  return `<svg viewBox="0 0 ${e.w} ${e.h}" style="width:100%;height:100%;overflow:visible"><rect x="${x0}" y="0" width="${Math.max(0, x1 - x0)}" height="${t}" rx="${e.arrowStart && e.arrowEnd ? 0 : t / 2}" fill="${e.fill}"/><path d="${ends}" fill="${e.fill}"/></svg>`;
+}
+function pageBgCss(p: Page): string {
+  const base = p.bgGrad ? gradToCss(p.bgGrad) : p.bg;
+  const img = p.bgImage ? srcOf({ src: p.bgImage }) : "";
+  return img ? `url('${img}') center/cover no-repeat, ${base}` : base;
+}
+const BG_GRADS: Array<[string, string, number]> = [
+  ["#ff9a9e", "#fad0c4", 135], ["#a18cd1", "#fbc2eb", 135], ["#84fab0", "#8fd3f4", 120], ["#f6d365", "#fda085", 120],
+  ["#0f2027", "#2c5364", 160], ["#232526", "#414345", 180], ["#fc466b", "#3f5efb", 90], ["#11998e", "#38ef7d", 90],
+];
 const srcOf = (e) => {
   const raw = rawSrcOf(e);
   return raw.startsWith(PRIVATE_UPLOAD_PREFIX) ? resolvePrivateSrc(raw) : raw;
@@ -391,6 +419,7 @@ function elInner(e: any) {
     case "star":
       return `<div style="width:100%;height:100%;background:${e.fill};clip-path:${STAR}"></div>`;
     case "line":
+      if (e.arrowStart || e.arrowEnd) return lineSvg(e);
       return `<div style="width:100%;height:100%;background:${e.fill};border-radius:${e.h / 2}px"></div>`;
     case "image": {
       const src = srcOf(e);
@@ -458,7 +487,7 @@ function renderCanvas() {
   stack.innerHTML = doc.pages.map((p, i) => `
     <div class="pagewrap" style="top:${pageTop(i)}px; left:${(stackW - p.w) / 2}px; width:${p.w}px; height:${p.h}px;">
       ${pageHeaderHtml(i, p)}
-      <div class="pagebox" data-pageidx="${i}" style="width:${p.w}px; height:${p.h}px; background:${p.bg}; opacity:${p.hidden ? .45 : 1}">${p.els
+      <div class="pagebox" data-pageidx="${i}" style="width:${p.w}px; height:${p.h}px; background:${pageBgCss(p)}; opacity:${p.hidden ? .45 : 1}">${p.els
         .map((e) => `<div class="el${e.locked ? " locked" : ""}" data-id="${e.id}" style="${elStyle(e)}">${elInner(e)}</div>`)
         .join("")}${commentsData.filter((c) => c.pageIndex === i && !c.resolved)
         .map((c) => `<div class="commentPin" data-comment-id="${c.id}" style="left:${c.x * 100}%;top:${c.y * 100}%" title="${esc(c.body)}"></div>`)
@@ -650,8 +679,10 @@ function renderToolbar() {
     html += `<div class="qsep"></div>`;
     html += `<div class="field" style="width:52px" title="Entrelinha"><input id="tLh" value="${e.lh}"></div>`;
     html += `<div class="field" style="width:52px" title="Espaçamento entre letras"><input id="tLs" value="${e.ls}"></div>`;
+    html += `<button class="qbtn" id="tFx" aria-pressed="${!!e.textFx || !!e.curve}" title="Efeitos: sombra, contorno, fundo, degradê, curvar">Efeitos</button>`;
   } else if (one && t === "image") {
     html += `<button class="qbtn" id="tReplace" title="Substituir imagem">${REPLACE_ICON}</button>`;
+    html += `<button class="qbtn" id="tAsBg" title="Usar como fundo da página">Usar como fundo</button>`;
     html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
     html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
     html += `<button class="qbtn" data-tflip="h" title="Inverter na horizontal">${FLIP_H_ICON}</button>`;
@@ -672,6 +703,13 @@ function renderToolbar() {
       html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${hex(e.stroke, "#FFFFFF")}">`;
       html += `<div class="field" style="width:46px" title="Espessura da borda"><input id="tStrokeW" type="number" min="0" max="200" value="${Math.round((e.strokeWidth || 0) * 10) / 10}"></div>`;
       html += `<select id="tDash" class="qselect" title="Estilo da borda">${[["", "Sólida"], ["dashed", "Tracejada"], ["dotted", "Pontilhada"]].map(([v, l]) => `<option value="${v}"${(e.strokeDash || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+    }
+    if (t === "line") {
+      const opts = (cur: string | undefined) => [["", "—"], ["arrow", "Seta"], ["triangle", "Triângulo"], ["circle", "Círculo"], ["bar", "Barra"]]
+        .map(([v, l]) => `<option value="${v}"${(cur || "") === v ? " selected" : ""}>${l}</option>`).join("");
+      html += `<select id="tArrowStart" class="qselect" title="Ponta inicial">${opts(e.arrowStart)}</select>`;
+      html += `<button class="qbtn" id="tArrowSwap" title="Trocar pontas">⇄</button>`;
+      html += `<select id="tArrowEnd" class="qselect" title="Ponta final">${opts(e.arrowEnd)}</select>`;
     }
     if (showRadius) html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
     html += `<button class="qbtn" data-tflip="h" title="Espelhar na horizontal">${FLIP_H_ICON}</button>`;
@@ -720,8 +758,16 @@ $("toolbar").addEventListener("click", (ev) => {
   if (t.closest("#tRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderToolbar(); return; }
   if (t.closest("#tReplace")) { $("fileImgReplace").click(); return; }
   if (t.closest("#tCopyStyle")) { armCopyStyle(); return; }
+  if (t.closest("#tArrowSwap")) { const e = selEls()[0]; patch({ arrowStart: e.arrowEnd, arrowEnd: e.arrowStart }, true); renderToolbar(); return; }
+  if (t.closest("#tAsBg")) {
+    const e = selEls()[0];
+    const pg = doc.pages[pageIdxOf(e.id)];
+    pg.bgImage = e.src; pg.els = pg.els.filter((x) => x.id !== e.id); sel = [];
+    commit(); renderAll(); toast("Imagem virou o fundo da página"); return;
+  }
   if (t.closest("#tEyedrop")) { void eyedrop(); return; }
   if (t.closest("#tFont")) { setPanel(activeTab === "fonts" ? null : "fonts"); return; }
+  if (t.closest("#tFx")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
   if (t.closest("#tPosition")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
 });
 $("toolbar").addEventListener("input", (ev) => {
@@ -743,6 +789,11 @@ $("toolbar").addEventListener("input", (ev) => {
 });
 $("toolbar").addEventListener("change", (ev) => {
   const id = (ev.target as HTMLElement).id;
+  if (id === "tArrowStart" || id === "tArrowEnd") {
+    const v = (ev.target as HTMLSelectElement).value || undefined;
+    patch(id === "tArrowStart" ? { arrowStart: v as any } : { arrowEnd: v as any }, true);
+    return;
+  }
   if (id === "tDash") {
     const v = (ev.target as HTMLSelectElement).value;
     patch({ strokeDash: (v || undefined) as any, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2, stroke: selEls()[0]?.stroke || "#000000" }) }, true);
@@ -1303,6 +1354,12 @@ function startEditingText(id) {
   editingId = el.id;
   renderOverlay();
   const t = node.querySelector(".txt");
+  if (el.curve || el.textFx?.type === "hollow" || el.textFx?.type === "grad") {
+    // Editar texto curvo/vazado/degradê em cima do texto "de verdade", visível e reto; o efeito
+    // volta ao sair da edição (renderAll).
+    t.style.color = el.fill; t.style.webkitTextFillColor = el.fill; t.style.background = "none";
+    node.querySelector(".curvesvg")?.remove();
+  }
   t.setAttribute("contenteditable", "true");
   t.focus();
   document.getSelection().selectAllChildren(t);
@@ -1720,6 +1777,54 @@ function order(dir) {
   }
   commit(); renderAll();
 }
+/* ----------------------------- efeitos de texto ----------------------------- */
+const FX_LABEL: Array<[string, string]> = [["", "Nenhum"], ["shadow", "Sombra"], ["outline", "Contorno"], ["hollow", "Vazado"], ["bg", "Fundo"], ["grad", "Degradê"]];
+function textFxPanel(e: any): string {
+  const fx: TextFx | undefined = e.textFx;
+  const hex = (c: string | undefined, fb: string) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : fb);
+  const stops = fx?.stops ?? [["#ff5f6d", 0], ["#ffc371", 1]];
+  const controls = !fx ? "" : fx.type === "grad"
+    ? `<div class="row" style="gap:6px;margin-top:8px"><input type="color" id="fxG0" class="qcolor" value="${hex(stops[0][0], "#ff5f6d")}" title="Cor inicial"><input type="color" id="fxG1" class="qcolor" value="${hex(stops[stops.length - 1][0], "#ffc371")}" title="Cor final"></div>`
+    : `<div class="row" style="gap:8px;margin-top:8px;align-items:center"><input type="color" id="fxColor" class="qcolor" value="${hex(fx.color, "#000000")}" title="Cor do efeito">
+       <input type="range" id="fxSize" min="1" max="40" value="${Math.round(fx.size ?? Math.max(1, e.size / 20))}" style="flex:1" title="Intensidade"></div>`;
+  return `<div class="sec"><h4>Efeitos</h4>
+    <div class="grid3 fxgrid">${FX_LABEL.map(([k, l]) => `<button class="tile fxtile" data-fx="${k}" aria-pressed="${(fx?.type || "") === k}">${l}</button>`).join("")}</div>
+    ${controls}
+    <h4 style="margin-top:12px">Curvar</h4>
+    <input type="range" id="fxCurve" min="-100" max="100" value="${Math.round(e.curve || 0)}" style="width:100%" title="Curvatura (0 = reto)">
+  </div>`;
+}
+$("props").addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-fx]");
+  if (!b) return;
+  const e = selEls()[0];
+  if (!e || e.type !== "text") return;
+  const type = b.dataset.fx as TextFx["type"] | "";
+  const defaults: Record<string, TextFx> = {
+    shadow: { type: "shadow", color: "#00000080", size: Math.max(2, Math.round(e.size / 18)) },
+    outline: { type: "outline", color: "#000000", size: Math.max(1, Math.round(e.size / 24)) },
+    hollow: { type: "hollow", color: e.fill || "#000000", size: Math.max(1, Math.round(e.size / 24)) },
+    bg: { type: "bg", color: "#ffe066", size: Math.max(4, Math.round(e.size / 6)) },
+    grad: { type: "grad", stops: [["#ff5f6d", 0], ["#ffc371", 1]], angle: 90 },
+  };
+  patch(type ? { textFx: e.textFx?.type === type ? e.textFx : defaults[type] } : { textFx: undefined }, true);
+  renderProps();
+});
+$("props").addEventListener("input", (ev) => {
+  const t = ev.target as HTMLInputElement;
+  const e = selEls()[0];
+  if (!e || e.type !== "text") return;
+  if (t.id === "fxCurve") { const n = Math.round(Number(t.value)); patch({ curve: Math.abs(n) < 3 ? undefined : n }); return; }
+  if (!e.textFx) return;
+  if (t.id === "fxColor") patch({ textFx: { ...e.textFx, color: t.value } });
+  if (t.id === "fxSize") patch({ textFx: { ...e.textFx, size: Number(t.value) } });
+  if (t.id === "fxG0" || t.id === "fxG1") {
+    const st = [...(e.textFx.stops ?? [["#ff5f6d", 0], ["#ffc371", 1]])] as Array<[string, number]>;
+    if (t.id === "fxG0") st[0] = [t.value, 0]; else st[st.length - 1] = [t.value, 1];
+    patch({ textFx: { ...e.textFx, stops: st } });
+  }
+});
+
 /* ----------------------------- copiar estilo ----------------------------- */
 let copiedStyle: CopiedStyle | null = null;
 function armCopyStyle() {
@@ -2100,7 +2205,11 @@ function renderPanel() {
     el.innerHTML = `<h4 class="ptitle">Tela</h4><p class="phint">Cor de fundo e tamanho da tela na página ${doc.active + 1}.</p>
       <div class="sec"><h4>Fundo</h4>
         <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-bg="${c}" aria-pressed="${P.bg.toLowerCase() === c}" title="Fundo da página ${c}" style="background:${c}"></button>`).join("")}</div>
-        <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${P.bg}"></div>
+        <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${/^#[0-9a-f]{6}$/i.test(P.bg) ? P.bg : "#ffffff"}"></div>
+        <h4 style="margin-top:10px">Degradê</h4>
+        <div class="grid4" style="margin-bottom:8px">${BG_GRADS.map(([a, b, ang], i) => `<button class="swatch" data-bggrad="${i}" title="Fundo em degradê" style="background:linear-gradient(${ang}deg,${a},${b})"></button>`).join("")}</div>
+        ${P.bgImage ? `<div class="row" style="margin-bottom:8px"><button class="tbtn ghost" data-bgimg-clear style="flex:1;height:30px;font-size:11.5px">Remover imagem de fundo</button></div>`
+          : `<p class="phint">Imagem de fundo: selecione uma imagem e use <b>Usar como fundo</b> na barra.</p>`}
       </div>
       <div class="sec"><h4>Fundo do canvas</h4><p class="phint" style="margin-bottom:8px">A área ao redor da página — não o conteúdo dela.</p>
         <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${(stageBg || "").toLowerCase() === c.toLowerCase()}" title="Fundo do canvas ${c}" style="background:${c}"></button>`).join("")}</div>
@@ -2204,7 +2313,14 @@ $("panel").addEventListener("click", (ev) => {
     return;
   }
   const bg = ev.target.closest("[data-bg]");
-  if (bg) { page().bg = bg.dataset.bg; commit(); renderAll(); return; }
+  if (bg) { page().bg = bg.dataset.bg; delete page().bgGrad; commit(); renderAll(); return; }
+  const bgg = ev.target.closest("[data-bggrad]");
+  if (bgg) {
+    const [a, b, angle] = BG_GRADS[+bgg.dataset.bggrad];
+    page().bgGrad = { type: "linear", angle, stops: [[a, 0], [b, 1]] }; page().bg = a;
+    commit(); renderAll(); return;
+  }
+  if (ev.target.closest("[data-bgimg-clear]")) { delete page().bgImage; commit(); renderAll(); return; }
   if (ev.target.closest("[data-stagebg-reset]")) { stageBg = null; applyStageBg(); renderPanel(); return; }
   const sbg = ev.target.closest("[data-stagebg]");
   if (sbg) { stageBg = sbg.dataset.stagebg; applyStageBg(); renderPanel(); return; }
@@ -2244,7 +2360,7 @@ $("panel").addEventListener("input", (ev) => {
     stockDebounce = setTimeout(() => void buscarStock(1), 300);
     return;
   }
-  if (ev.target.id === "bgPick") { page().bg = ev.target.value; renderCanvas(); }
+  if (ev.target.id === "bgPick") { page().bg = ev.target.value; delete page().bgGrad; renderCanvas(); }
   if (ev.target.id === "stageBgPick") { stageBg = ev.target.value; applyStageBg(); }
   if (ev.target.id === "pgW" || ev.target.id === "pgH") {
     const w = +$("pgW").value, h = +$("pgH").value;
@@ -2279,6 +2395,7 @@ function renderProps() {
 
   box.innerHTML = `
     ${one ? `<div class="sec"><h4>Camada</h4><div class="field" title="Nome desta camada — é o que aparece na lista Camadas"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
+    ${one && e.type === "text" ? textFxPanel(e) : ""}
 
     <div class="sec"><h4>Organizar</h4>
       <div class="seg order-actions" style="margin-bottom:12px">
@@ -2487,7 +2604,7 @@ $("pagestack").addEventListener("click", (ev) => {
 function renderThumbStrip() {
   $("thumbstrip").innerHTML = doc.pages.map((p, i) => `
     <button class="thumbitem" data-gopage="${i}" aria-pressed="${i === doc.active}" aria-label="Página ${i + 1}" title="Página ${i + 1}${p.hidden ? " · oculta" : ""}">
-      <div class="thumbitempic" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+      <div class="thumbitempic" style="background:${pageBgCss(p)}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
         ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : ""}</div>
       <span class="num">${i + 1}</span>
@@ -2543,7 +2660,7 @@ $("pageCountBtn").addEventListener("click", () => setPagesMode("grid"));
 function renderGridView() {
   $("gridview").innerHTML = doc.pages.map((p, i) => `
     <button class="gridcell" data-gridpage="${i}" aria-pressed="${i === doc.active}" title="Abrir página ${i + 1}">
-      <div class="pt" style="background:${p.bg}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
+      <div class="pt" style="background:${pageBgCss(p)}; aspect-ratio:${p.w}/${p.h}; opacity:${p.hidden ? .45 : 1}">${thumbs.has(p.id)
         ? `<img src="${thumbs.get(p.id)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
         : ""}</div>
       <span class="plabel">Página ${i + 1}${p.hidden ? " · oculta" : ""}</span>
@@ -2771,7 +2888,17 @@ async function renderPageCanvas(p: Page, scale: number, opts: { transparent?: bo
   c.width = Math.round(p.w * scale); c.height = Math.round(p.h * scale);
   const x = c.getContext("2d");
   x.scale(scale, scale);
-  if (!opts.transparent) { x.fillStyle = p.bg; x.fillRect(0, 0, p.w, p.h); }
+  if (!opts.transparent) {
+    x.fillStyle = p.bgGrad ? paintOf(x, { w: p.w, h: p.h, grad: p.bgGrad, fill: p.bg }) : p.bg;
+    x.fillRect(0, 0, p.w, p.h);
+    if (p.bgImage) {
+      try {
+        const img = await loadImg(srcOf({ src: p.bgImage }));
+        const r = Math.max(p.w / img.width, p.h / img.height);
+        x.drawImage(img, (p.w - img.width * r) / 2, (p.h - img.height * r) / 2, img.width * r, img.height * r);
+      } catch { /* imagem ilegível: fica a cor */ }
+    }
+  }
   for (const e of p.els) {
     if (e.hidden) continue;
     x.save();
@@ -2887,6 +3014,51 @@ function tokenizeRuns(runs: any[]): any[] {
  *  inteira. Precisa remedir a largura de cada palavra (não só a linha inteira) porque uma
  *  palavra em negrito no meio da frase é mais larga que a mesma palavra sem negrito — ela pode
  *  empurrar a quebra de linha pra um ponto diferente do que o texto plano teria. */
+/** Pinta um pedaço de texto com o efeito da caixa (sombra, contorno, vazado, degradê) — o
+ *  mesmo resultado que o CSS de `textFxCss` dá no editor. */
+function paintText(x: CanvasRenderingContext2D, e: any, text: string, px: number, py: number, color: string) {
+  const fx = e.textFx;
+  const n = Number(fx?.size) || Math.max(1, e.size / 20);
+  x.save();
+  if (fx?.type === "shadow") { x.shadowColor = fx.color || "#00000080"; x.shadowOffsetX = n; x.shadowOffsetY = n; x.shadowBlur = n * 1.5; }
+  x.fillStyle = fx?.type === "grad"
+    ? paintOf(x, { w: e.w, h: e.h, grad: { type: "linear", angle: fx.angle || 90, stops: fx.stops?.length ? fx.stops : [["#ff5f6d", 0], ["#ffc371", 1]] } })
+    : color;
+  if (fx?.type === "outline" || fx?.type === "hollow") {
+    x.strokeStyle = fx.color || "#000"; x.lineJoin = "round";
+    // CSS: -webkit-text-stroke centrado + paint-order stroke → metade fica por fora.
+    x.lineWidth = fx.type === "outline" ? n * 2 : n;
+    x.strokeText(text, px, py);
+  }
+  if (fx?.type !== "hollow") x.fillText(text, px, py);
+  x.restore();
+}
+
+/** Texto curvo no canvas: cada letra no arco de `curveGeometry` (mesmo do SVG do editor). */
+function drawCurvedText(x: CanvasRenderingContext2D, e: any) {
+  const chars: Array<{ ch: string; run: any }> = [];
+  const runs = e.runs?.length ? e.runs : [{ text: e.text }];
+  for (const r of runs) for (const ch of String(r.text).replace(/\n/g, " ")) chars.push({ ch, run: r });
+  const widths = chars.map(({ ch, run }) => { x.font = richFont(e, run); return x.measureText(ch).width; });
+  const total = widths.reduce((a, b) => a + b, 0);
+  // Arco com o comprimento do texto, centrado na caixa — igual ao SVG ajustado em fitTextElements.
+  const g = curveGeometry(e.w, e.h, e.size, e.curve, total);
+  let s = 0;
+  x.textAlign = "center";
+  chars.forEach(({ ch, run }, i) => {
+    const mid = s + widths[i] / 2;
+    const a = g.a0 + g.dir * (mid / g.r);
+    x.save();
+    x.translate(g.cx + g.r * Math.cos(a), g.cy + g.r * Math.sin(a));
+    x.rotate(a + g.dir * Math.PI / 2);
+    x.font = richFont(e, run);
+    paintText(x, e, ch, 0, 0, run.fill || e.fill);
+    x.restore();
+    s += widths[i];
+  });
+  x.textAlign = "left";
+}
+
 /** Baseline (textBaseline "alphabetic") da linha `i` no mesmo modelo do CSS line-height:
  *  a área ascent+descent da fonte atual fica centrada na caixa de linha de altura `lh`. */
 function cssBaseline(x: CanvasRenderingContext2D, i: number, lh: number): number {
@@ -2941,8 +3113,7 @@ function drawRichText(x: CanvasRenderingContext2D, e: any) {
     line.forEach((tok, j) => {
       if (j > 0 && !tok.glue) cx += spaceWidth(tok.run) + extra;
       x.font = richFont(e, tok.run);
-      x.fillStyle = tok.run.fill || e.fill;
-      x.fillText(tok.text, cx, ty);
+      paintText(x, e, tok.text, cx, ty, tok.run.fill || e.fill);
       const w = x.measureText(tok.text).width;
       if (tok.run.underline ?? e.underline) x.fillRect(cx, ty + runSize(e, tok.run) * 0.12, w, Math.max(1, runSize(e, tok.run) / 16));
       if (tok.run.strike ?? e.strike) x.fillRect(cx, ty - runSize(e, tok.run) * 0.3, w, Math.max(1, runSize(e, tok.run) / 16));
@@ -2979,7 +3150,15 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     }
     x.closePath(); x.fillStyle = e.fill; x.fill();
   }
-  else if (e.type === "line") { roundRect(x, e.w, e.h, e.h / 2); x.fillStyle = paintOf(x, e); x.fill(); }
+  else if (e.type === "line") {
+    x.fillStyle = paintOf(x, e);
+    if (e.arrowStart || e.arrowEnd) {
+      const { t, cy, x0, x1 } = lineGeom(e);
+      x.fillRect(x0, 0, Math.max(0, x1 - x0), t);
+      if (e.arrowStart) x.fill(new Path2D(lineEndPath(e.arrowStart, 0, cy, t, -1)));
+      if (e.arrowEnd) x.fill(new Path2D(lineEndPath(e.arrowEnd, e.w, cy, t, 1)));
+    } else { roundRect(x, e.w, e.h, e.h / 2); x.fill(); }
+  }
   else if (e.type === "icon") {
     const vb = String(e.viewBox || "0 0 24 24").split(/[\s,]+/).map(Number);
     x.save();
@@ -3041,6 +3220,13 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     if (e.caps) e = { ...e, text: String(e.text ?? "").toUpperCase(), runs: e.runs?.map((r: any) => ({ ...r, text: r.text.toUpperCase() })) };
     x.textBaseline = "alphabetic";
     (x as any).letterSpacing = `${Number(e.ls) || 0}px`;
+    if (e.textFx?.type === "bg") {
+      // Fundo do texto: bloco arredondado atrás da caixa (no DOM é o fundo do próprio .txt).
+      const n = Number(e.textFx.size) || 4;
+      x.save(); x.fillStyle = e.textFx.color || "#ffe066"; x.beginPath();
+      x.roundRect(-n * 1.4, -n, e.w + n * 2.8, e.h + n * 2, n); x.fill(); x.restore();
+    }
+    if (e.curve) { drawCurvedText(x, e); (x as any).letterSpacing = "0px"; return; }
     if (e.runs && e.runs.length) { drawRichText(x, e); (x as any).letterSpacing = "0px"; return; }
     x.fillStyle = e.fill;
     x.font = `${e.italic ? "italic " : ""}${e.weight} ${e.size}px "${e.font}", Inter, system-ui, sans-serif`;
@@ -3065,8 +3251,8 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
         // parágrafo fica alinhada à esquerda.
         const gap = (e.w - words.reduce((s, wd) => s + x.measureText(wd).width, 0)) / (words.length - 1);
         let cx = 0;
-        for (const wd of words) { x.fillText(wd, cx, ty); cx += x.measureText(wd).width + gap; }
-      } else x.fillText(ln, tx, ty);
+        for (const wd of words) { paintText(x, e, wd, cx, ty, e.fill); cx += x.measureText(wd).width + gap; }
+      } else paintText(x, e, ln, tx, ty, e.fill);
       const lw = e.align === "justify" && !last && words.length > 1 ? e.w : w;
       const lx = e.align === "justify" && !last ? 0 : tx;
       if (e.underline) { x.fillRect(lx, ty + e.size * 0.12, lw, Math.max(1, e.size / 16)); }
