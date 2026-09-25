@@ -57,3 +57,47 @@ export function applyFontToOriginal(pages: Page[], original: string, family: str
   }
   return changed;
 }
+
+export interface MissingWeights {
+  family: string;
+  /** Pesos/estilos que o design usa e que a família ainda não tem, ex. "Bold", "Italic". */
+  missing: string[];
+}
+
+const WEIGHT_NAMES: Record<number, string> = { 100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black" };
+
+export function weightLabel(weight: number, italic: boolean): string {
+  const name = WEIGHT_NAMES[Math.round(weight / 100) * 100] ?? String(weight);
+  return italic ? (name === "Regular" ? "Italic" : `${name} Italic`) : name;
+}
+
+/** Pesos que faltam nas famílias que o design já tem registradas (`doc.fonts`): sem o arquivo
+ *  do peso, o navegador "engorda" a fonte na marra e o texto não fica igual ao PDF. Famílias
+ *  sem face nenhuma em `doc.fonts` (Inter embutida, fontes do sistema) ficam de fora. */
+export function missingWeights(pages: Page[], fonts: Array<{ family: string; weight: number; style?: string }>): MissingWeights[] {
+  const faces = new Map<string, Set<string>>();
+  for (const f of fonts) {
+    const key = familyKey(f.family);
+    if (!faces.has(key)) faces.set(key, new Set());
+    faces.get(key)!.add(`${f.weight}:${/italic|oblique/i.test(f.style ?? "")}`);
+  }
+  const out = new Map<string, { family: string; missing: Set<string> }>();
+  const need = (family: string | undefined, weight: number | undefined, italic: boolean | undefined) => {
+    if (!family) return;
+    const have = faces.get(familyKey(family));
+    if (!have) return;
+    const w = weight ?? 400, it = !!italic;
+    if (have.has(`${w}:${it}`)) return;
+    const item = out.get(familyKey(family)) ?? { family, missing: new Set<string>() };
+    item.missing.add(weightLabel(w, it));
+    out.set(familyKey(family), item);
+  };
+  for (const page of pages) {
+    for (const el of page.els) {
+      if (el.type !== "text") continue;
+      need(el.font, el.weight, el.italic);
+      for (const r of el.runs ?? []) need(r.font ?? el.font, r.weight ?? el.weight, r.italic ?? el.italic);
+    }
+  }
+  return [...out.values()].map((m) => ({ family: m.family, missing: [...m.missing] }));
+}

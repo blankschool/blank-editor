@@ -10,7 +10,8 @@ import { fetchGlobalFonts, registeredDocFont, withGlobalFontFamily, type Registe
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, DocFont, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
-import { applyFontToOriginal, familyKey, missingPdfFonts } from "./missingFonts.ts";
+import { copyStyle, distribute, pasteStyle, toggleBullets, type CopiedStyle } from "./editorActions.ts";
+import { applyFontToOriginal, familyKey, missingPdfFonts, missingWeights } from "./missingFonts.ts";
 import { applyStyleToRange, rangeEvery, runsFromPieces, type StyleOverride } from "./richText";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import {
@@ -53,7 +54,7 @@ const PAGE_SIZES = [
   { n: "Capa", w: 1200, h: 630 }, { n: "Cartão", w: 1050, h: 600 },
 ];
 const TYPE_PT = { rect: "Retângulo", ellipse: "Elipse", triangle: "Triângulo", star: "Estrela", line: "Linha", text: "Texto", image: "Imagem", icon: "Ícone", draw: "Desenho" };
-const PT_ALIGN = { left: "à esquerda", center: "ao centro", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
+const PT_ALIGN = { justify: "justificado", left: "à esquerda", center: "ao centro", cx: "ao centro", right: "à direita", top: "ao topo", cy: "ao meio", bottom: "à base" };
 const PALETTE = ["#FFFFFF", "#F3F5F7", "#E3E8ED", "#CBD5DD", "#8296A1", "#4E636E", "#2A3A45", "#131C26"];
 const STAGE_BG_PRESETS = ["#000000", "#181F25", "#2A3A45", "#4E636E", "#8296A1", "#CBD5DD", "#E3E8ED", "#F3F5F7"];
 
@@ -370,7 +371,7 @@ function elStyle(e: any) {
  *  fora do render normal também: depois de aplicar cor a um trecho selecionado (item "seleção de
  *  trecho de texto"), só esse `.txt` precisa ser reconstruído, não a página inteira. */
 function elInner(e: any) {
-  const bd = e.stroke && e.strokeWidth ? `border:${e.strokeWidth}px solid ${e.stroke};` : "";
+  const bd = e.stroke && e.strokeWidth ? `border:${e.strokeWidth}px ${e.strokeDash || "solid"} ${e.stroke};` : "";
   const sh = e.shadow ? `box-shadow:${e.shadow.x}px ${e.shadow.y}px ${e.shadow.blur}px ${e.shadow.spread || 0}px ${e.shadow.color};` : "";
   switch (e.type) {
     case "rect":
@@ -411,8 +412,15 @@ function elInner(e: any) {
       // resizing the element never needs to rewrite `d`.
       // `non-scaling-stroke` mantém a largura do contorno em px do elemento, não esticada pelo
       // scale(w,h) — igual ao traço de um PDF importado.
-      if (e.fillPath) paths.push(`<path d="${e.fillPath}" fill="${e.fill || "none"}"${e.fillRule ? ` fill-rule="${e.fillRule}"` : ""}` +
-        (e.stroke && e.strokeWidth ? ` stroke="${e.stroke}" stroke-width="${e.strokeWidth}" vector-effect="non-scaling-stroke"` : "") +
+      if (e.fillPath && e.grad) {
+        // Gradiente dentro de um formato qualquer: um retângulo com o gradiente, recortado
+        // pelo path. O gradiente fica em px do elemento (não distorce com scale(w,h)).
+        const gid = `g${String(e.id).replace(/[^\w-]/g, "")}`;
+        paths.push(`<defs>${svgGradient(gid, e)}<clipPath id="c${gid}"><path d="${e.fillPath}"${e.fillRule ? ` clip-rule="${e.fillRule}"` : ""} transform="scale(${e.w},${e.h})"/></clipPath></defs>` +
+          `<rect width="${e.w}" height="${e.h}" fill="url(#${gid})" clip-path="url(#c${gid})"/>`);
+        if (e.stroke && e.strokeWidth) paths.push(`<path d="${e.fillPath}" fill="none" stroke="${e.stroke}" stroke-width="${e.strokeWidth}" vector-effect="non-scaling-stroke"${dashAttr(e)} transform="scale(${e.w},${e.h})"/>`);
+      } else if (e.fillPath) paths.push(`<path d="${e.fillPath}" fill="${e.fill || "none"}"${e.fillRule ? ` fill-rule="${e.fillRule}"` : ""}` +
+        (e.stroke && e.strokeWidth ? ` stroke="${e.stroke}" stroke-width="${e.strokeWidth}" vector-effect="non-scaling-stroke"${dashAttr(e)}` : "") +
         ` transform="scale(${e.w},${e.h})"/>`);
       if (e.pts && e.pts.length) {
         const d = e.pts.map((p, i) => `${i ? "L" : "M"}${p[0] * e.w},${p[1] * e.h}`).join(" ");
@@ -589,10 +597,13 @@ function positionFloatingUI() {
   }
 }
 
+const EYEDROP_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>`;
+const PAINT_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="6" x="2" y="2" rx="2"/><path d="M10 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="4" height="6" x="8" y="16" rx="1"/></svg>`;
 const QALIGN_ICON = {
   left: `<path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/>`,
   center: `<path d="M4 6h16"/><path d="M7 12h10"/><path d="M5.5 18h13"/>`,
   right: `<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>`,
+  justify: `<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>`,
 };
 const FLIP_H_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7L4 12l4 5z"/><path d="M16 7l4 5-4 5z"/></svg>`;
 const FLIP_V_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8l5-4 5 4z"/><path d="M7 16l5 4 5-4z"/></svg>`;
@@ -631,8 +642,11 @@ function renderToolbar() {
     html += `<button class="qbtn" data-ttw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800" title="Negrito">B</button>`;
     html += `<button class="qbtn" data-ttw="italic" aria-pressed="${!!e.italic}" style="font-style:italic" title="Itálico">I</button>`;
     html += `<button class="qbtn" data-ttw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline" title="Sublinhado">U</button>`;
+    html += `<button class="qbtn" data-ttw="strike" aria-pressed="${!!e.strike}" style="text-decoration:line-through" title="Tachado">S</button>`;
+    html += `<button class="qbtn" data-ttw="caps" aria-pressed="${!!e.caps}" title="Maiúsculas">aA</button>`;
+    html += `<button class="qbtn" data-ttw="bullets" aria-pressed="${String(e.text || "").startsWith("• ")}" title="Lista com marcadores"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>`;
     html += `<div class="qsep"></div>`;
-    html += (["left", "center", "right"] as const).map((a) => `<button class="qbtn" data-tta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
+    html += (["left", "center", "right", "justify"] as const).map((a) => `<button class="qbtn" data-tta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
     html += `<div class="qsep"></div>`;
     html += `<div class="field" style="width:52px" title="Entrelinha"><input id="tLh" value="${e.lh}"></div>`;
     html += `<div class="field" style="width:52px" title="Espaçamento entre letras"><input id="tLs" value="${e.ls}"></div>`;
@@ -657,12 +671,15 @@ function renderToolbar() {
     if (showStroke) {
       html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${hex(e.stroke, "#FFFFFF")}">`;
       html += `<div class="field" style="width:46px" title="Espessura da borda"><input id="tStrokeW" type="number" min="0" max="200" value="${Math.round((e.strokeWidth || 0) * 10) / 10}"></div>`;
+      html += `<select id="tDash" class="qselect" title="Estilo da borda">${[["", "Sólida"], ["dashed", "Tracejada"], ["dotted", "Pontilhada"]].map(([v, l]) => `<option value="${v}"${(e.strokeDash || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select>`;
     }
     if (showRadius) html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
     html += `<button class="qbtn" data-tflip="h" title="Espelhar na horizontal">${FLIP_H_ICON}</button>`;
     html += `<button class="qbtn" data-tflip="v" title="Espelhar na vertical">${FLIP_V_ICON}</button>`;
   }
 
+  if (one && "EyeDropper" in window && t !== "image") html += `<button class="qbtn" id="tEyedrop" title="Conta-gotas: pegar uma cor da tela">${EYEDROP_ICON}</button>`;
+  html += `<button class="qbtn" id="tCopyStyle" aria-pressed="${!!copiedStyle}" title="Copiar estilo (Ctrl+Alt+C) — depois clique no elemento que vai receber">${PAINT_ICON}</button>`;
   html += `<div class="qsep"></div>`;
   html += `<div class="field" style="width:74px" title="Transparência"><input type="range" id="tOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}"></div>`;
   html += `<div class="qsep"></div>`;
@@ -670,6 +687,13 @@ function renderToolbar() {
   html += `<button class="qbtn" id="tLayers" title="Camadas">Camadas</button>`;
 
   bar.innerHTML = html;
+}
+/** Mudar o corpo da caixa inteira mantém a proporção dos trechos com corpo próprio (um título
+ *  com uma palavra maior continua com ela maior), como no Canva. */
+function sizePatch(e: any, size: number) {
+  if (!e?.runs?.some((r: any) => r.size)) return { size };
+  const k = size / (e.size || size);
+  return { size, runs: e.runs.map((r: any) => (r.size ? { ...r, size: Math.round(r.size * k * 100) / 100 } : r)) };
 }
 $("toolbar").addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
@@ -681,24 +705,29 @@ $("toolbar").addEventListener("click", (ev) => {
     if (k === "bold") patch({ weight: e.weight >= 700 ? 400 : 700 }, true);
     if (k === "italic") patch({ italic: !e.italic }, true);
     if (k === "underline") patch({ underline: !e.underline }, true);
+    if (k === "strike") patch({ strike: !e.strike }, true);
+    if (k === "caps") patch({ caps: !e.caps }, true);
+    if (k === "bullets") { const r = toggleBullets(e.text, e.runs); patch({ text: r.text, ...(r.runs ? { runs: r.runs } : {}) }, true); }
     renderToolbar(); return;
   }
   const ta = t.closest<HTMLElement>("[data-tta]");
   if (ta) { patch({ align: ta.dataset.tta }, true); renderToolbar(); return; }
   const tf = t.closest<HTMLElement>("[data-tflip]");
   if (tf) { flip(tf.dataset.tflip); return; }
-  if (t.closest("#tSizeUp")) { const e = selEls()[0]; patch({ size: (e.size || 16) + 2 }, true); renderToolbar(); return; }
-  if (t.closest("#tSizeDown")) { const e = selEls()[0]; patch({ size: Math.max(6, (e.size || 16) - 2) }, true); renderToolbar(); return; }
+  if (t.closest("#tSizeUp")) { const e = selEls()[0]; patch(sizePatch(e, (e.size || 16) + 2), true); renderToolbar(); return; }
+  if (t.closest("#tSizeDown")) { const e = selEls()[0]; patch(sizePatch(e, Math.max(6, (e.size || 16) - 2)), true); renderToolbar(); return; }
   if (t.closest("#tRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderToolbar(); return; }
   if (t.closest("#tRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderToolbar(); return; }
   if (t.closest("#tReplace")) { $("fileImgReplace").click(); return; }
+  if (t.closest("#tCopyStyle")) { armCopyStyle(); return; }
+  if (t.closest("#tEyedrop")) { void eyedrop(); return; }
   if (t.closest("#tFont")) { setPanel(activeTab === "fonts" ? null : "fonts"); return; }
   if (t.closest("#tPosition")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
 });
 $("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
   if (t.id === "tFill") patch({ fill: t.value });
-  if (t.id === "tSize" && Number(t.value) >= 6) patch({ size: clamp(Number(t.value), 6, 512) });
+  if (t.id === "tSize" && Number(t.value) >= 6) patch(sizePatch(selEls()[0], clamp(Number(t.value), 6, 512)));
   if (t.id === "tStroke") patch({ stroke: t.value, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2 }) });
   if (t.id === "tStrokeW") { const n = parseFloat(t.value); if (n >= 0) patch({ strokeWidth: n }); }
   if (t.id === "tGrad0" || t.id === "tGrad1") {
@@ -714,6 +743,11 @@ $("toolbar").addEventListener("input", (ev) => {
 });
 $("toolbar").addEventListener("change", (ev) => {
   const id = (ev.target as HTMLElement).id;
+  if (id === "tDash") {
+    const v = (ev.target as HTMLSelectElement).value;
+    patch({ strokeDash: (v || undefined) as any, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2, stroke: selEls()[0]?.stroke || "#000000" }) }, true);
+    return;
+  }
   if (id === "tSize") {
     const input = ev.target as HTMLInputElement;
     const size = Number(input.value);
@@ -904,6 +938,13 @@ $("stage").addEventListener("pointerdown", (ev) => {
   if (!el || el.hidden) return;
   doc.active = pageIdxOf(id);
   if (editingId && editingId !== id) stopEditing();
+  // Pincel de estilo armado: o clique aplica o estilo copiado neste elemento, sem selecionar.
+  if (copiedStyle && !sel.includes(id)) {
+    if (pasteStyle(el, copiedStyle)) { commit(); toast("Estilo aplicado"); }
+    else toast(copiedStyle.kind === "text" ? "Esse estilo é de texto — clique numa caixa de texto." : "Esse estilo é de forma — clique numa forma ou imagem.");
+    copiedStyle = null; document.body.classList.remove("painting");
+    renderAll(); renderToolbar(); ev.preventDefault(); return;
+  }
 
   // Selecting an element re-renders the canvas (see capture()'s unconditional
   // renderAll() on pointerup), which swaps in a fresh .el DOM node before a real
@@ -1266,8 +1307,25 @@ function startEditingText(id) {
   t.focus();
   document.getSelection().selectAllChildren(t);
   t.addEventListener("input", refitEditingText);
-  t.addEventListener("blur", stopEditing, { once: true });
+  t.addEventListener("blur", onEditingBlur);
 }
+
+/** Sair da caixa encerra a edição — exceto quando o foco vai para os controles do trecho
+ *  (tamanho/fonte): aí a edição continua e o foco volta para a caixa ao aplicar. */
+function onEditingBlur(ev: FocusEvent) {
+  const to = ev.relatedTarget as Node | null;
+  if (to && $("textSelToolbar").contains(to)) return;
+  (ev.target as HTMLElement).removeEventListener("blur", onEditingBlur);
+  stopEditing();
+}
+$("textSelToolbar").addEventListener("focusout", (ev) => {
+  const to = ev.relatedTarget as Node | null;
+  if (!editingId || (to && $("textSelToolbar").contains(to))) return;
+  const node = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
+  if (to && node?.contains(to)) return;
+  // Foco saiu dos controles para fora da caixa: mesmo efeito de sair da caixa.
+  setTimeout(() => { if (editingId && !node?.contains(document.activeElement)) { node?.removeEventListener("blur", onEditingBlur as any); stopEditing(); } }, 0);
+});
 
 /**
  * Enquanto se digita, o `.txt` e contenteditable: o texto muda sem passar por renderCanvas, e
@@ -1296,11 +1354,12 @@ function stopEditing() {
   if (t && el) {
     const v = t.innerText.replace(/ /g, " ").replace(/\n$/, "");
     t.removeEventListener("input", refitEditingText);
+    t.removeEventListener("blur", onEditingBlur as any);
     t.removeAttribute("contenteditable");
     if (v !== el.text) {
       // Mantém negrito/cor/fonte de cada trecho (vindos do PDF ou aplicados à mão) em vez de
       // achatar a caixa inteira no estilo base a cada edição de texto.
-      const runs = el.runs?.length ? runsFromEditable(t as HTMLElement, v) : null;
+      const runs = el.runs?.length ? runsFromEditable(t as HTMLElement, v, el.size) : null;
       const replacement = replaceTemplateText(el, v, doc.fonts);
       delete el.runs;
       Object.assign(el, replacement);
@@ -1317,7 +1376,7 @@ function stopEditing() {
 /** Runs lidos da caixa em edição: cada nó de texto com o estilo inline do `<span>` (run) em
  *  que está. `null` se o texto reconstruído não bater com `expected` (estrutura que o
  *  contenteditable criou e este leitor não entende) — aí quem chama cai no texto plano. */
-function runsFromEditable(container: HTMLElement, expected: string) {
+function runsFromEditable(container: HTMLElement, expected: string, baseSize: number) {
   const pieces: Array<{ text: string; style: StyleOverride }> = [];
   const styleOf = (node: Node): StyleOverride => {
     const out: StyleOverride = {};
@@ -1330,6 +1389,7 @@ function runsFromEditable(container: HTMLElement, expected: string) {
       if (st.textDecoration) out.underline = st.textDecoration.includes("underline");
       if (st.color) out.fill = st.color;
       if (st.fontFamily) out.font = st.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+      if (st.fontSize) out.size = st.fontSize.endsWith("em") ? Math.round(parseFloat(st.fontSize) * baseSize * 100) / 100 : parseFloat(st.fontSize);
     }
     return out;
   };
@@ -1378,6 +1438,9 @@ function hideTextSelToolbar() {
  *  precisar repetir a conta de zoom/pan que os elementos do canvas usam. */
 function updateTextSelToolbar() {
   if (!editingId) { hideTextSelToolbar(); return; }
+  // Digitando o tamanho ou escolhendo a fonte do trecho: a seleção "some" da caixa, mas o
+  // trecho guardado continua valendo.
+  if ($("textSelToolbar").contains(document.activeElement)) return;
   const container = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
   const sel = document.getSelection();
   if (!container || !sel || sel.rangeCount === 0 || sel.isCollapsed) { hideTextSelToolbar(); return; }
@@ -1388,6 +1451,7 @@ function updateTextSelToolbar() {
   const start = Math.min(a, b), end = Math.max(a, b);
   if (start === end) { hideTextSelToolbar(); return; }
   pendingTextSelection = { start, end };
+  fillTextSelControls(start);
   const rect = range.getBoundingClientRect();
   const bar = $("textSelToolbar");
   bar.style.left = (rect.left + rect.width / 2) + "px";
@@ -1405,17 +1469,18 @@ $("textSelColor").addEventListener("mousedown", (ev) => ev.preventDefault());
 
 /** B/I/U só no trecho selecionado. Liga se alguma parte do trecho ainda não tem o estilo,
  *  desliga se o trecho inteiro já tem — mesmo comportamento de Docs/Canva. */
-function toggleSelectionStyle(kind: "bold" | "italic" | "underline") {
+function toggleSelectionStyle(kind: "bold" | "italic" | "underline" | "strike") {
   if (!editingId || !pendingTextSelection) return;
   const el = byId(editingId);
   if (!el) return;
   const { start, end } = pendingTextSelection;
-  const base: StyleOverride = { weight: el.weight, italic: el.italic, underline: el.underline };
+  const base: StyleOverride = { weight: el.weight, italic: el.italic, underline: el.underline, strike: el.strike };
   const has = kind === "bold" ? (s: StyleOverride) => (s.weight ?? 400) >= 600
-    : kind === "italic" ? (s: StyleOverride) => !!s.italic : (s: StyleOverride) => !!s.underline;
+    : kind === "italic" ? (s: StyleOverride) => !!s.italic
+    : kind === "strike" ? (s: StyleOverride) => !!s.strike : (s: StyleOverride) => !!s.underline;
   const on = !rangeEvery(el.text, el.runs, start, end, base, has);
   const override: StyleOverride = kind === "bold" ? { weight: on ? 700 : (el.weight >= 600 ? 400 : el.weight) }
-    : kind === "italic" ? { italic: on } : { underline: on };
+    : kind === "italic" ? { italic: on } : kind === "strike" ? { strike: on } : { underline: on };
   el.runs = applyStyleToRange(el.text, el.runs, start, end, override);
   commit();
   const node = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
@@ -1426,6 +1491,56 @@ function toggleSelectionStyle(kind: "bold" | "italic" | "underline") {
   }
   // Negrito/itálico novos precisam da face carregada (se a família tiver) — não bloqueia.
   loadDesignFonts(doc).catch(() => {});
+}
+
+/** Estilo efetivo no caractere `pos` (run por cima do elemento). */
+function styleAt(el: any, pos: number) {
+  let acc = 0;
+  for (const r of el.runs ?? []) {
+    acc += r.text.length;
+    if (pos < acc) return { font: r.font || el.font, size: r.size || el.size };
+  }
+  return { font: el.font, size: el.size };
+}
+
+/** Fontes oferecidas no trecho: as do design primeiro, depois a biblioteca compartilhada. */
+function textSelFontOptions(current: string): string[] {
+  const seen = new Set<string>(), out: string[] = [];
+  const add = (f?: string) => { if (f && !seen.has(f)) { seen.add(f); out.push(f); } };
+  add(current);
+  for (const p of doc.pages) for (const e of p.els) if (e.type === "text") { add(e.font); for (const r of e.runs ?? []) add(r.font); }
+  for (const f of doc.fonts ?? []) add(f.family);
+  for (const f of globalFonts) add(f.family);
+  return out;
+}
+
+function fillTextSelControls(start: number) {
+  const el = editingId ? byId(editingId) : null;
+  if (!el) return;
+  const st = styleAt(el, start);
+  ($("textSelSize") as HTMLInputElement).value = String(Math.round(st.size));
+  const sel = $("textSelFont") as HTMLSelectElement;
+  sel.innerHTML = textSelFontOptions(st.font).map((f) => `<option value="${esc(f)}"${f === st.font ? " selected" : ""}>${esc(fontLabel(f))}</option>`).join("");
+}
+
+/** Aplica corpo/fonte só ao trecho, mantendo a seleção para ajustes seguidos. */
+async function applyToSelection(override: StyleOverride) {
+  if (!editingId || !pendingTextSelection) return;
+  const el = byId(editingId);
+  if (!el) return;
+  const { start, end } = pendingTextSelection;
+  if (override.font) {
+    // Carrega as faces da família antes de pintar — sem isso o trecho pisca na fonte padrão.
+    const fonts = withGlobalFontFamily(doc.fonts ?? [], globalFonts, override.font);
+    try { await loadDesignFonts({ ...doc, fonts }); doc.fonts = fonts; } catch { /* segue com fallback */ }
+    if (override.font === el.font) override = { ...override, font: undefined };
+  }
+  if (override.size !== undefined && Math.abs(override.size - el.size) < 0.01) override = { ...override, size: undefined };
+  const clear = Object.fromEntries(Object.keys(override).map((k) => [k, (override as any)[k]]));
+  el.runs = applyStyleToRange(el.text, el.runs, start, end, clear as StyleOverride);
+  commit();
+  const node = $("pagestack").querySelector(`[data-txt="${editingId}"]`) as HTMLElement | null;
+  if (node) { node.innerHTML = textRunsHtml(el); node.focus(); refitEditingText(); reselectTextRange(node, start, end); }
 }
 
 function reselectTextRange(container: HTMLElement, start: number, end: number) {
@@ -1447,12 +1562,28 @@ $("textSelToolbar").addEventListener("mousedown", (ev) => {
 });
 $("textSelToolbar").addEventListener("click", (ev) => {
   const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-tsel]");
-  if (b) toggleSelectionStyle(b.dataset.tsel as "bold" | "italic" | "underline");
+  if (!b) return;
+  const k = b.dataset.tsel!;
+  if (k === "size-up" || k === "size-down") {
+    const cur = Number(($("textSelSize") as HTMLInputElement).value) || 16;
+    const next = clamp(k === "size-up" ? cur + 2 : cur - 2, 4, 512);
+    ($("textSelSize") as HTMLInputElement).value = String(next);
+    void applyToSelection({ size: next });
+    return;
+  }
+  toggleSelectionStyle(k as "bold" | "italic" | "underline" | "strike");
 });
+// Campo e seletor roubam o foco da caixa em edição; guardamos o trecho e o restauramos no fim.
+$("textSelSize").addEventListener("change", (ev) => {
+  const n = Number((ev.target as HTMLInputElement).value);
+  if (Number.isFinite(n) && n >= 4) void applyToSelection({ size: clamp(n, 4, 512) });
+});
+$("textSelSize").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); (ev.target as HTMLInputElement).dispatchEvent(new Event("change")); } });
+$("textSelFont").addEventListener("change", (ev) => { void applyToSelection({ font: (ev.target as HTMLSelectElement).value }); });
 document.addEventListener("keydown", (ev) => {
   if (!editingId || !pendingTextSelection || !(ev.metaKey || ev.ctrlKey)) return;
   const k = ev.key.toLowerCase();
-  const kind = k === "b" ? "bold" : k === "i" ? "italic" : k === "u" ? "underline" : null;
+  const kind = k === "b" ? "bold" : k === "i" ? "italic" : k === "u" ? "underline" : ev.shiftKey && k === "x" ? "strike" : null;
   if (!kind) return;
   ev.preventDefault();
   toggleSelectionStyle(kind);
@@ -1589,6 +1720,43 @@ function order(dir) {
   }
   commit(); renderAll();
 }
+/* ----------------------------- copiar estilo ----------------------------- */
+let copiedStyle: CopiedStyle | null = null;
+function armCopyStyle() {
+  const e = selEls()[0];
+  if (!e) return;
+  if (copiedStyle) { copiedStyle = null; document.body.classList.remove("painting"); renderToolbar(); return; }
+  copiedStyle = copyStyle(e);
+  document.body.classList.add("painting");
+  toast("Estilo copiado — clique no elemento que vai receber (Esc cancela)");
+  renderToolbar();
+}
+function pasteCopiedStyleOnSelection() {
+  if (!copiedStyle) return;
+  let n = 0;
+  for (const e of selEls()) if (pasteStyle(e, copiedStyle)) n++;
+  if (n) { commit(); renderAll(); toast("Estilo aplicado"); }
+}
+
+/** Conta-gotas nativo do navegador (Chrome/Edge): a cor escolhida vira o preenchimento da
+ *  seleção — do texto ou da forma. */
+async function eyedrop() {
+  try {
+    const { sRGBHex } = await new (window as any).EyeDropper().open();
+    const e = selEls()[0];
+    if (!e) return;
+    patch(e.grad ? { fill: sRGBHex, grad: undefined } : { fill: sRGBHex }, true);
+    renderToolbar();
+  } catch { /* cancelado */ }
+}
+
+function distributeSel(axis: "h" | "v") {
+  const els = selEls().filter((e) => !e.locked);
+  if (els.length < 3) { toast("Selecione 3 ou mais elementos para distribuir."); return; }
+  distribute(els, axis);
+  commit(); renderAll();
+}
+
 function align(how) {
   const els = selEls().filter((e) => !e.locked);
   if (!els.length) return;
@@ -2130,6 +2298,10 @@ function renderProps() {
            ["bottom", `<rect width="14" height="6" x="5" y="12" rx="2"/><rect width="10" height="6" x="7" y="2" rx="2"/><path d="M2 22h20"/>`]]
           .map(([k, ic]) => `<button data-align="${k}" title="Alinhar ${PT_ALIGN[k]}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${({left:"À esquerda",cx:"Ao centro",right:"À direita",top:"Em cima",cy:"No meio",bottom:"Embaixo"})[k]}</span></button>`).join("")}
       </div>
+      ${els.length >= 3 ? `<h4 class="align-label">Espaçamento</h4><div class="seg align-actions" style="margin-bottom:12px">
+        <button data-distribute="h" title="Distribuir na horizontal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect width="4" height="14" x="3" y="5" rx="1"/><rect width="4" height="14" x="10" y="5" rx="1"/><rect width="4" height="14" x="17" y="5" rx="1"/></svg><span>Horizontal</span></button>
+        <button data-distribute="v" title="Distribuir na vertical"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect width="14" height="4" x="5" y="3" rx="1"/><rect width="14" height="4" x="5" y="10" rx="1"/><rect width="14" height="4" x="5" y="17" rx="1"/></svg><span>Vertical</span></button>
+      </div>` : ""}
       <div class="seg">
         <button data-flip="h" title="Espelhar na horizontal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/></svg></button>
         <button data-flip="v" title="Espelhar na vertical"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m17 3-5 5-5-5h10"/><path d="m17 21-5-5-5 5h10"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/></svg></button>
@@ -2206,6 +2378,7 @@ $("props").addEventListener("click", (ev) => {
   const g = (a: string) => t.closest<HTMLElement>(`[data-${a}]`);
   if (g("order")) return order(g("order").dataset.order);
   if (g("align")) return align(g("align").dataset.align);
+  if (g("distribute")) return distributeSel(g("distribute").dataset.distribute as "h" | "v");
   if (g("flip")) return flip(g("flip").dataset.flip);
   if (g("cmd")) return g("cmd").dataset.cmd === "delete" ? deleteSel() : duplicateSel();
 });
@@ -2542,12 +2715,18 @@ async function browserDownload({ filename, data }) {
 
 let expFmt = "png", expScale = 2;
 
+/** PNG sem o fundo da página (logo, figurinha, sobreposição) — como o "fundo transparente" do Canva. */
+let expTransparent = false;
+$("expTransparent").addEventListener("change", (ev) => { expTransparent = (ev.target as HTMLInputElement).checked; });
+
 function renderExport() {
   $("fmts").innerHTML = ["png", "jpg", "pdf", "json", "html"].map((f) =>
     `<button class="fmt" data-fmt="${f}" aria-pressed="${expFmt === f}" title="Exportar como ${f.toUpperCase()}">${f.toUpperCase()}</button>`).join("");
   $("scales").innerHTML = [1, 2, 3].map((s) =>
     `<button data-scale="${s}" aria-pressed="${expScale === s}" title="Escala ${s}×">${s}×</button>`).join("");
   $("scales").parentElement.style.display = (expFmt === "json") ? "none" : "";
+  $("expTransparentRow").hidden = expFmt !== "png";
+  ($("expTransparent") as HTMLInputElement).checked = expTransparent;
 }
 $("exportBtn").addEventListener("click", () => {
   if (looksGenerated(doc.seedId) && !legacyGeneratedDesign && !generationReview?.canDownload) {
@@ -2587,12 +2766,12 @@ async function loadImg(src: string): Promise<HTMLImageElement> {
   return img;
 }
 
-async function renderPageCanvas(p: Page, scale: number) {
+async function renderPageCanvas(p: Page, scale: number, opts: { transparent?: boolean } = {}) {
   const c = document.createElement("canvas");
   c.width = Math.round(p.w * scale); c.height = Math.round(p.h * scale);
   const x = c.getContext("2d");
   x.scale(scale, scale);
-  x.fillStyle = p.bg; x.fillRect(0, 0, p.w, p.h);
+  if (!opts.transparent) { x.fillStyle = p.bg; x.fillRect(0, 0, p.w, p.h); }
   for (const e of p.els) {
     if (e.hidden) continue;
     x.save();
@@ -2618,6 +2797,27 @@ async function renderPageCanvas(p: Page, scale: number) {
     x.restore();
   }
   return c;
+}
+/** stroke-dasharray do SVG para o estilo de contorno (em px do elemento). */
+function dashAttr(e: any): string {
+  const w = Number(e.strokeWidth) || 1;
+  return e.strokeDash === "dashed" ? ` stroke-dasharray="${w * 3} ${w * 2}"` : e.strokeDash === "dotted" ? ` stroke-dasharray="0 ${w * 2}" stroke-linecap="round"` : "";
+}
+function canvasDash(x: CanvasRenderingContext2D, e: any) {
+  const w = Number(e.strokeWidth) || 1;
+  x.setLineDash(e.strokeDash === "dashed" ? [w * 3, w * 2] : e.strokeDash === "dotted" ? [0.01, w * 2] : []);
+  x.lineCap = e.strokeDash === "dotted" ? "round" : "butt";
+}
+/** `Gradient` -> <linearGradient>/<radialGradient> em px do elemento, com a mesma geometria
+ *  de `paintOf` (ângulo CSS: 0° para cima, horário) — o canvas e o SVG pintam igual. */
+function svgGradient(id: string, e: any): string {
+  const g = e.grad;
+  const stops = g.stops.map(([c, p]: [string, number]) => `<stop offset="${Math.max(0, Math.min(1, p))}" stop-color="${c}"/>`).join("");
+  if (g.type === "radial") return `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${e.w / 2}" cy="${e.h / 2}" r="${Math.max(e.w, e.h) / 2}">${stops}</radialGradient>`;
+  const a = ((g.angle || 0) * Math.PI) / 180;
+  const len = Math.abs(e.w * Math.sin(a)) + Math.abs(e.h * Math.cos(a));
+  const dx = (Math.sin(a) * len) / 2, dy = (-Math.cos(a) * len) / 2;
+  return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${e.w / 2 - dx}" y1="${e.h / 2 - dy}" x2="${e.w / 2 + dx}" y2="${e.h / 2 + dy}">${stops}</linearGradient>`;
 }
 /** `Gradient` estruturado -> CSS (o que o DOM do editor pinta em `fill`). */
 function gradToCss(g: any): string {
@@ -2652,7 +2852,11 @@ function richFont(e: any, run: any): string {
   const weight = run.weight ?? e.weight;
   const italic = run.italic ?? e.italic;
   const font = run.font || e.font;
-  return `${italic ? "italic " : ""}${weight} ${e.size}px "${font}", Inter, system-ui, sans-serif`;
+  return `${italic ? "italic " : ""}${weight} ${runSize(e, run)}px "${font}", Inter, system-ui, sans-serif`;
+}
+/** Corpo efetivo de um trecho: o próprio (escalado pelo autoFit, se houver) ou o do elemento. */
+function runSize(e: any, run: any): number {
+  return run.size ? run.size * (e.fitScale ?? 1) : e.size;
 }
 
 /** `runs` vira uma lista plana de tokens (uma palavra, ou `{break:true}` pra quebra de
@@ -2660,14 +2864,19 @@ function richFont(e: any, run: any): string {
  *  preservado à risca, mesma limitação que sempre existiu). Cada palavra carrega o run de onde
  *  veio, pra medir/desenhar com a fonte certa. */
 function tokenizeRuns(runs: any[]): any[] {
+  // `glue`: o pedaço continua a palavra do run anterior (estilo aplicado no meio da palavra,
+  // ex. "NEG" + "RITO") — não leva espaço antes nem quebra linha ali.
   const tokens: any[] = [];
+  let prevEndsWord = false;
   for (const run of runs) {
     const paras = String(run.text).split("\n");
     paras.forEach((para, pi) => {
-      if (pi > 0) tokens.push({ brk: true });
-      for (const word of para.split(" ")) {
-        if (word !== "") tokens.push({ text: word, run });
-      }
+      if (pi > 0) { tokens.push({ brk: true }); prevEndsWord = false; }
+      const words = para.split(" ");
+      words.forEach((word, wi) => {
+        if (word !== "") tokens.push({ text: word, run, glue: wi === 0 && prevEndsWord });
+        prevEndsWord = wi === words.length - 1 && word !== "";
+      });
     });
   }
   return tokens;
@@ -2692,13 +2901,14 @@ function drawRichText(x: CanvasRenderingContext2D, e: any) {
   const wordWidth = (tok: any) => { x.font = richFont(e, tok.run); return x.measureText(tok.text).width; };
 
   const lines: any[][] = [[]];
+  const lineEndsPara: boolean[] = [];
   let width = 0;
   for (const tok of tokens) {
-    if (tok.brk) { lines.push([]); width = 0; continue; }
+    if (tok.brk) { lineEndsPara[lines.length - 1] = true; lines.push([]); width = 0; continue; }
     const line = lines[lines.length - 1];
     const w = wordWidth(tok);
-    const sep = line.length ? spaceWidth(tok.run) : 0;
-    if (line.length && width + sep + w > e.w) {
+    const sep = line.length && !tok.glue ? spaceWidth(tok.run) : 0;
+    if (line.length && !tok.glue && width + sep + w > e.w) {
       lines.push([tok]);
       width = w;
     } else {
@@ -2707,27 +2917,42 @@ function drawRichText(x: CanvasRenderingContext2D, e: any) {
     }
   }
 
-  const lh = e.size * e.lh;
-  lines.forEach((line, i) => {
+  // Como no CSS: cada linha tem a altura do seu trecho mais alto (corpo × entrelinha), e a
+  // baseline é a do trecho que mais sobe — uma palavra maior empurra só a própria linha.
+  let top = 0;
+  lines.forEach((line, li) => {
     let lineWidth = 0;
-    line.forEach((tok, j) => { lineWidth += wordWidth(tok) + (j > 0 ? spaceWidth(tok.run) : 0); });
+    line.forEach((tok, j) => { lineWidth += wordWidth(tok) + (j > 0 && !tok.glue ? spaceWidth(tok.run) : 0); });
     let cx = e.align === "center" ? (e.w - lineWidth) / 2 : e.align === "right" ? e.w - lineWidth : 0;
-    x.font = richFont(e, line[0]?.run ?? {});
-    const ty = cssBaseline(x, i, lh);
+    // Justificado: a sobra vai para os espaços, exceto na última linha do parágrafo.
+    const gaps = line.filter((tok, j) => j > 0 && !tok.glue).length;
+    const lastOfPara = li === lines.length - 1 || lineEndsPara[li];
+    const extra = e.align === "justify" && !lastOfPara && gaps ? (e.w - lineWidth) / gaps : 0;
+    const runsInLine = line.length ? line.map((tok) => tok.run) : [{}];
+    let ty = 0, lineH = 0;
+    for (const run of runsInLine) {
+      const lh = runSize(e, run) * e.lh;
+      x.font = richFont(e, run);
+      const m = x.measureText("Hg");
+      const base = (lh - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2 + m.fontBoundingBoxAscent;
+      ty = Math.max(ty, base); lineH = Math.max(lineH, lh);
+    }
+    ty += top; top += lineH;
     line.forEach((tok, j) => {
-      if (j > 0) cx += spaceWidth(tok.run);
+      if (j > 0 && !tok.glue) cx += spaceWidth(tok.run) + extra;
       x.font = richFont(e, tok.run);
       x.fillStyle = tok.run.fill || e.fill;
       x.fillText(tok.text, cx, ty);
       const w = x.measureText(tok.text).width;
-      if (tok.run.underline) x.fillRect(cx, ty + e.size * 0.12, w, Math.max(1, e.size / 16));
+      if (tok.run.underline ?? e.underline) x.fillRect(cx, ty + runSize(e, tok.run) * 0.12, w, Math.max(1, runSize(e, tok.run) / 16));
+      if (tok.run.strike ?? e.strike) x.fillRect(cx, ty - runSize(e, tok.run) * 0.3, w, Math.max(1, runSize(e, tok.run) / 16));
       cx += w;
     });
   });
 }
 
 async function drawEl(x: CanvasRenderingContext2D, e: any) {
-  const stroke = () => { if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.stroke(); } };
+  const stroke = () => { if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; canvasDash(x, e); x.stroke(); x.setLineDash([]); } };
   if (e.type === "rect") {
     if (e.ring) {
       const p = new Path2D();
@@ -2769,8 +2994,9 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
       try {
         const p = new Path2D();
         p.addPath(new Path2D(e.fillPath), new DOMMatrix().scale(e.w, e.h));
-        if (e.fill && e.fill !== "none") { x.fillStyle = e.fill; x.fill(p, e.fillRule === "evenodd" ? "evenodd" : "nonzero"); }
-        if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.stroke(p); }
+        if (e.grad) { x.save(); x.clip(p, e.fillRule === "evenodd" ? "evenodd" : "nonzero"); x.fillStyle = paintOf(x, e); x.fillRect(0, 0, e.w, e.h); x.restore(); }
+        else if (e.fill && e.fill !== "none") { x.fillStyle = e.fill; x.fill(p, e.fillRule === "evenodd" ? "evenodd" : "nonzero"); }
+        if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; canvasDash(x, e); x.stroke(p); x.setLineDash([]); }
       } catch (err) { /* malformed path */ }
     }
     if (e.pts && e.pts.length) {
@@ -2802,7 +3028,9 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
       document.body.appendChild(measure);
       try {
         fitTextElements(measure);
-        e = { ...e, size: parseFloat((measure.firstElementChild as HTMLElement).style.fontSize) };
+        const fitted = parseFloat((measure.firstElementChild as HTMLElement).style.fontSize);
+        // Trechos com corpo próprio encolhem na mesma proporção (no DOM eles são `em`).
+        e = { ...e, size: fitted, fitScale: fitted / (Number(e.size) || fitted) };
       } finally {
         measure.remove();
       }
@@ -2810,28 +3038,39 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     // Baseline como no CSS (editorTextHtml): meia-entrelinha em volta da área de conteúdo
     // ascent+descent da fonte, não do em-box — senão o PNG/PDF exportado desloca o texto em
     // relação ao que o editor mostra (e ao PDF importado, medido nesse mesmo modelo).
+    if (e.caps) e = { ...e, text: String(e.text ?? "").toUpperCase(), runs: e.runs?.map((r: any) => ({ ...r, text: r.text.toUpperCase() })) };
     x.textBaseline = "alphabetic";
     (x as any).letterSpacing = `${Number(e.ls) || 0}px`;
     if (e.runs && e.runs.length) { drawRichText(x, e); (x as any).letterSpacing = "0px"; return; }
     x.fillStyle = e.fill;
     x.font = `${e.italic ? "italic " : ""}${e.weight} ${e.size}px "${e.font}", Inter, system-ui, sans-serif`;
     const lh = e.size * e.lh;
-    const lines = [];
+    const lines: Array<{ text: string; last: boolean }> = [];
     for (const para of String(e.text).split("\n")) {
       let line = "";
       for (const word of para.split(" ")) {
         const t = line ? line + " " + word : word;
-        if (x.measureText(t).width > e.w && line) { lines.push(line); line = word; }
+        if (x.measureText(t).width > e.w && line) { lines.push({ text: line, last: false }); line = word; }
         else line = t;
       }
-      lines.push(line);
+      lines.push({ text: line, last: true });
     }
-    lines.forEach((ln, i) => {
+    lines.forEach(({ text: ln, last }, i) => {
       const w = x.measureText(ln).width;
       const tx = e.align === "center" ? (e.w - w) / 2 : e.align === "right" ? e.w - w : 0;
       const ty = cssBaseline(x, i, lh);
-      x.fillText(ln, tx, ty);
-      if (e.underline) { x.fillRect(tx, ty + e.size * 0.12, w, Math.max(1, e.size / 16)); }
+      const words = ln.split(" ");
+      if (e.align === "justify" && !last && words.length > 1) {
+        // Justificado como no CSS: a sobra da linha vai para os espaços; a última linha do
+        // parágrafo fica alinhada à esquerda.
+        const gap = (e.w - words.reduce((s, wd) => s + x.measureText(wd).width, 0)) / (words.length - 1);
+        let cx = 0;
+        for (const wd of words) { x.fillText(wd, cx, ty); cx += x.measureText(wd).width + gap; }
+      } else x.fillText(ln, tx, ty);
+      const lw = e.align === "justify" && !last && words.length > 1 ? e.w : w;
+      const lx = e.align === "justify" && !last ? 0 : tx;
+      if (e.underline) { x.fillRect(lx, ty + e.size * 0.12, lw, Math.max(1, e.size / 16)); }
+      if (e.strike) { x.fillRect(lx, ty - e.size * 0.3, lw, Math.max(1, e.size / 16)); }
     });
     (x as any).letterSpacing = "0px";
   }
@@ -2850,7 +3089,7 @@ async function buildScreensHtml(pages: Page[], title: string, scale: number): Pr
     `<body style="margin:0;padding:24px;background:#f2f2f2">${imgs.join("")}</body></html>\n`;
 }
 
-/** Mesma checagem em dois pontos de saída (baixar arquivo, copiar markup): um design gerado
+/** Mesma checagem em dois pontos de saída (exportar o design, exportar uma versão): um design gerado
  *  só sai da máquina depois de aprovado. Devolve `false` (e já mostra o toast/fecha o modal)
  *  quando algo bloqueia; quem chama só precisa checar o retorno antes de seguir. */
 async function ensureCanDownload(): Promise<boolean> {
@@ -2875,7 +3114,6 @@ async function ensureCanDownload(): Promise<boolean> {
 async function doExport() {
   if (!await ensureCanDownload()) return;
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
-  $("scrim").hidden = true;
   const saver = downloads ?? { save: browserDownload };
   try {
     await document.fonts.ready;
@@ -2890,17 +3128,12 @@ async function doExport() {
         const b64 = c.toDataURL("image/jpeg", 0.92).split(",")[1];
         pgs.push({ bytes: b64ToBytes(b64), pw: c.width, ph: c.height, w: p.w, h: p.h });
       }
+      $("expGo").textContent = "Salvando…";
       await saver.save({ filename: `${name}.pdf`, data: buildPDF(pgs) });
       toast("Salvo"); return;
     }
-    if (expFmt === "html") {
-      // Uma página HTML estática com todas as telas empilhadas — pra abrir/compartilhar sem
-      // precisar do editor nem de um PDF, um arquivo só por design em vez de um por página.
-      await saver.save({ filename: `${name}.html`, data: await buildScreensHtml(doc.pages, name, expScale) });
-      toast("Salvo"); return;
-    }
     const p = page();
-    const c = await renderPageCanvas(p, expScale);
+    const c = await renderPageCanvas(p, expScale, { transparent: expTransparent && expFmt === "png" });
     const mime = expFmt === "jpg" ? "image/jpeg" : "image/png";
     const blob = await new Promise((r) => c.toBlob(r, mime, 0.94));
     await saver.save({ filename: `${name}-page-${doc.active + 1}.${expFmt}`, data: blob });
@@ -3103,7 +3336,7 @@ $("historyList").addEventListener("click", async (ev) => {
       const baseName = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
       const versionName = version.name.replace(/[^\w \-]/g, "").trim() || "versao";
       await document.fonts.ready;
-      const html = await buildScreensHtml(version.document.pages, `${baseName} - ${versionName}`, expScale);
+      const html = await buildScreensHtml(version.document.pages.filter((p) => !p.hidden), `${baseName} - ${versionName}`, expScale);
       const saver = downloads ?? { save: browserDownload };
       await saver.save({ filename: `${baseName} - ${versionName}.html`, data: html });
       toast("Salvo");
@@ -3343,14 +3576,17 @@ $("fileJson").addEventListener("change", async (ev) => {
 });
 $("fileFont").addEventListener("cancel", () => { missingFontTarget = null; });
 $("fileFont").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
+  // Vários arquivos de uma vez: a família inteira (Regular, Bold, Italic…) num envio só.
+  const files = [...ev.target.files] as File[];
   ev.target.value = "";
-  if (!file) return;
-  if (!/\.(ttf|otf)$/i.test(file.name)) { toast("Envie um arquivo .ttf ou .otf."); return; }
-  if (file.size > 20_000_000) { toast(`${file.name} passa de 20 MB — ignorado.`); return; }
   const pedida = missingFontTarget;
   missingFontTarget = null;
-  await importarFonte(file, pedida);
+  for (const file of files) {
+    if (!/\.(ttf|otf)$/i.test(file.name)) { toast(`${file.name}: envie .ttf ou .otf.`); continue; }
+    if (file.size > 20_000_000) { toast(`${file.name} passa de 20 MB — ignorado.`); continue; }
+    await importarFonte(file, pedida);
+  }
+  renderMissingFonts();
 });
 $("fileImg").addEventListener("change", async (ev) => {
   const files = [...ev.target.files];
@@ -3440,6 +3676,11 @@ window.addEventListener("keydown", (e) => {
   // Só sequestra Ctrl+C/V quando há de fato o que copiar ou colar no canvas. Sem seleção, o
   // atalho tem que chegar ao navegador: dentro do editor também se copia texto de um painel,
   // e antes isso era engolido em silêncio (copySel() sem seleção não fazia nada — nem toast).
+  // Alt+Ctrl+C / Alt+Ctrl+V: copiar e colar estilo (atalho do Canva). `e.code` porque Alt no
+  // Mac troca a letra de `e.key` ("ç", "√").
+  if (mod && e.altKey && e.code === "KeyC") { e.preventDefault(); if (sel.length) { armCopyStyle(); } return; }
+  if (mod && e.altKey && e.code === "KeyV") { e.preventDefault(); pasteCopiedStyleOnSelection(); return; }
+  if (e.key === "Escape" && copiedStyle) { copiedStyle = null; document.body.classList.remove("painting"); renderToolbar(); return; }
   if (mod && k === "c") { if (!sel.length) return; e.preventDefault(); copySel(); return; }
   if (mod && k === "v") { if (!clipboard?.length) return; e.preventDefault(); paste(); return; }
   if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
@@ -3503,7 +3744,7 @@ let missingFontsLibraryChecked = "";
 function renderMissingFonts() {
   const bar = $("fontMissing");
   const missing = missingPdfFonts(doc.pages);
-  if (!missing.length) { bar.hidden = true; return; }
+  if (!missing.length) { renderMissingWeights(bar); return; }
   const docKey = doc.seedId || doc.name || "";
   // Uma consulta à biblioteca por design, em segundo plano: se alguém já subiu a fonte, o
   // botão vira "Usar" (um clique, sem arquivo). Nunca bloqueia o render.
@@ -3518,11 +3759,25 @@ function renderMissingFonts() {
   const inLibrary = globalFonts.some((f) => familyKey(f.family) === familyKey(m.family));
   const more = missing.length > 1 ? ` <span class="fm-sub">+${missing.length - 1}</span>` : "";
   bar.className = "fontMissing";
-  bar.innerHTML = `<span class="fm-text">Fonte <b>${esc(m.family)}</b> não está na biblioteca${more} <span class="fm-sub">· usando ${esc(fontLabel(m.replacement))} por enquanto</span></span>`
+  bar.innerHTML = `<span class="fm-text"><b>${esc(m.family)}</b> não está na biblioteca${more}<br><span class="fm-sub">Usando ${esc(fontLabel(m.replacement))} por enquanto</span></span>`
     + (inLibrary
       ? `<button class="fm-add" data-fm-use="${esc(m.family)}">Usar ${esc(m.family)}</button>`
       : `<button class="fm-add" data-fm-add="${esc(m.family)}">Adicionar fonte</button>`)
     + `<button class="fm-later" data-fm-later>Depois</button>`;
+}
+
+/** Segundo nível do aviso: a família já está no design, mas faltam pesos usados no texto
+ *  (ex.: subiu o Regular, o título usa Bold). Lista o que falta e aceita vários arquivos. */
+function renderMissingWeights(bar: HTMLElement) {
+  const docKey = doc.seedId || doc.name || "";
+  const faltando = missingWeights(doc.pages, doc.fonts ?? []);
+  if (!faltando.length || missingFontsLater.has(`${docKey}:pesos`)) { bar.hidden = true; return; }
+  const m = faltando[0];
+  bar.hidden = false;
+  bar.className = "fontMissing";
+  bar.innerHTML = `<span class="fm-text"><b>${esc(fontLabel(m.family))}</b>: faltam os pesos ${m.missing.map(esc).join(", ")}`
+    + `<br><span class="fm-sub">Sem eles o navegador simula o peso e o texto sai diferente do PDF</span></span>`
+    + `<button class="fm-add" data-fm-weights>Adicionar pesos</button><button class="fm-later" data-fm-later-weights>Depois</button>`;
 }
 
 function applyMissingFont(original: string, family: string) {
@@ -3537,6 +3792,8 @@ $("fontMissing").addEventListener("click", async (ev) => {
   const t = ev.target as HTMLElement;
   const docKey = doc.seedId || doc.name || "";
   if (t.closest("[data-fm-later]")) { missingFontsLater.add(docKey); renderMissingFonts(); return; }
+  if (t.closest("[data-fm-later-weights]")) { missingFontsLater.add(`${docKey}:pesos`); renderMissingFonts(); return; }
+  if (t.closest("[data-fm-weights]")) { missingFontTarget = null; if (!fontUploadBusy) $("fileFont").click(); return; }
   if ($("fontMissing").classList.contains("is-chip")) { missingFontsLater.delete(docKey); renderMissingFonts(); return; }
   const add = t.closest<HTMLElement>("[data-fm-add]");
   if (add) { missingFontTarget = add.dataset.fmAdd!; if (!fontUploadBusy) $("fileFont").click(); return; }

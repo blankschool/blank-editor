@@ -124,54 +124,116 @@ def desenho_para_elemento(d, pagina_rect):
 _TOKEN = re.compile(rb"\[|\]|<<|>>|/[^\s/\[\]<>(){}%]+|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|%[^\n]*|[^\s/\[\]<>(){}%]+")
 
 
-def matrizes_dos_sh(conteudo):
-    """Percorre o content stream da página rastreando q/Q/cm e o recorte (W/W*) e devolve,
-    para cada operador `sh` na ordem, (nome_do_shading, ctm, recorte). `ctm` é (a,b,c,d,e,f)
-    e `recorte` a caixa (x0,y0,x1,y1) do recorte ativo no espaço do PDF, ou None — o `sh`
-    pinta o plano inteiro, quem dá o tamanho real do gradiente é o recorte."""
-    ctm = (1, 0, 0, 1, 0, 0)
-    clip = None
-    pilha, operandos, out, pts = [], [], [], []
-    clip_pendente = False
-    for tok in _TOKEN.findall(conteudo):
+class RecursosSimples:
+    """Recursos de um content stream para `usos_de_shading`: nome -> shading e nome -> Form
+    XObject. Implementação em dicionário (testes); a do PDF de verdade fica no script."""
+    def __init__(self, shadings=None, forms=None):
+        self.shadings, self.forms = shadings or {}, forms or {}
+
+    def shading(self, nome):
+        return self.shadings.get(nome)
+
+    def form(self, nome):
+        return self.forms.get(nome)
+
+
+def _mult(m, n):
+    """m aplicado antes de n (convenção PDF: `cm` pré-multiplica o CTM)."""
+    a, b, c, d, e, f = m
+    A, B, C, D, E, F = n
+    return (a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D, e * A + f * C + E, e * B + f * D + F)
+
+
+_PINTA = (b"n", b"f", b"F", b"f*", b"S", b"s", b"B", b"B*", b"b", b"b*")
+
+
+def usos_de_shading(conteudo, recursos, ctm=(1, 0, 0, 1, 0, 0), recorte=None, profundidade=0):
+    """Percorre um content stream rastreando q/Q/cm e o recorte (W/W*), ENTRANDO em Form
+    XObjects (`/Nome Do`) com a /Matrix deles — o Canva agrupa elementos em forms, e um `sh`
+    lá dentro não aparece no stream da página. Devolve, na ordem de pintura, um dict por `sh`:
+    shading (o que `recursos.shading` devolveu), ctm, recorte = dict(bbox, path, retangular,
+    evenodd) no espaço do PDF, ou None."""
+    pilha, operandos, out = [], [], []
+    caminho, sub = [], []          # path em construção (espaço do PDF, já com CTM)
+    atual = None
+    clip_pendente = None
+    toks = _TOKEN.findall(conteudo)
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        i += 1
         if tok.startswith(b"%"):
             continue
-        if tok == b"q":
-            pilha.append((ctm, clip))
-        elif tok == b"Q":
-            ctm, clip = pilha.pop() if pilha else (ctm, clip)
-        elif tok == b"cm" and len(operandos) >= 6:
-            try:
-                a, b, c, d, e, f = (float(v) for v in operandos[-6:])
-                A, B, C, D, E, F = ctm
-                ctm = (a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D,
-                       e * A + f * C + E, e * B + f * D + F)
-            except ValueError:
-                pass
-        elif tok in (b"m", b"l", b"c", b"v", b"y", b"re"):
-            try:
-                nums = [float(v) for v in operandos]
-                if tok == b"re" and len(nums) >= 4:
-                    x, y, w, h = nums[-4:]
-                    cand = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
-                else:
-                    cand = list(zip(nums[0::2], nums[1::2]))
-                pts.extend(_aplicar(ctm, p) for p in cand)
-            except ValueError:
-                pass
-        elif tok in (b"W", b"W*"):
-            clip_pendente = True
-        elif tok in (b"n", b"f", b"F", b"f*", b"S", b"s", b"B", b"B*", b"b", b"b*"):
-            if clip_pendente and pts:
-                xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-                novo = (min(xs), min(ys), max(xs), max(ys))
-                clip = novo if clip is None else (max(clip[0], novo[0]), max(clip[1], novo[1]),
-                                                  min(clip[2], novo[2]), min(clip[3], novo[3]))
-            clip_pendente, pts = False, []
-        elif tok == b"sh" and operandos and operandos[-1].startswith(b"/"):
-            out.append((operandos[-1][1:].decode("latin1"), ctm, clip))
-        elif tok == b"BI":  # imagem inline: dados binários — para por segurança
-            break
+        num = lambda k: [float(v) for v in operandos[-k:]]
+        try:
+            if tok == b"q":
+                pilha.append((ctm, recorte))
+            elif tok == b"Q":
+                ctm, recorte = pilha.pop() if pilha else (ctm, recorte)
+            elif tok == b"cm" and len(operandos) >= 6:
+                ctm = _mult(tuple(num(6)), ctm)
+            elif tok == b"m" and len(operandos) >= 2:
+                if sub:
+                    caminho.append(sub)
+                atual = _aplicar(ctm, num(2))
+                sub = [("M", atual)]
+            elif tok == b"l" and len(operandos) >= 2:
+                atual = _aplicar(ctm, num(2))
+                sub.append(("L", atual))
+            elif tok in (b"c", b"v", b"y"):
+                n = num(6 if tok == b"c" else 4)
+                pts = [_aplicar(ctm, n[k:k + 2]) for k in range(0, len(n), 2)]
+                if tok == b"v":
+                    pts = [atual] + pts
+                elif tok == b"y":
+                    pts = [pts[0], pts[1], pts[1]]
+                atual = pts[-1]
+                sub.append(("C", *pts))
+            elif tok == b"re" and len(operandos) >= 4:
+                x, y, w, h = num(4)
+                if sub:
+                    caminho.append(sub)
+                cantos = [_aplicar(ctm, p) for p in ((x, y), (x + w, y), (x + w, y + h), (x, y + h))]
+                caminho.append([("M", cantos[0])] + [("L", c) for c in cantos[1:]] + [("Z",)])
+                sub, atual = [], cantos[0]
+            elif tok == b"h":
+                sub.append(("Z",))
+            elif tok in (b"W", b"W*"):
+                clip_pendente = tok == b"W*"
+            elif tok in _PINTA:
+                if clip_pendente is not None:
+                    todos = caminho + ([sub] if sub else [])
+                    pts = [seg[k] for s_ in todos for seg in s_ for k in range(1, len(seg))]
+                    if pts:
+                        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+                        bbox = (min(xs), min(ys), max(xs), max(ys))
+                        ret = len(todos) == 1 and _e_retangulo(todos[0])
+                        if recorte:
+                            r0 = recorte["bbox"]
+                            bbox = (max(r0[0], bbox[0]), max(r0[1], bbox[1]), min(r0[2], bbox[2]), min(r0[3], bbox[3]))
+                            # Recorte não retangular anterior continua valendo se o novo é só uma caixa.
+                            if ret and not recorte["retangular"]:
+                                recorte = dict(recorte, bbox=bbox)
+                                clip_pendente, caminho, sub = None, [], []
+                                operandos = []
+                                continue
+                        recorte = dict(bbox=bbox, path=todos, retangular=ret, evenodd=bool(clip_pendente))
+                clip_pendente, caminho, sub = None, [], []
+            elif tok == b"sh" and operandos and operandos[-1].startswith(b"/"):
+                # Sempre um item por `sh` (mesmo sem shading resolvido): a lista casa por posição
+                # com as entradas "fill-shade" do bboxlog.
+                out.append(dict(shading=recursos.shading(operandos[-1][1:].decode("latin1")), ctm=ctm, recorte=recorte))
+            elif tok == b"Do" and operandos and operandos[-1].startswith(b"/") and profundidade < 8:
+                form = recursos.form(operandos[-1][1:].decode("latin1"))
+                if form:
+                    stream, matriz, sub_recursos = form
+                    out += usos_de_shading(stream, sub_recursos, _mult(matriz, ctm), recorte, profundidade + 1)
+            elif tok == b"BI":  # imagem inline: pula até EI
+                while i < len(toks) and toks[i] != b"EI":
+                    i += 1
+                i += 1
+        except (ValueError, IndexError, TypeError):
+            pass
         if re.fullmatch(rb"[A-Za-z'\"*]+", tok) and tok not in (b"true", b"false", b"null"):
             operandos = []
         else:
@@ -179,7 +241,41 @@ def matrizes_dos_sh(conteudo):
     return out
 
 
+def _e_retangulo(sub):
+    """Subpath de 4 cantos com lados alinhados aos eixos (o `re` típico)."""
+    pts = [seg[1] for seg in sub if seg[0] in ("M", "L")]
+    if any(seg[0] == "C" for seg in sub) or len(pts) not in (4, 5):
+        return False
+    pts = pts[:4]
+    xs = sorted({round(p[0], 2) for p in pts})
+    ys = sorted({round(p[1], 2) for p in pts})
+    return len(xs) == 2 and len(ys) == 2
+
+
+def recorte_para_path(recorte, pagina_m, caixa):
+    """Path do recorte (espaço do PDF) -> `d` de SVG normalizado 0..1 dentro de `caixa`
+    (coordenadas de página) — o formato de `El.fillPath`."""
+    x0, y0, x1, y1 = caixa
+    w, h = (x1 - x0) or 1, (y1 - y0) or 1
+    def n(p):
+        q = _aplicar(pagina_m, p)
+        return f"{(q[0] - x0) / w:.5f},{(q[1] - y0) / h:.5f}"
+    partes = []
+    for sub_ in recorte["path"]:
+        for seg in sub_:
+            if seg[0] == "M":
+                partes.append("M" + n(seg[1]))
+            elif seg[0] == "L":
+                partes.append("L" + n(seg[1]))
+            elif seg[0] == "C":
+                partes.append(f"C{n(seg[1])} {n(seg[2])} {n(seg[3])}")
+            else:
+                partes.append("Z")
+    return " ".join(partes)
+
+
 def caixa_do_gradiente(bbox_log, recorte, pagina_m, pagina_rect):
+    recorte = recorte["bbox"] if isinstance(recorte, dict) else recorte
     """Área em que o gradiente aparece de verdade (coordenadas de página): a caixa do bboxlog
     (que para `sh` costuma ser o plano infinito) ∩ recorte ativo ∩ página."""
     x0, y0, x1, y1 = bbox_log

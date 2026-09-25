@@ -5,7 +5,9 @@ export interface TextStyle {
   weight?: number;
   italic?: boolean;
   underline?: boolean;
+  strike?: boolean;
   fill?: string;
+  size?: number;
 }
 export interface EditorText extends TextStyle {
   id?: string;
@@ -14,6 +16,7 @@ export interface EditorText extends TextStyle {
   align?: string;
   lh?: number;
   ls?: number;
+  caps?: boolean;
   runs?: Array<TextStyle & { text: string }>;
   autoFit?: boolean;
   w?: number;
@@ -27,15 +30,22 @@ function color(value: string): string {
   return /[;{}<>]/.test(value) ? "inherit" : value;
 }
 
+function decoration(underline?: boolean, strike?: boolean): string {
+  return [underline ? "underline" : "", strike ? "line-through" : ""].filter(Boolean).join(" ") || "none";
+}
+
 export function textRunsHtml(e: EditorText): string {
   if (!e.runs?.length) return escapeXml(e.text ?? "");
+  const base = Number(e.size) || 15;
   return e.runs.map(r => {
     const style = [
       r.font ? `font-family:${family(r.font)},Inter,system-ui,sans-serif` : "",
       r.weight !== undefined ? `font-weight:${Number(r.weight) || 400}` : "",
       r.italic !== undefined ? `font-style:${r.italic ? "italic" : "normal"}` : "",
-      r.underline !== undefined ? `text-decoration:${r.underline ? "underline" : "none"}` : "",
+      r.underline !== undefined || r.strike !== undefined ? `text-decoration:${decoration(r.underline, r.strike)}` : "",
       r.fill ? `color:${color(r.fill)}` : "",
+      // Em `em` do corpo da caixa: o autoFit encolhe a caixa inteira e o trecho acompanha.
+      r.size ? `font-size:${(Number(r.size) / base).toFixed(4)}em` : "",
     ].filter(Boolean).join(";");
     return `<span style="${escapeXml(style)}">${escapeXml(r.text)}</span>`;
   }).join("");
@@ -47,7 +57,8 @@ export function editorTextHtml(e: EditorText): string {
     `font-family:${family(e.font || "Inter")},Inter,system-ui,sans-serif`,
     `font-size:${Number(e.size) || 15}px`, `font-weight:${Number(e.weight) || 400}`,
     `font-style:${e.italic ? "italic" : "normal"}`,
-    `text-decoration:${e.underline ? "underline" : "none"}`,
+    `text-decoration:${decoration(e.underline, e.strike)}`,
+    ...(e.caps ? ["text-transform:uppercase"] : []),
     `text-align:${["left", "right", "center", "justify"].includes(e.align || "") ? e.align : "left"}`,
     `line-height:${Number(e.lh) || 1.2}`, `letter-spacing:${Number(e.ls) || 0}px`,
     `color:${color(e.fill || "#000000")}`, "white-space:pre-wrap", "word-break:break-word", "-webkit-font-smoothing:antialiased",

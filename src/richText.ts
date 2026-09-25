@@ -2,7 +2,7 @@ import type { TextRun } from "./types";
 
 /** Só os campos de estilo de um `TextRun`, sem `text` — o que muda quando você aplica uma cor
  *  (ou peso/itálico/fonte) a um trecho selecionado. */
-export type StyleOverride = Pick<TextRun, "font" | "weight" | "italic" | "underline" | "fill">;
+export type StyleOverride = Pick<TextRun, "font" | "weight" | "italic" | "underline" | "strike" | "fill" | "size">;
 
 interface Segment {
   start: number;
@@ -20,7 +20,7 @@ function segmentsFromRuns(text: string, runs: TextRun[] | undefined): Segment[] 
   let pos = 0;
   for (const r of runs) {
     const end = pos + r.text.length;
-    segs.push({ start: pos, end, style: { font: r.font, weight: r.weight, italic: r.italic, underline: r.underline, fill: r.fill } });
+    segs.push({ start: pos, end, style: { font: r.font, weight: r.weight, italic: r.italic, underline: r.underline, strike: r.strike, fill: r.fill, size: r.size } });
     pos = end;
   }
   return segs;
@@ -42,7 +42,7 @@ function splitAt(segs: Segment[], offset: number): Segment[] {
 }
 
 function stylesEqual(a: StyleOverride, b: StyleOverride): boolean {
-  return a.font === b.font && a.weight === b.weight && a.italic === b.italic && a.underline === b.underline && a.fill === b.fill;
+  return a.font === b.font && a.weight === b.weight && a.italic === b.italic && a.underline === b.underline && a.strike === b.strike && a.fill === b.fill && a.size === b.size;
 }
 
 /** Remove chaves `undefined` — sem isso, todo run ganharia `font: undefined, weight: undefined…`
@@ -50,7 +50,7 @@ function stylesEqual(a: StyleOverride, b: StyleOverride): boolean {
  *  editor não deveria mostrar lixo). */
 function cleanStyle(style: StyleOverride): StyleOverride {
   const out: StyleOverride = {};
-  for (const k of ["font", "weight", "italic", "underline", "fill"] as const) {
+  for (const k of ["font", "weight", "italic", "underline", "strike", "fill", "size"] as const) {
     if (style[k] !== undefined) (out as any)[k] = style[k];
   }
   return out;

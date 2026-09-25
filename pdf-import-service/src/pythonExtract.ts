@@ -94,6 +94,8 @@ export interface ExtractedPathElement {
   stroke?: string;
   strokeWidth?: number;
   fillRule?: "evenodd";
+  /** Gradiente recortado por uma forma não retangular (o formato vai em `fillPath`). */
+  grad?: { type: "linear" | "radial"; angle?: number; stops: Array<[string, number]> };
 }
 
 /** Posição (bbox em pontos) e ordem de pintura de cada imagem da página — casada depois, por

@@ -18,3 +18,14 @@ test("fonte adicionada troca a substituta em todas as caixas daquela família", 
   assert.deepEqual(missingPdfFonts(p).map((m) => m.family), ["DMSans"]);
   assert.equal(p[0].els[0].font, "New Spirit");
 });
+
+import { missingWeights } from "./missingFonts.ts";
+
+test("aponta os pesos usados que a família ainda não tem", () => {
+  const pages = [{ els: [
+    { type: "text", font: "New Spirit", weight: 400, runs: [{ text: "a" }, { text: "b", weight: 700 }, { text: "c", italic: true }] },
+    { type: "text", font: "Inter", weight: 700 },
+  ] }] as any;
+  assert.deepEqual(missingWeights(pages, [{ family: "New Spirit", weight: 400, style: "normal" }]),
+    [{ family: "New Spirit", missing: ["Bold", "Italic"] }]);
+});

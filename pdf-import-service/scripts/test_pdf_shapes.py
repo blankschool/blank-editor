@@ -48,15 +48,32 @@ class Gradientes(unittest.TestCase):
         self.assertTrue(css.startswith("linear-gradient(180.00deg"))
 
     def test_ctm_do_content_stream(self):
-        usos = S.matrizes_dos_sh(b"q 2 0 0 2 10 20 cm /Sh1 sh Q /Sh2 sh")
-        self.assertEqual(usos, [("Sh1", (2.0, 0.0, 0.0, 2.0, 10.0, 20.0), None), ("Sh2", (1, 0, 0, 1, 0, 0), None)])
+        usos = S.usos_de_shading(b"q 2 0 0 2 10 20 cm /Sh1 sh Q /Sh2 sh", S.RecursosSimples({"Sh1": 11, "Sh2": 12}))
+        self.assertEqual([(u["shading"], u["ctm"], u["recorte"]) for u in usos],
+                         [(11, (2.0, 0.0, 0.0, 2.0, 10.0, 20.0), None), (12, (1, 0, 0, 1, 0, 0), None)])
 
     def test_recorte_limita_o_gradiente(self):
-        usos = S.matrizes_dos_sh(b"q 50 100 400 150 re W n /Sh1 sh Q")
-        self.assertEqual(usos[0][2], (50.0, 100.0, 450.0, 250.0))
-        caixa = S.caixa_do_gradiente((-1e9, -1e9, 1e9, 1e9), usos[0][2], (1, 0, 0, -1, 0, 800), (0, 0, 500, 800))
+        usos = S.usos_de_shading(b"q 50 100 400 150 re W n /Sh1 sh Q", S.RecursosSimples({"Sh1": 1}))
+        rec = usos[0]["recorte"]
+        self.assertEqual(rec["bbox"], (50.0, 100.0, 450.0, 250.0))
+        self.assertTrue(rec["retangular"])
+        caixa = S.caixa_do_gradiente((-1e9, -1e9, 1e9, 1e9), rec, (1, 0, 0, -1, 0, 800), (0, 0, 500, 800))
         self.assertEqual(caixa, (50.0, 550.0, 450.0, 700.0))
 
+    def test_gradiente_dentro_de_form_xobject(self):
+        form = (b"q 0 0 100 100 re W n /ShF sh Q", (1, 0, 0, 1, 200, 300), S.RecursosSimples({"ShF": 99}))
+        usos = S.usos_de_shading(b"q 2 0 0 2 0 0 cm /Fm0 Do Q", S.RecursosSimples(forms={"Fm0": form}))
+        self.assertEqual(usos[0]["shading"], 99)
+        self.assertEqual(usos[0]["ctm"], (2.0, 0.0, 0.0, 2.0, 400.0, 600.0))
+        self.assertEqual(usos[0]["recorte"]["bbox"], (400.0, 600.0, 600.0, 800.0))
+
+    def test_recorte_curvo_vira_path(self):
+        usos = S.usos_de_shading(b"q 0 50 m 50 100 100 100 100 50 c 100 0 0 0 0 50 c h W n /S sh Q", S.RecursosSimples({"S": 1}))
+        rec = usos[0]["recorte"]
+        self.assertFalse(rec["retangular"])
+        d = S.recorte_para_path(rec, (1, 0, 0, 1, 0, 0), (0, 0, 100, 100))
+        self.assertTrue(d.startswith("M0.00000,0.50000 C"))
+        self.assertTrue(d.endswith("Z"))
 
 if __name__ == "__main__":
     unittest.main()

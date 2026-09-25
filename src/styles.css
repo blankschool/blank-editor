@@ -514,6 +514,9 @@ button { cursor: pointer; background: none; border: none; }
   border-radius: 10px; padding: 4px; box-shadow: var(--shadow-lg);
 }
 .textSelToolbar[hidden] { display: none; }
+.textSelToolbar { gap: 2px; }
+.textSelToolbar .tselFont { height: 28px; max-width: 150px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; padding: 0 6px; }
+.textSelToolbar .qsizeval { width: 44px; height: 28px; text-align: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .qbtn {
   min-width: 28px; height: 28px; padding: 0 6px; border-radius: 8px; color: var(--muted);
   display: grid; place-items: center; font-size: 13px;
@@ -658,10 +661,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   border-radius: 10px; padding: 6px 8px 6px 12px; box-shadow: var(--shadow-lg); font-size: 12.5px;
 }
 .fontMissing[hidden] { display: none; }
-.fontMissing .fm-text { color: var(--text, inherit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fontMissing .fm-text { color: var(--text, inherit); min-width: 0; line-height: 1.35; }
 .fontMissing .fm-text b { font-weight: 600; }
 .fontMissing .fm-sub { color: var(--muted); }
 .fontMissing button { height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; white-space: nowrap; }
 .fontMissing .fm-add { background: var(--accent); color: #fff; }
 .fontMissing .fm-later { color: var(--muted); }
 .fontMissing.is-chip { padding: 4px 10px; cursor: pointer; border-left-width: 1px; }
+
+/* Pincel de estilo armado: cursor de "aplicar" sobre o canvas. */
+body.painting .stage { cursor: copy; }
+.qselect { height: 28px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; padding: 0 4px; }
+.exp-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.exp-check[hidden] { display: none; }

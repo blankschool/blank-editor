@@ -39,9 +39,13 @@ export interface Clip {
  *  plain run in an otherwise-styled headline doesn't need to repeat the base style. */
 export interface TextRun {
   text: string;
+  /** Corpo (px) só deste trecho — ausente = `size` do elemento. */
+  size?: number;
   weight?: number;
   italic?: boolean;
   underline?: boolean;
+  /** Tachado. */
+  strike?: boolean;
   fill?: string;
   font?: string;
 }
@@ -69,6 +73,8 @@ export interface El {
   stroke: string;
   strokeWidth: number;
   radius: number;
+  /** Estilo do contorno: sólido (padrão), tracejado ou pontilhado. */
+  strokeDash?: "dashed" | "dotted";
 
   /** Structured gradient, needed because canvas export cannot read CSS strings. */
   grad?: Gradient;
@@ -87,6 +93,10 @@ export interface El {
   weight?: number;
   italic?: boolean;
   underline?: boolean;
+  /** Tachado. */
+  strike?: boolean;
+  /** Mostra o texto em MAIÚSCULAS sem mudar o texto guardado (como o "Aa" do Canva). */
+  caps?: boolean;
   align?: string;
   /** Elements sharing the same centerGroup move together as one block, vertically centered in the page. */
   centerGroup?: string;
@@ -97,10 +107,8 @@ export interface El {
    *  present, renderers draw `runs` end-to-end instead of the plain `text` string — `text`
    *  stays populated too (the concatenation of every run, in order) so anything that only
    *  reads plain text (search, the JSON export, an older reader) keeps working. Every run
-   *  shares the element's `size` — mixed font SIZE within one box isn't supported, only
-   *  weight/style/color/underline/font per run, which covers what a "bold word" actually
-   *  needs without the much harder problem of re-flowing wrapped lines whose own height varies
-   *  word to word. */
+   *  can override font/weight/italic/underline/color and also `size` (a bigger word inside a
+   *  headline); the line grows to fit its tallest run, as in CSS. */
   runs?: TextRun[];
 
   // image — a data URI, or "@key" pointing into Doc.assets

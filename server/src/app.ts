@@ -1403,6 +1403,7 @@ export function buildApp(
             rot: 0, opacity: el.opacity, locked: false, hidden: false,
             fill: el.fill, stroke: el.stroke ?? "", strokeWidth: el.strokeWidth ?? 0, radius: 0,
             fillPath: el.fillPath, ...(el.fillRule ? { fillRule: el.fillRule } : {}),
+            ...(el.grad ? { grad: el.grad } : {}),
           };
         }
         return {

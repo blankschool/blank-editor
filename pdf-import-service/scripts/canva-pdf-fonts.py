@@ -289,30 +289,51 @@ def _valor(doc, xref, chave):
     return None if tipo == "null" else valor
 
 
+class RecursosPdf:
+    """Recursos (Shading, XObject) de uma página ou Form XObject, para
+    `pdf_shapes.usos_de_shading`. Form sem /Resources herda os do pai."""
+    def __init__(self, doc, xref, pai=None, prefixo="Resources/"):
+        self.doc, self.pai = doc, pai
+        self.shadings = self._nomes(xref, prefixo + "Shading")
+        self.xobjects = self._nomes(xref, prefixo + "XObject")
+        if pai and not self.shadings and not self.xobjects:
+            self.shadings, self.xobjects = pai.shadings, pai.xobjects
+
+    def _nomes(self, xref, chave):
+        tipo, valor = self.doc.xref_get_key(xref, chave)
+        if tipo == "xref":
+            valor = self.doc.xref_object(int(valor.split()[0]))
+        return {k: int(v) for k, v in re.findall(r"/([^\s/<>\[\]]+)\s+(\d+)\s+0\s+R", valor or "")}
+
+    def shading(self, nome):
+        return self.shadings.get(nome)
+
+    def form(self, nome):
+        xref = self.xobjects.get(nome)
+        if not xref or _valor(self.doc, xref, "Subtype") != "/Form":
+            return None
+        matriz = pdf_shapes._numeros(_valor(self.doc, xref, "Matrix")) or [1, 0, 0, 1, 0, 0]
+        return self.doc.xref_stream(xref) or b"", tuple(matriz[:6]), RecursosPdf(self.doc, xref, self)
+
+
 def extrair_gradientes(page, doc):
-    """Gradientes pintados com `sh` direto no content stream da página, como `rect` com
-    `grad` (+ `fill` em CSS) na caixa em que o PDF os pintou (recorte incluído) e com `z` da
-    ordem de pintura. Shading dentro de Form XObject não é visto aqui (sem `sh` na página)."""
+    """Gradientes (`sh`) da página E dos Form XObjects dentro dela, com `z` da ordem de
+    pintura. Recorte retangular vira `rect` com `grad`; recorte com outro formato (círculo,
+    forma, texto em contorno) vira `path` com o próprio formato em `fillPath` + `grad`."""
     log = page.get_bboxlog()
     areas = [(i, rr) for i, (tipo, rr) in enumerate(log) if "shade" in tipo]
     if not areas:
         return []
-    usos = pdf_shapes.matrizes_dos_sh(page.read_contents())
-    tipo_res, recurso = doc.xref_get_key(page.xref, "Resources/Shading")
-    if tipo_res == "xref":
-        recurso = doc.xref_object(int(recurso.split()[0]))
-    nomes = dict(re.findall(r"/([^\s/<>\[\]]+)\s+(\d+)\s+0\s+R", recurso or ""))
+    usos = pdf_shapes.usos_de_shading(page.read_contents(), RecursosPdf(doc, page.xref))
     get = lambda x, k: _valor(doc, x, k)
     pm = page.transformation_matrix
     pagina_m = (pm.a, pm.b, pm.c, pm.d, pm.e, pm.f)
     out = []
     pr = page.rect
-    for (seq, bbox_log), (nome, ctm, recorte) in zip(areas, usos):
+    for (seq, bbox_log), uso in zip(areas, usos):
+        xref, ctm, recorte = uso["shading"], uso["ctm"], uso["recorte"]
         caixa = pdf_shapes.caixa_do_gradiente(tuple(bbox_log), recorte, pagina_m, (pr.x0, pr.y0, pr.x1, pr.y1))
-        if caixa is None:
-            continue
-        xref = int(nomes.get(nome, 0))
-        if not xref:
+        if caixa is None or not xref:
             continue
         try:
             tipo = int(float(get(xref, "ShadingType") or 0))
@@ -328,10 +349,17 @@ def extrair_gradientes(page, doc):
             x0, y0, x1, y1 = caixa
             g, css = pdf_shapes.gradiente_css(tipo, coords, ctm, pagina_m, (x0, y0, x1, y1), paradas)
         except Exception as erro:  # um gradiente malformado não derruba a página
-            print(f"  gradiente {nome} ignorado: {erro}")
+            print(f"  gradiente {xref} ignorado: {erro}")
             continue
-        out.append(dict(type="rect", x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-                        fill=css, grad=g, opacity=1.0, z=seq))
+        base = dict(x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+                    fill=css, grad=g, opacity=1.0, z=seq)
+        if recorte and not recorte["retangular"]:
+            el = dict(type="path", fillPath=pdf_shapes.recorte_para_path(recorte, pagina_m, caixa), **base)
+            if recorte["evenodd"]:
+                el["fillRule"] = "evenodd"
+            out.append(el)
+        else:
+            out.append(dict(type="rect", **base))
     return out
 
 

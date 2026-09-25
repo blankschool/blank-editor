@@ -73,6 +73,7 @@ export type ImportedPathElement = {
   stroke?: string;
   strokeWidth?: number;
   fillRule?: "evenodd";
+  grad?: { type: "linear" | "radial"; angle?: number; stops: Array<[string, number]> };
 };
 
 export type ImportedElement = ImportedTextElement | ImportedImageElement | ImportedShapeElement | ImportedPathElement;

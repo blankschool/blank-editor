@@ -19,7 +19,7 @@
 <style>@keyframes be-spin { to { transform: rotate(360deg); } }</style>
 <div id="view-login" style="display:none; height:100%"></div>
 <div id="view-console" style="display:none; height:100%"></div>
-<div id="view-p" style="display:none; height:100%"></div>
+<div id="view-p" style="display:none; height:100%; overflow-y:auto"></div>
 <div id="view-offline"></div>
 <div id="view-editor" style="display:none; height:100%">
 <div class="app">
@@ -73,9 +73,15 @@
         <div class="document-scroll" id="documentScroll" tabindex="0" aria-label="Rolar páginas"><div id="documentScrollSize"></div></div>
         <div class="seltoolbar" id="seltoolbar" hidden></div>
         <div class="textSelToolbar" id="textSelToolbar" hidden>
+          <select id="textSelFont" class="tselFont" title="Fonte do trecho selecionado"></select>
+          <button class="qbtn" data-tsel="size-down" title="Diminuir o trecho">−</button>
+          <input id="textSelSize" class="qsizeval num" type="number" min="4" max="512" title="Tamanho do trecho selecionado" aria-label="Tamanho do trecho">
+          <button class="qbtn" data-tsel="size-up" title="Aumentar o trecho">+</button>
+          <span class="qsep"></span>
           <button class="qbtn" data-tsel="bold" style="font-weight:800" title="Negrito no trecho (Ctrl+B)">B</button>
           <button class="qbtn" data-tsel="italic" style="font-style:italic" title="Itálico no trecho (Ctrl+I)">I</button>
           <button class="qbtn" data-tsel="underline" style="text-decoration:underline" title="Sublinhado no trecho (Ctrl+U)">U</button>
+          <button class="qbtn" data-tsel="strike" style="text-decoration:line-through" title="Tachado no trecho (Ctrl+Shift+X)">S</button>
           <input type="color" id="textSelColor" class="qcolor" title="Cor do trecho selecionado">
         </div>
         <div class="proppop" id="proppop" hidden>
@@ -140,10 +146,10 @@
     <div class="sec" style="margin-bottom:14px">
       <h4>Escala</h4>
       <div class="seg" id="scales"></div>
+      <label class="exp-check" id="expTransparentRow" hidden><input type="checkbox" id="expTransparent"> Fundo transparente</label>
     </div>
     <div class="row">
       <button class="tbtn ghost" id="expCancel" style="flex:1">Cancelar</button>
-      <button class="tbtn ghost" id="expCopyMarkup" style="flex:1" title="Copia o HTML das telas visíveis, sem baixar arquivo">Copiar markup</button>
       <button class="tbtn primary" id="expGo" style="flex:1">Exportar</button>
     </div>
   </div>
@@ -235,7 +241,7 @@
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="fileImgReplace" accept="image/*" hidden>
-<input type="file" id="fileFont" accept=".ttf,.otf,font/ttf,font/otf" hidden>
+<input type="file" id="fileFont" accept=".ttf,.otf,font/ttf,font/otf" multiple hidden>
 <input type="file" id="fileJson" accept="application/json,.json" hidden>
 </div>
 <script type="module" src="/src/main.tsx"></script>
