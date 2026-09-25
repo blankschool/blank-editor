@@ -2261,13 +2261,16 @@ let fontUploadBusy = false;
  * face) e carrega o .woff2 no navegador via FontFace, para o texto já aparecer certo no canvas
  * — sem isso, a família ficaria só de nome, igual uma fonte da biblioteca nunca carregada.
  */
-async function importarFonte(file: File, forOriginal: string | null = null) {
+async function importarFonte(file: File, forOriginal: string | null = null, asFamily: string | null = null) {
   const target = doc;
   fontUploadBusy = true;
   renderPanel();
   try {
     const form = new FormData();
     form.append("font", file, file.name);
+    // Completando uma família que o design já usa: o arquivo entra com o MESMO nome de família,
+    // senão "New Spirit Regular" e "New Spirit Bold" viravam fontes diferentes e nunca se juntavam.
+    if (asFamily) form.append("family", asFamily);
     const res = await fetch("/api/v1/fonts/upload", { method: "POST", body: form, credentials: "include" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -4198,17 +4201,18 @@ $("fileJson").addEventListener("change", async (ev) => {
   } catch (e) { toast("Esse arquivo não é um design criado por este editor."); }
   ev.target.value = "";
 });
-$("fileFont").addEventListener("cancel", () => { missingFontTarget = null; });
+$("fileFont").addEventListener("cancel", () => { missingFontTarget = null; weightsTarget = null; });
 $("fileFont").addEventListener("change", async (ev) => {
   // Vários arquivos de uma vez: a família inteira (Regular, Bold, Italic…) num envio só.
   const files = [...ev.target.files] as File[];
   ev.target.value = "";
   const pedida = missingFontTarget;
-  missingFontTarget = null;
+  const familia = weightsTarget;
+  missingFontTarget = null; weightsTarget = null;
   for (const file of files) {
-    if (!/\.(ttf|otf)$/i.test(file.name)) { toast(`${file.name}: envie .ttf ou .otf.`); continue; }
-    if (file.size > 20_000_000) { toast(`${file.name} passa de 20 MB — ignorado.`); continue; }
-    await importarFonte(file, pedida);
+    if (!/\.(ttf|otf)$/i.test(file.name)) { toast(`${file.name}: envie um arquivo .ttf ou .otf.`); continue; }
+    if (file.size > 20_000_000) { toast(`${file.name} é grande demais (máximo 20 MB).`); continue; }
+    await importarFonte(file, pedida, familia);
   }
   renderMissingFonts();
 });
@@ -4398,6 +4402,8 @@ function renderAll() {
 /** Designs em que a pessoa clicou "Depois" — o aviso vira um chip até ela reabrir. */
 const missingFontsLater = new Set<string>();
 let missingFontTarget: string | null = null;
+/** Família que o envio atual vai completar (aviso "falta um arquivo da fonte"). */
+let weightsTarget: string | null = null;
 let missingFontsLibraryChecked = "";
 
 function renderMissingFonts() {
@@ -4411,18 +4417,22 @@ function renderMissingFonts() {
   bar.hidden = false;
   if (missingFontsLater.has(docKey)) {
     bar.className = "fontMissing is-chip";
-    bar.innerHTML = `<span class="fm-text">${missing.length === 1 ? "1 fonte do PDF faltando" : `${missing.length} fontes do PDF faltando`}</span>`;
+    bar.innerHTML = `<span class="fm-text">${missing.length === 1 ? "1 fonte para enviar" : `${missing.length} fontes para enviar`}</span>`;
     return;
   }
-  const m = missing[0];
+  const m0 = missing[0];
+  // "NewSpirit" (nome interno do PDF) -> "New Spirit", como a pessoa conhece a fonte.
+  const m = { ...m0, family: m0.family.replace(/([a-z])([A-Z])/g, "$1 $2") };
   const inLibrary = globalFonts.some((f) => familyKey(f.family) === familyKey(m.family));
-  const more = missing.length > 1 ? ` <span class="fm-sub">+${missing.length - 1}</span>` : "";
+  const more = missing.length > 1 ? ` <span class="fm-sub">(e mais ${missing.length - 1})</span>` : "";
   bar.className = "fontMissing";
-  bar.innerHTML = `<span class="fm-text"><b>${esc(m.family)}</b> não está na biblioteca${more}<br><span class="fm-sub">Usando ${esc(fontLabel(m.replacement))} por enquanto</span></span>`
-    + (inLibrary
-      ? `<button class="fm-add" data-fm-use="${esc(m.family)}">Usar ${esc(m.family)}</button>`
-      : `<button class="fm-add" data-fm-add="${esc(m.family)}">Adicionar fonte</button>`)
-    + `<button class="fm-later" data-fm-later>Depois</button>`;
+  // Texto escolhido com o Jev entre 3 opções (a mais clara para quem não é da área).
+  bar.innerHTML = inLibrary
+    ? `<span class="fm-text"><b>A fonte ${esc(m.family)} já está disponível</b>${more}<br><span class="fm-sub">Aplique para o texto ficar igual ao original.</span></span>`
+      + `<button class="fm-add" data-fm-use="${esc(m.family)}">Aplicar fonte</button>`
+    : `<span class="fm-text"><b>A fonte ${esc(m.family)} não está disponível</b>${more}<br><span class="fm-sub">Usamos uma parecida. Envie o arquivo da fonte para o texto ficar igual ao original.</span></span>`
+      + `<button class="fm-add" data-fm-add="${esc(m.family)}">Enviar fonte</button>`;
+  bar.innerHTML += `<button class="fm-later" data-fm-later>Agora não</button>`;
 }
 
 /** Segundo nível do aviso: a família já está no design, mas faltam pesos usados no texto
@@ -4434,9 +4444,11 @@ function renderMissingWeights(bar: HTMLElement) {
   const m = faltando[0];
   bar.hidden = false;
   bar.className = "fontMissing";
-  bar.innerHTML = `<span class="fm-text"><b>${esc(fontLabel(m.family))}</b>: faltam os pesos ${m.missing.map(esc).join(", ")}`
-    + `<br><span class="fm-sub">Sem eles o navegador simula o peso e o texto sai diferente do PDF</span></span>`
-    + `<button class="fm-add" data-fm-weights>Adicionar pesos</button><button class="fm-later" data-fm-later-weights>Depois</button>`;
+  const nome = fontLabel(m.family);
+  const arquivos = m.missing.map((w) => `${nome} ${w}`);
+  bar.innerHTML = `<span class="fm-text"><b>Quase lá! Falta ${arquivos.length === 1 ? "um arquivo" : `${arquivos.length} arquivos`} da fonte ${esc(nome)}</b>`
+    + `<br><span class="fm-sub">Envie ${arquivos.map((a) => `o <b>${esc(a)}</b>`).join(" e ")} (.ttf ou .otf) — dá para selecionar vários de uma vez.</span></span>`
+    + `<button class="fm-add" data-fm-weights="${esc(m.family)}">Enviar arquivo${arquivos.length > 1 ? "s" : ""}</button><button class="fm-later" data-fm-later-weights>Agora não</button>`;
 }
 
 function applyMissingFont(original: string, family: string) {
@@ -4452,7 +4464,8 @@ $("fontMissing").addEventListener("click", async (ev) => {
   const docKey = doc.seedId || doc.name || "";
   if (t.closest("[data-fm-later]")) { missingFontsLater.add(docKey); renderMissingFonts(); return; }
   if (t.closest("[data-fm-later-weights]")) { missingFontsLater.add(`${docKey}:pesos`); renderMissingFonts(); return; }
-  if (t.closest("[data-fm-weights]")) { missingFontTarget = null; if (!fontUploadBusy) $("fileFont").click(); return; }
+  const wb = t.closest<HTMLElement>("[data-fm-weights]");
+  if (wb) { missingFontTarget = null; weightsTarget = wb.dataset.fmWeights || null; if (!fontUploadBusy) $("fileFont").click(); return; }
   if ($("fontMissing").classList.contains("is-chip")) { missingFontsLater.delete(docKey); renderMissingFonts(); return; }
   const add = t.closest<HTMLElement>("[data-fm-add]");
   if (add) { missingFontTarget = add.dataset.fmAdd!; if (!fontUploadBusy) $("fileFont").click(); return; }

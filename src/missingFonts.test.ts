@@ -29,3 +29,10 @@ test("aponta os pesos usados que a família ainda não tem", () => {
   assert.deepEqual(missingWeights(pages, [{ family: "New Spirit", weight: 400, style: "normal" }]),
     [{ family: "New Spirit", missing: ["Bold", "Italic"] }]);
 });
+
+import { familyKey, originalFamily } from "./missingFonts.ts";
+
+test("nome de arquivo com estilo no fim é a mesma família", () => {
+  assert.equal(originalFamily("New Spirit Bold"), "New Spirit");
+  assert.equal(familyKey("New Spirit Bold"), familyKey("NewSpirit-SemiBold"));
+});

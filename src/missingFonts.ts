@@ -6,11 +6,14 @@
  */
 import type { Page } from "./types";
 
-const STYLE_SUFFIX = /-(?:Regular|Reg|Rg|Bold|Bd|Italic|It|Light|Lt|Medium|Md|SemiBold|Semibold|Sb|ExtraBold|Black|Heavy|Thin|ExtraLight|BoldItalic|[A-Za-z]*Italic)$/;
+// Hífen ("NewSpirit-SemiBold", nome do PDF) ou espaço ("New Spirit Bold", nome de arquivo).
+const STYLE_SUFFIX = /[-\s]+(?:Regular|Reg|Rg|Bold|Bd|Italic|It|Light|Lt|Medium|Md|SemiBold|Semibold|Sb|ExtraBold|Black|Heavy|Thin|ExtraLight|BoldItalic|[A-Za-z]*Italic)$/i;
 
 /** "NewSpirit-SemiBold" (formato antigo do import) -> "NewSpirit". */
 export function originalFamily(fontOriginal: string): string {
-  return fontOriginal.replace(STYLE_SUFFIX, "");
+  let n = fontOriginal;
+  for (let i = 0; i < 3 && STYLE_SUFFIX.test(n); i++) n = n.replace(STYLE_SUFFIX, "");
+  return n || fontOriginal;
 }
 
 /** Chave de comparação: "New Spirit", "NewSpirit" e "newspirit" são a mesma família. */

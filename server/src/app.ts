@@ -9,7 +9,7 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
-import { familyMatchesFile, readFamilyNames, readOs2WeightAndItalic } from "./fonts/sfntNames.ts";
+import { familyMatchesFile, preferredFamilyName, readFamilyNames, readOs2WeightAndItalic } from "./fonts/sfntNames.ts";
 import { compress as woff2Compress } from "wawoff2";
 import { parseLayers, type Layers } from "./render/layers.ts";
 import { DEFAULT_FONT_FAMILY, pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
@@ -1329,7 +1329,7 @@ export function buildApp(
     }
 
     const nomesNoArquivo = readFamilyNames(arquivo.bytes);
-    const internalFamily = (campos.family || "").trim() || nomesNoArquivo[0];
+    const internalFamily = (campos.family || "").trim() || preferredFamilyName(arquivo.bytes) || nomesNoArquivo[0];
     if (!internalFamily) {
       return reply.code(400).send({
         error: "não foi possível ler o nome da família no arquivo; informe o campo 'family'",

@@ -61,6 +61,49 @@ export function readFamilyNames(bytes: Buffer): string[] {
   return [...nomes];
 }
 
+const STYLE_WORDS = /[\s-]+(?:Thin|Hairline|ExtraLight|Extra Light|UltraLight|Light|Book|Regular|Normal|Medium|SemiBold|Semi Bold|DemiBold|Demi|Bold|ExtraBold|Extra Bold|UltraBold|Black|Heavy|Italic|Oblique)$/i;
+
+/** Nome da FAMÍLIA para agrupar os pesos: o "Typographic Family" (nameID 16) quando o arquivo
+ *  tem, senão o nameID 1 sem o estilo no fim. Sem isso, "New Spirit Bold" (nameID 1 de muitas
+ *  fontes comerciais) virava uma família separada de "New Spirit", e subir o Regular depois nunca
+ *  completava o Bold. */
+export function preferredFamilyName(bytes: Buffer): string | undefined {
+  const nomes = readFamilyNamesById(bytes);
+  if (nomes.typographic) return nomes.typographic;
+  let nome = nomes.family;
+  if (!nome) return undefined;
+  for (let i = 0; i < 3 && STYLE_WORDS.test(nome); i++) nome = nome.replace(STYLE_WORDS, "");
+  return nome || nomes.family;
+}
+
+function readFamilyNamesById(bytes: Buffer): { family?: string; typographic?: string } {
+  const out: { family?: string; typographic?: string } = {};
+  if (bytes.length < 12 || bytes.toString("latin1", 0, 4) === "ttcf") return out;
+  const numTables = bytes.readUInt16BE(4);
+  let nameOffset = 0;
+  for (let i = 0; i < numTables; i++) {
+    const rec = 12 + i * 16;
+    if (rec + 16 > bytes.length) return out;
+    if (bytes.toString("latin1", rec, rec + 4) === "name") { nameOffset = bytes.readUInt32BE(rec + 8); break; }
+  }
+  if (!nameOffset || nameOffset + 6 > bytes.length) return out;
+  const count = bytes.readUInt16BE(nameOffset + 2);
+  const stringOffset = nameOffset + bytes.readUInt16BE(nameOffset + 4);
+  for (let i = 0; i < count; i++) {
+    const rec = nameOffset + 6 + i * 12;
+    if (rec + 12 > bytes.length) break;
+    const nameId = bytes.readUInt16BE(rec + 6);
+    if (nameId !== NAME_ID_FAMILY && nameId !== NAME_ID_TYPOGRAPHIC_FAMILY) continue;
+    const length = bytes.readUInt16BE(rec + 8);
+    const offset = stringOffset + bytes.readUInt16BE(rec + 10);
+    if (offset + length > bytes.length) continue;
+    const valor = decodeName(bytes.subarray(offset, offset + length), bytes.readUInt16BE(rec)).replace(/\0/g, "").trim();
+    if (!valor) continue;
+    if (nameId === NAME_ID_TYPOGRAPHIC_FAMILY) out.typographic ??= valor; else out.family ??= valor;
+  }
+  return out;
+}
+
 /** Caixa e espaços variam sem significar outra fonte ("Space Grotesk" / "SpaceGrotesk"). */
 function normaliza(nome: string): string {
   return nome.toLowerCase().replace(/\s+/g, "");
