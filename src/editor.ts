@@ -1199,7 +1199,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
   // through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #tbPop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas, #textSelToolbar")) return;
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #tbPop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas, #textSelToolbar, #fontMissing")) return;
   // Right-click only pans when it actually drags — a plain right-click (no movement) opens
   // the Context Menu instead, matching how canvas tools commonly split the two.
   if (ev.button === 2) { startRightClickPanOrMenu(ev); return; }
@@ -4406,49 +4406,74 @@ let missingFontTarget: string | null = null;
 let weightsTarget: string | null = null;
 let missingFontsLibraryChecked = "";
 
+/** Cartão do aviso de fonte (layout escolhido com o Jev: cartão no canto inferior direito, com
+ *  ícone, título, uma linha de explicação, nome da fonte em destaque, botão principal largo,
+ *  "Agora não" e X). "Agora não"/X viram um chip no mesmo canto que reabre o cartão. */
+const FM_ICON = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 4-10 4 10"/><path d="M4.5 13h5"/><path d="M15 12.5a3 3 0 1 1 0 4.5"/><path d="M18 11v7"/></svg>`;
+const FM_X = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`;
+function fmCard(o: { title: string; text: string; chips: string[]; action: string; later: string }): string {
+  return `<div class="fm-icon">${FM_ICON}</div>
+    <div class="fm-body">
+      <div class="fm-title">${o.title}</div>
+      <div class="fm-sub">${o.text}</div>
+      <div class="fm-chips">${o.chips.map((c) => `<span class="fm-font">${esc(c)}</span>`).join("")}</div>
+      <div class="fm-actions">${o.action}<button class="fm-later" ${o.later}>Agora não</button></div>
+    </div>
+    <button class="fm-x" ${o.later} title="Fechar" aria-label="Fechar aviso">${FM_X}</button>`;
+}
+function fmChip(bar: HTMLElement, label: string, reopen: string) {
+  bar.className = "fontMissing is-chip";
+  bar.innerHTML = `<button class="fm-reopen" ${reopen}><span class="fm-dot"></span>${label}</button>`;
+}
+
 function renderMissingFonts() {
   const bar = $("fontMissing");
   const missing = missingPdfFonts(doc.pages);
   if (!missing.length) { renderMissingWeights(bar); return; }
   const docKey = doc.seedId || doc.name || "";
   // Uma consulta à biblioteca por design, em segundo plano: se alguém já subiu a fonte, o
-  // botão vira "Usar" (um clique, sem arquivo). Nunca bloqueia o render.
+  // botão vira "Aplicar" (um clique, sem arquivo). Nunca bloqueia o render.
   if (missingFontsLibraryChecked !== docKey) { missingFontsLibraryChecked = docKey; void refreshGlobalFonts().then(renderMissingFonts); }
   bar.hidden = false;
   if (missingFontsLater.has(docKey)) {
-    bar.className = "fontMissing is-chip";
-    bar.innerHTML = `<span class="fm-text">${missing.length === 1 ? "1 fonte para enviar" : `${missing.length} fontes para enviar`}</span>`;
+    fmChip(bar, missing.length === 1 ? "1 fonte para enviar" : `${missing.length} fontes para enviar`, "data-fm-reopen");
     return;
   }
   const m0 = missing[0];
   // "NewSpirit" (nome interno do PDF) -> "New Spirit", como a pessoa conhece a fonte.
   const m = { ...m0, family: m0.family.replace(/([a-z])([A-Z])/g, "$1 $2") };
   const inLibrary = globalFonts.some((f) => familyKey(f.family) === familyKey(m.family));
-  const more = missing.length > 1 ? ` <span class="fm-sub">(e mais ${missing.length - 1})</span>` : "";
+  const more = missing.length > 1 ? ` Depois dela, ${missing.length - 1 === 1 ? "falta mais 1 fonte" : `faltam mais ${missing.length - 1} fontes`}.` : "";
   bar.className = "fontMissing";
-  // Texto escolhido com o Jev entre 3 opções (a mais clara para quem não é da área).
   bar.innerHTML = inLibrary
-    ? `<span class="fm-text"><b>A fonte ${esc(m.family)} já está disponível</b>${more}<br><span class="fm-sub">Aplique para o texto ficar igual ao original.</span></span>`
-      + `<button class="fm-add" data-fm-use="${esc(m.family)}">Aplicar fonte</button>`
-    : `<span class="fm-text"><b>A fonte ${esc(m.family)} não está disponível</b>${more}<br><span class="fm-sub">Usamos uma parecida. Envie o arquivo da fonte para o texto ficar igual ao original.</span></span>`
-      + `<button class="fm-add" data-fm-add="${esc(m.family)}">Enviar fonte</button>`;
-  bar.innerHTML += `<button class="fm-later" data-fm-later>Agora não</button>`;
+    ? fmCard({ title: "Essa fonte já está disponível", text: `Aplique para o texto ficar igual ao original.${more}`, chips: [m.family],
+        action: `<button class="fm-add" data-fm-use="${esc(m.family)}">Aplicar fonte</button>`, later: "data-fm-later" })
+    : fmCard({ title: "Fonte não disponível", text: `Usamos uma parecida por enquanto. Envie o arquivo da fonte para o texto ficar igual ao original.${more}`, chips: [m.family],
+        action: `<button class="fm-add" data-fm-add="${esc(m.family)}">Enviar fonte</button>`, later: "data-fm-later" });
 }
 
-/** Segundo nível do aviso: a família já está no design, mas faltam pesos usados no texto
- *  (ex.: subiu o Regular, o título usa Bold). Lista o que falta e aceita vários arquivos. */
+/** Segundo nível do aviso: a família já está no design, mas faltam estilos usados no texto
+ *  (ex.: subiu o Bold, parte do texto usa Regular). Aceita vários arquivos de uma vez. */
 function renderMissingWeights(bar: HTMLElement) {
   const docKey = doc.seedId || doc.name || "";
   const faltando = missingWeights(doc.pages, doc.fonts ?? []);
-  if (!faltando.length || missingFontsLater.has(`${docKey}:pesos`)) { bar.hidden = true; return; }
-  const m = faltando[0];
+  if (!faltando.length) { bar.hidden = true; return; }
   bar.hidden = false;
-  bar.className = "fontMissing";
-  const nome = fontLabel(m.family);
+  const m = faltando[0];
+  const nome = fontLabel(m.family).replace(/([a-z])([A-Z])/g, "$1 $2");
   const arquivos = m.missing.map((w) => `${nome} ${w}`);
-  bar.innerHTML = `<span class="fm-text"><b>Quase lá! Falta ${arquivos.length === 1 ? "um arquivo" : `${arquivos.length} arquivos`} da fonte ${esc(nome)}</b>`
-    + `<br><span class="fm-sub">Envie ${arquivos.map((a) => `o <b>${esc(a)}</b>`).join(" e ")} (.ttf ou .otf) — dá para selecionar vários de uma vez.</span></span>`
-    + `<button class="fm-add" data-fm-weights="${esc(m.family)}">Enviar arquivo${arquivos.length > 1 ? "s" : ""}</button><button class="fm-later" data-fm-later-weights>Agora não</button>`;
+  if (missingFontsLater.has(`${docKey}:pesos`)) {
+    fmChip(bar, arquivos.length === 1 ? "1 arquivo de fonte para enviar" : `${arquivos.length} arquivos de fonte para enviar`, "data-fm-reopen-weights");
+    return;
+  }
+  bar.className = "fontMissing";
+  bar.innerHTML = fmCard({
+    title: `Quase lá! Falta ${arquivos.length === 1 ? "um arquivo" : `${arquivos.length} arquivos`} da fonte`,
+    text: `Parte do texto usa ${arquivos.length === 1 ? "este estilo" : "estes estilos"}. Envie o arquivo .ttf ou .otf — dá para selecionar vários de uma vez.`,
+    chips: arquivos,
+    action: `<button class="fm-add" data-fm-weights="${esc(m.family)}">Enviar arquivo${arquivos.length > 1 ? "s" : ""}</button>`,
+    later: "data-fm-later-weights",
+  });
 }
 
 function applyMissingFont(original: string, family: string) {
@@ -4463,10 +4488,11 @@ $("fontMissing").addEventListener("click", async (ev) => {
   const t = ev.target as HTMLElement;
   const docKey = doc.seedId || doc.name || "";
   if (t.closest("[data-fm-later]")) { missingFontsLater.add(docKey); renderMissingFonts(); return; }
+  if (t.closest("[data-fm-reopen]")) { missingFontsLater.delete(docKey); renderMissingFonts(); return; }
+  if (t.closest("[data-fm-reopen-weights]")) { missingFontsLater.delete(`${docKey}:pesos`); renderMissingFonts(); return; }
   if (t.closest("[data-fm-later-weights]")) { missingFontsLater.add(`${docKey}:pesos`); renderMissingFonts(); return; }
   const wb = t.closest<HTMLElement>("[data-fm-weights]");
   if (wb) { missingFontTarget = null; weightsTarget = wb.dataset.fmWeights || null; if (!fontUploadBusy) $("fileFont").click(); return; }
-  if ($("fontMissing").classList.contains("is-chip")) { missingFontsLater.delete(docKey); renderMissingFonts(); return; }
   const add = t.closest<HTMLElement>("[data-fm-add]");
   if (add) { missingFontTarget = add.dataset.fmAdd!; if (!fontUploadBusy) $("fileFont").click(); return; }
   const use = t.closest<HTMLElement>("[data-fm-use]");
