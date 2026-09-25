@@ -6,8 +6,9 @@ import {
   type FontCategory,
 } from "./fontLibrary.ts";
 import { loadDesignFonts } from "./designFontLoader";
+import { fetchGlobalFonts, registeredDocFont, withGlobalFontFamily, type RegisteredFontFace } from "./globalFontLibrary.ts";
 import { b64ToBytes, buildPDF } from "./pdf";
-import type { Doc, El, Page } from "./types";
+import type { Doc, DocFont, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
 import { applyStyleToRange } from "./richText";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
@@ -1533,6 +1534,7 @@ function setPanel(tab: string | null) {
   if (editingId) stopEditing();
   activeTab = tab;
   renderRail(); renderPanel();
+  if (tab === "fonts") void refreshGlobalFonts();
   if (fitView) zoomFit();
   else { clampView(); applyWorld(); renderOverlay(); }
 }
@@ -1540,6 +1542,33 @@ function setPanel(tab: string | null) {
 let fontQuery = "";
 let fontCategory: FontCategory | null = null;
 let catalogRequested = false;
+
+let globalFonts: DocFont[] = [];
+let globalFontsLoading = false;
+let globalFontsError = false;
+
+async function refreshGlobalFonts() {
+  if (globalFontsLoading) return;
+  globalFontsLoading = true;
+  globalFontsError = false;
+  renderFontList();
+  try { globalFonts = await fetchGlobalFonts(); }
+  catch { globalFontsError = true; }
+  finally { globalFontsLoading = false; renderFontList(); }
+}
+
+async function applyFontFamily(family: string) {
+  const target = doc;
+  const selected = [...sel];
+  const fonts = withGlobalFontFamily(target.fonts ?? [], globalFonts, family);
+  try { await loadDesignFonts({ ...target, fonts }); }
+  catch { toast("Não foi possível carregar essa fonte. Tente novamente."); return; }
+  if (doc !== target || selected.join() !== sel.join()) return;
+  doc.fonts = fonts;
+  patch({ font: family }, true);
+  renderFontList();
+  renderToolbar();
+}
 
 /**
  * Puxa as folhas do catálogo uma vez, na primeira abertura do painel. Fora daqui ninguém
@@ -1580,8 +1609,15 @@ function fontListHtml(): string {
   const current = selEls().find((e) => e.type === "text")?.font;
   const mine = fontQuery || fontCategory ? [] : docFontFamilies();
   const found = searchFontLibrary({ query: fontQuery, category: fontCategory });
-  if (!found.length && !mine.length) return `<p class="phint">Nenhuma fonte com esse nome.</p>`;
-  return (mine.length ? `<div class="sec"><h4>Neste design</h4>${mine.map((f) => fontTile(f, current)).join("")}</div>` : "")
+  const query = fontQuery.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+  const shared = fontCategory ? [] : [...new Set(globalFonts.map(f => f.family))]
+    .filter(f => fontLabel(f).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().includes(query));
+  const status = globalFontsLoading ? `<p class="phint">Carregando fontes compartilhadas…</p>`
+    : globalFontsError ? `<p class="phint">Não foi possível carregar as fontes compartilhadas.</p><button data-retry-fonts>Tentar novamente</button>` : "";
+  if (!found.length && !mine.length && !shared.length) return status || `<p class="phint">Nenhuma fonte com esse nome.</p>`;
+  return status
+    + (shared.length ? `<div class="sec"><h4>Fontes compartilhadas</h4>${shared.map(f => fontTile(f, current)).join("")}</div>` : "")
+    + (mine.length ? `<div class="sec"><h4>Neste design</h4>${mine.map((f) => fontTile(f, current)).join("")}</div>` : "")
     + (found.length ? `<div class="sec"><h4>Biblioteca</h4>${found.map((f) => fontTile(f.family, current)).join("")}</div>` : "");
 }
 
@@ -1599,6 +1635,7 @@ let fontUploadBusy = false;
  * — sem isso, a família ficaria só de nome, igual uma fonte da biblioteca nunca carregada.
  */
 async function importarFonte(file: File) {
+  const target = doc;
   fontUploadBusy = true;
   renderPanel();
   try {
@@ -1610,23 +1647,17 @@ async function importarFonte(file: File) {
       toast(body.error || `Não foi possível importar ${file.name}.`);
       return;
     }
-    const raw: { internalFamily: string; weight: number; style: string; sha256: string; sfntPath: string; woff2Path: string } = await res.json();
-    const face = { ...raw, family: raw.internalFamily };
-
-    doc.fonts = [
-      ...(doc.fonts ?? []).filter((f) => f.sha256 !== face.sha256),
-      { family: face.family, weight: face.weight, style: face.style, sha256: face.sha256, ttf: face.sfntPath, woff2: face.woff2Path },
-    ];
-
-    try {
-      const fontFace = new FontFace(face.family, `url(${JSON.stringify(face.woff2Path)})`, { weight: String(face.weight) });
-      await fontFace.load();
-      (document.fonts as any).add(fontFace);
-    } catch {
-      // O canvas cai para uma fonte padrão até recarregar a página; o render final do servidor
-      // usa `doc.fonts` (registrado acima) e sai certo de qualquer forma.
+    const raw: RegisteredFontFace = await res.json();
+    const face = registeredDocFont(raw);
+    globalFonts = [...globalFonts.filter(f => f.sha256 !== face.sha256), face];
+    if (doc !== target) {
+      toast(`Fonte "${fontLabel(face.family)}" salva na biblioteca compartilhada.`);
+      return;
     }
-
+    doc.fonts = [...(doc.fonts ?? []).filter(f => f.sha256 !== face.sha256), face];
+    try { await loadDesignFonts(doc); }
+    catch { toast("Fonte salva, mas não foi possível carregá-la agora."); }
+    if (doc !== target) return;
     const selecionado = selEls().find((e) => e.type === "text");
     if (selecionado) patch({ font: face.family }, true); else commit();
     renderFontList();
@@ -1893,13 +1924,10 @@ $("panel").addEventListener("click", (ev) => {
     for (const p of doc.pages) { p.w = w; p.h = h; }
     commit(); renderAll(); zoomFit(); return;
   }
+  if (ev.target.closest("[data-retry-fonts]")) { void refreshGlobalFonts(); return; }
   const font = ev.target.closest("[data-font]");
   if (font) {
-    // `immediate`: aplicar uma fonte e um gesto acabado, não o meio de um arrasto — vale
-    // um ponto no histórico e uma gravação na hora, como o resto dos botões do painel.
-    patch({ font: font.dataset.font }, true);
-    renderFontList();
-    renderToolbar();
+    void applyFontFamily(font.dataset.font);
     return;
   }
   const cat = ev.target.closest("[data-fontcat]");

@@ -478,11 +478,13 @@ export async function upsertFontFace(sql: Sql, input: FontFaceInput): Promise<Fo
   return rows[0];
 }
 
-export async function listFontFaces(sql: Sql, ownerId: string): Promise<FontFaceRow[]> {
+export async function listFontFaces(sql: Sql, _ownerId: string): Promise<FontFaceRow[]> {
   return sql<FontFaceRow[]>`
-    select ${sql.unsafe(FONT_FACE_COLUMNS)} from font_faces
-    where owner_id = ${ownerId}
-    order by internal_family, weight
+    select ${sql.unsafe(FONT_FACE_COLUMNS)} from (
+      select distinct on (sha256) * from font_faces
+      order by sha256, created_at, id
+    ) as global_faces
+    order by internal_family, weight, style, sha256
   `;
 }
 

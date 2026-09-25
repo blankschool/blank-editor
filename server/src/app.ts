@@ -39,8 +39,7 @@ import type { FetchedGoogleFont } from "./render/googleFontFetch.ts";
 import {
   clearSessionCookies,
   getAccessCookie,
-  getRefreshCookie,
-  refreshSession,
+  renewSessionCookies,
   resolveSessionFromCookies,
   setSessionCookies,
   signIn,
@@ -299,7 +298,7 @@ export function buildApp(
 
   async function requirePrincipal(request: FastifyRequest, reply: FastifyReply): Promise<Principal | null> {
     if (auth) {
-      const bySession = await resolveSessionFromCookies(request, auth.client);
+      const bySession = await resolveSessionFromCookies(request, auth.client, reply);
       if (bySession) return { ownerId: bySession.ownerId, actorId: bySession.ownerId, kind: "human" };
     }
 
@@ -1736,28 +1735,16 @@ export function buildApp(
   app.post("/api/v1/auth/refresh", async (request, reply) => {
     const a = requireAuthConfigured(reply);
     if (!a) return;
-    const refreshToken = getRefreshCookie(request);
-    if (!refreshToken) return reply.code(401).send({ error: "no session to refresh" });
-
-    let result;
-    try {
-      result = await refreshSession(a.client, refreshToken);
-    } catch {
-      clearSessionCookies(reply);
+    if (!await renewSessionCookies(request, a.client, reply)) {
       return reply.code(401).send({ error: "session expired, please log in again" });
     }
-    if (!result.session) {
-      clearSessionCookies(reply);
-      return reply.code(401).send({ error: "session expired, please log in again" });
-    }
-    setSessionCookies(reply, result.session);
     return reply.code(204).send();
   });
 
   app.get("/api/v1/auth/me", async (request, reply) => {
     const a = requireAuthConfigured(reply);
     if (!a) return;
-    const user = await resolveSessionFromCookies(request, a.client);
+    const user = await resolveSessionFromCookies(request, a.client, reply);
     if (!user) return reply.code(401).send({ error: "not signed in" });
     return user;
   });
@@ -1769,9 +1756,10 @@ export function buildApp(
   // na chamada seguinte. Só funciona por já haver uma sessão de cookie válida — não é um jeito
   // novo de logar, é a mesma sessão vista de outro ângulo.
   app.get("/api/v1/auth/token", async (request, reply) => {
+    reply.header("Cache-Control", "private, no-store");
     const a = requireAuthConfigured(reply);
     if (!a) return;
-    const user = await resolveSessionFromCookies(request, a.client);
+    const user = await resolveSessionFromCookies(request, a.client, reply);
     if (!user) return reply.code(401).send({ error: "not signed in" });
     return { accessToken: getAccessCookie(request) };
   });

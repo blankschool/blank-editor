@@ -158,3 +158,29 @@ test("/health/fonts aprova quando a face do dono desenha de verdade", async () =
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().ok, true);
 });
+
+
+test("single-file upload stores both usable formats and returns a reloadable registry entry", async () => {
+  const uploads = new Map<string, Buffer>();
+  let saved: Parameters<AppDeps["upsertFontFace"]>[0] | undefined;
+  const base = deps();
+  const app = buildApp(deps({
+    upsertFontFace: async input => { saved = input; return base.upsertFontFace(input); },
+    listFontFaces: async () => saved ? [await base.upsertFontFace(saved)] : [],
+  }), null, { client: {
+    storage: { from: (bucket: string) => ({
+      upload: async (path: string, bytes: Buffer) => { uploads.set(`${bucket}/${path}`, bytes); return { error: null }; },
+      getPublicUrl: (path: string) => ({ data: { publicUrl: `https://storage.test/${bucket}/${path}` } }),
+    }) },
+  } as unknown as StorageDeps["client"] });
+  const request = new Request("http://x/api/v1/fonts/upload", { method: "POST", body: form([["font", "fixture.ttf", SFNT, "font/ttf"]]) });
+  const res = await app.inject({ method: "POST", url: "/api/v1/fonts/upload", headers: { authorization: `Bearer ${KEY}`, "content-type": request.headers.get("content-type")! }, payload: Buffer.from(await request.arrayBuffer()) });
+  assert.equal(res.statusCode, 201);
+  assert.equal(saved?.ownerId, OWNER);
+  const sha = createHash("sha256").update(SFNT).digest("hex");
+  assert.deepEqual(uploads.get(`font-sfnt/${sha}.ttf`), SFNT);
+  assert.equal(uploads.get(`fonts/${sha}.woff2`)?.subarray(0, 4).toString(), "wOF2");
+  const reloaded = await app.inject({ method: "GET", url: "/api/v1/fonts", headers: { authorization: `Bearer ${KEY}` } });
+  assert.deepEqual(reloaded.json(), [res.json()]);
+  await app.close();
+});

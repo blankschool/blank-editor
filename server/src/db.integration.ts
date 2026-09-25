@@ -20,6 +20,8 @@ import {
   createApiKey,
   findApiKeyOwner,
   listApiKeys,
+  upsertFontFace,
+  listFontFaces,
 } from "./db.ts";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -72,4 +74,19 @@ test("findApiKeyOwner devolve o ownerId de quem criou a chave, isolado por dono"
 
 test.after(async () => {
   await sql.end();
+});
+
+
+test("imported font persists in the global library for another owner without duplicates", async () => {
+  const sha256 = randomUUID().replaceAll("-", "").repeat(2);
+  const face = { id: `font-${randomUUID()}`, ownerId: OWNER_A, sha256, internalFamily: "Shared integration font", weight: 400, style: "Regular", sfntPath: `supabase://font-sfnt/${sha256}.ttf`, woff2Path: `https://storage.test/${sha256}.woff2` };
+  try {
+    await upsertFontFace(sql, face);
+    const reloaded = await listFontFaces(sql, OWNER_B);
+    assert.equal(reloaded.find(f => f.sha256 === sha256)?.woff2Path, face.woff2Path);
+    await upsertFontFace(sql, { ...face, id: `font-${randomUUID()}`, ownerId: OWNER_B });
+    assert.equal((await listFontFaces(sql, OWNER_B)).filter(f => f.sha256 === sha256).length, 1);
+  } finally {
+    await sql`delete from font_faces where sha256 = ${sha256}`;
+  }
 });

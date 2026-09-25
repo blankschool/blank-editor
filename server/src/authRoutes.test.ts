@@ -76,11 +76,11 @@ function makeFakeSupabaseClient(opts: { validAccessToken?: string } = {}) {
           ? { data: { user: FAKE_USER, session: FAKE_SESSION }, error: null }
           : { data: { user: null, session: null }, error: new Error("invalid credentials") },
       getUser: async (token: string) =>
-        token === validAccessToken ? { data: { user: FAKE_USER }, error: null } : { data: { user: null }, error: new Error("invalid token") },
+        token === validAccessToken ? { data: { user: FAKE_USER }, error: null } : { data: { user: null }, error: Object.assign(new Error("invalid token"), { status: 401 }) },
       refreshSession: async ({ refresh_token }: { refresh_token: string }) =>
         refresh_token === FAKE_SESSION.refresh_token
           ? { data: { session: { ...FAKE_SESSION, access_token: "refreshed-access-token" } }, error: null }
-          : { data: { session: null }, error: new Error("invalid refresh token") },
+          : { data: { session: null }, error: Object.assign(new Error("invalid refresh token"), { status: 400 }) },
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -359,4 +359,59 @@ test("template/key routes still 401 with no cookie and no Authorization header, 
   const app = buildApp(makeDeps(), makeAuth());
   const res = await app.inject({ method: "GET", url: "/api/v1/templates" });
   assert.equal(res.statusCode, 401);
+});
+
+for (const access of ["", "sb-access-token=expired; "]) {
+  test(`renews an expired browser session on protected routes (access cookie: ${!!access})`, async () => {
+    const client = makeFakeSupabaseClient({ validAccessToken: "refreshed-access-token" });
+    const app = buildApp(makeDeps(), makeAuth({ client }));
+    for (const url of ["/api/v1/auth/me", "/api/v1/auth/token", "/api/v1/templates"]) {
+      const res = await app.inject({ method: "GET", url, headers: { cookie: `${access}sb-refresh-token=${FAKE_SESSION.refresh_token}` } });
+      assert.equal(res.statusCode, 200, url);
+      assert.equal(res.cookies.find(c => c.name === "sb-access-token")?.value, "refreshed-access-token");
+      if (url.endsWith("/token")) assert.equal(res.json().accessToken, "refreshed-access-token");
+    }
+    await app.close();
+  });
+}
+
+test("parallel protected requests rotate a refresh token only once", async () => {
+  const client = makeFakeSupabaseClient({ validAccessToken: "refreshed-access-token" });
+  const refresh = client.auth.refreshSession;
+  let calls = 0;
+  client.auth.refreshSession = async (input: { refresh_token: string }) => {
+    calls++;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    return refresh(input);
+  };
+  const app = buildApp(makeDeps(), makeAuth({ client }));
+  const responses = await Promise.all(["/api/v1/auth/me", "/api/v1/templates", "/api/v1/auth/token"].map(url =>
+    app.inject({ method: "GET", url, headers: { cookie: `sb-refresh-token=${FAKE_SESSION.refresh_token}` } })));
+  assert.equal(calls, 1);
+  for (const res of responses) {
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.cookies.find(c => c.name === "sb-refresh-token")?.value, FAKE_SESSION.refresh_token);
+    assert.match(String(res.headers["cache-control"]), /no-store/);
+  }
+  await app.close();
+});
+
+test("revoked refresh tokens require login and clear cookies", async () => {
+  const app = buildApp(makeDeps(), makeAuth());
+  const res = await app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { cookie: "sb-refresh-token=revoked" } });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.cookies.find(c => c.name === "sb-refresh-token")?.value, "");
+  await app.close();
+});
+
+test("temporary auth outages do not discard the refresh cookie", async () => {
+  const client = makeFakeSupabaseClient();
+  client.auth.refreshSession = async () => ({ data: { session: null }, error: { status: 503 } });
+  const app = buildApp(makeDeps(), makeAuth({ client }));
+  for (const [method, url] of [["GET", "/api/v1/auth/me"], ["POST", "/api/v1/auth/refresh"]] as const) {
+    const res = await app.inject({ method, url, headers: { cookie: "sb-refresh-token=retry-later" } });
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.cookies.length, 0);
+  }
+  await app.close();
 });
