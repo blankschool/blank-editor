@@ -44,6 +44,19 @@ export interface ExtractedTextElement {
    *  ("DMSans-Bold") como pista para o matching de Google Font por IA — sem isso não haveria
    *  como saber, depois da troca, qual fonte a arte realmente usava. */
   fontOriginal?: string;
+  fontStyle?: string;
+  fontCategory?: "sans" | "serif" | "mono";
+  /** Entrelinha (múltiplo de `size`) medida entre as baselines do PDF. */
+  lh: number;
+  /** Espaçamento extra entre letras, na mesma unidade de `size` (pontos aqui, px depois). */
+  ls: number;
+  align: "left" | "center" | "right";
+  opacity: number;
+  /** Trechos de estilo (negrito/cor/fonte no meio da frase) — mesmo formato de `TextRun` em
+   *  src/types.ts. Ausente quando o parágrafo tem um estilo só. */
+  runs?: Array<{ text: string; font?: string; fontOriginal?: string; weight?: number; italic?: boolean; fill?: string }>;
+  /** Ordem real de pintura no PDF (índice em `page.get_bboxlog()`). */
+  z: number;
 }
 
 /** Retângulo de cor sólida (preenchimento vetorial cujo desenho é só um `re` no PDF) que
@@ -56,6 +69,7 @@ export interface ExtractedShapeElement {
   h: number;
   fill: string;
   opacity: number;
+  z: number;
 }
 
 /** Forma vetorial arbitrária (ícone, halftone, contorno de título) — linha/curva, não
@@ -70,6 +84,14 @@ export interface ExtractedPathElement {
   fillPath: string;
   fill: string;
   opacity: number;
+  z: number;
+}
+
+/** Posição (bbox em pontos) e ordem de pintura de cada imagem da página — casada depois, por
+ *  bbox, com as camadas que o poppler extrai (extractImages.ts), que não sabem sua ordem. */
+export interface ImageOrder {
+  bbox: [number, number, number, number];
+  z: number;
 }
 
 export type ExtractedPageElement = ExtractedTextElement | ExtractedShapeElement | ExtractedPathElement;
@@ -81,6 +103,7 @@ export interface PythonExtractResult {
    *  mais acima se houver mais de um), ou `null` quando nenhum preenchimento cobre tudo —
    *  quem monta o `Page` decide o branco-padrão nesse caso. */
   bgByPage: Map<number, string | null>;
+  imageOrderByPage: Map<number, ImageOrder[]>;
 }
 
 interface RawFontEntry {
@@ -99,6 +122,7 @@ interface RawTextPage {
   page: number;
   elements: ExtractedPageElement[];
   bg: string | null;
+  images?: ImageOrder[];
 }
 
 export async function extractFontsAndText(pdfPath: string, workDir: string): Promise<PythonExtractResult> {
@@ -134,10 +158,12 @@ export async function extractFontsAndText(pdfPath: string, workDir: string): Pro
 
   const elementsByPage = new Map<number, ExtractedPageElement[]>();
   const bgByPage = new Map<number, string | null>();
+  const imageOrderByPage = new Map<number, ImageOrder[]>();
   for (const entry of rawText) {
     elementsByPage.set(entry.page, entry.elements);
     bgByPage.set(entry.page, entry.bg);
+    imageOrderByPage.set(entry.page, entry.images ?? []);
   }
 
-  return { fonts, elementsByPage, bgByPage };
+  return { fonts, elementsByPage, bgByPage, imageOrderByPage };
 }

@@ -23,13 +23,13 @@ não estava no original não desenha nada — é o limite de usar a fonte do PDF
 licenciá-la.
 
 Método de fontes adaptado de canva-import/pipeline/mergefonts.py do repo blank-editor-313c0b78.
-A extração de texto (`extrair_texto`) usa `page.get_text("dict")`, que já vem com bbox/fonte/
-tamanho por span — dispensa portar o parser de content-stream daquele outro repo, já que o
-PyMuPDF é dependência deste arquivo de qualquer forma.
+A extração de texto (`extrair_texto`) usa `page.get_texttrace()` + agrupamento em
+pdf_layout.py — traz ordem de pintura (seqno), opacidade, métricas e origem de cada caractere.
 """
 import base64, hashlib, io, json, math, re, sys
 from pathlib import Path
 import fitz
+import pdf_layout
 from fontTools.ttLib import TTFont, newTable
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
@@ -340,7 +340,7 @@ def extrair_formas(page):
             formas.append(dict(
                 type="rect",
                 x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-                fill=hexcolor(fill), opacity=opacity,
+                fill=hexcolor(fill), opacity=opacity, z=d.get("seqno", 0),
             ))
             continue
         caminho = path_para_svg_d(d)
@@ -349,69 +349,74 @@ def extrair_formas(page):
         formas.append(dict(
             type="path",
             x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-            fillPath=caminho, fill=hexcolor(fill), opacity=opacity,
+            fillPath=caminho, fill=hexcolor(fill), opacity=opacity, z=d.get("seqno", 0),
         ))
     return formas
 
-def extrair_texto(page, peso_por_estilo):
-    """Blocos de texto da pagina, no formato que `El` do Blank Editor espera
-    (x/y/w/h/text/font/weight/size/fill). Um bloco vira um elemento so — Canva normalmente usa
-    uma caixa de texto por estilo, e agrupar por bloco (em vez de por span) evita fragmentar uma
-    frase em dezenas de elementos de uma letra so.
-
-    LIMITACAO CONHECIDA: um bloco com mistura de estilos (negrito no meio de uma frase, por
-    exemplo) vira um elemento so com o estilo do PRIMEIRO span — dividir por span preservaria o
-    estilo exato, mas fragmentaria a caixa de texto em varios elementos que o editor não sabe
-    reagrupar. Rotacao vem do vetor `dir` — que o PyMuPDF expõe na LINHA, não no span (um span
-    não tem chave "dir" nenhuma; pegar `primeiro_span.get("dir", (1,0))` sempre batia no default e
-    NUNCA capturava rotação nenhuma, bug real achado testando com um PDF girado de verdade — a
-    caixa saía w/h maiores que o texto, sem girar, com `rot: 0` mesmo pra texto a 30°)."""
-    elementos = []
-    for bloco in page.get_text("dict")["blocks"]:
-        if bloco.get("type") != 0:
-            continue
-        linhas = bloco.get("lines") or []
-        if not linhas or not linhas[0].get("spans"):
-            continue
-        primeiro_span = linhas[0]["spans"][0]
-        texto = "\n".join("".join(s["text"] for s in linha["spans"]) for linha in linhas)
-        if not texto.strip():
-            continue
-        familia, estilo = parte(primeiro_span["font"].split("+")[-1])
-        peso = peso_por_estilo.get((familia, estilo))
-        # Guardado ANTES do fallback trocar `familia`: é o nome que um matching por IA
-        # (feature 3, server/src/render/googleFontMatch.ts) usa como pista de qual Google
-        # Font parece com o que a arte original usava — sem isso, uma vez substituído por
-        # "Inter" não haveria como saber que aquele bloco é candidato a um match melhor.
-        font_original = None
+def estilo_do_span_factory(peso_por_estilo):
+    """Fonte/peso/itálico do editor para um span do texttrace. Quando a fonte do span não foi
+    reconstruída (sem arquivo embutido ou sem ToUnicode), cai pra Inter — que o servidor sempre
+    tem embutida (server/src/render/builtinFaces.ts) — e guarda o nome original em
+    `fontOriginal` como pista pro matching de Google Font por IA
+    (server/src/render/googleFontMatch.ts)."""
+    def estilo(span):
+        familia, est = parte(span["font"].split("+")[-1])
+        peso = peso_por_estilo.get((familia, est))
+        out = dict(font=familia, fontStyle=est, italic="Italic" in est)
         if peso is None:
-            # A fonte deste bloco nao foi reconstruida (sem arquivo embutido ou sem ToUnicode).
-            # Antes isso descartava o bloco em silencio; agora cai pra Inter, que o servidor
-            # sempre tem embutida (server/src/render/builtinFaces.ts) — o texto sobrevive com
-            # uma fonte parecida em vez de desaparecer do design importado sem aviso.
-            font_original = f"{familia}-{estilo}"
-            peso = ESTILO_PESO.get(estilo.removesuffix(" Italic"), 400)
-            print(f"  {familia}-{estilo}: fonte nao reconstruida, usando Inter peso "
-                  f"{peso} como substituta")
-            familia = "Inter"
-        x0, y0, x1, y1 = bloco["bbox"]
-        dx, dy = linhas[0].get("dir", (1, 0))
-        ang = math.atan2(-dy, dx)
-        x, y, w, h = caixa_nao_rotacionada(x0, y0, x1, y1, ang)
-        elementos.append(dict(
-            type="text",
-            x=round(x, 2), y=round(y, 2),
-            w=round(w, 2), h=round(h, 2),
-            text=texto,
-            font=familia,
-            fontStyle=estilo,
-            fontCategory="mono" if primeiro_span.get("flags", 0) & 8 else "serif" if primeiro_span.get("flags", 0) & 4 else "sans",
-            weight=peso,
-            size=round(primeiro_span.get("size", 12), 2),
-            fill="#%06x" % (primeiro_span.get("color", 0) & 0xFFFFFF),
-            rot=round(math.degrees(ang), 2),
-            **({"fontOriginal": font_original} if font_original else {}),
-        ))
+            out["fontOriginal"] = f"{familia}-{est}"
+            out["font"] = "Inter"
+            peso = ESTILO_PESO.get(est.removesuffix(" Italic").removesuffix("Italic") or "Regular", 400)
+        out["weight"] = peso
+        return out
+    return estilo
+
+
+def avanco_natural_factory(doc):
+    """Avanço natural (em em) de um glifo pelo ID, lido da tabela hmtx da fonte embutida
+    ORIGINAL (não da reconstruída: o glyph id do texttrace é o do subset embutido). Serve pra
+    medir o espaçamento entre letras aplicado no Canva. Fonte que o fontTools não abre (CFF
+    nu, Type3) devolve None e simplesmente não contribui pra medição."""
+    fontes = {}
+    for pagina in doc:
+        for xref, ext, tipo, base, nome, enc in pagina.get_fonts(full=False):
+            chave = parte(base.split("+")[-1])
+            if chave in fontes:
+                continue
+            try:
+                dados = doc.extract_font(xref)[3]
+                tt = TTFont(io.BytesIO(dados), lazy=True)
+                upm = tt["head"].unitsPerEm
+                ordem = tt.getGlyphOrder()
+                hmtx = tt["hmtx"].metrics
+                fontes[chave] = (upm, ordem, hmtx)
+            except Exception:
+                fontes[chave] = None
+    def avanco(span, gid):
+        f = fontes.get(parte(span["font"].split("+")[-1]))
+        if not f or gid is None or gid < 0:
+            return None
+        upm, ordem, hmtx = f
+        if gid >= len(ordem):
+            return None
+        m = hmtx.get(ordem[gid])
+        return m[0] / upm if m else None
+    return avanco
+
+
+def extrair_texto(page, estilo_do_span, avanco_natural):
+    """Texto da página via `get_texttrace()` — ver o cabeçalho de pdf_layout.py. Cada
+    parágrafo vira UMA caixa de texto editável com: runs de estilo (negrito/cor no meio da
+    frase), quebras de linha iguais às do PDF, entrelinha (`lh`) e espaçamento entre letras
+    (`ls`) medidos, alinhamento detectado, rotação e `z` (ordem de pintura real)."""
+    spans = pdf_layout.spans_visiveis(page.get_texttrace())
+    linhas = pdf_layout.agrupar_linhas(spans)
+    paragrafos = pdf_layout.agrupar_paragrafos(linhas, pdf_layout.seqnos_nao_texto(page))
+    elementos = []
+    for par in paragrafos:
+        el = pdf_layout.paragrafo_para_elemento(par, estilo_do_span, avanco_natural)
+        if el["text"].strip():
+            elementos.append(el)
     return elementos
 
 
@@ -449,14 +454,17 @@ for (familia, estilo), entries in por_familia_estilo.items():
 (destino / "fonts.json").write_text(json.dumps(resultado, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 peso_por_estilo = {(r["familia"], r["estilo"]): r["peso"] for r in resultado}
+estilo_do_span = estilo_do_span_factory(peso_por_estilo)
+avanco_natural = avanco_natural_factory(doc)
 texto_por_pagina = []
 for numero, pagina in enumerate(doc, start=1):
     formas = extrair_formas(pagina)
-    texto = extrair_texto(pagina, peso_por_estilo)
+    texto = extrair_texto(pagina, estilo_do_span, avanco_natural)
     fundo = detectar_fundo(pagina)
-    # Formas primeiro: no editor, elementos mais adiante na lista desenham por cima —
-    # um retângulo de fundo/destaque precisa ficar atrás do texto, nunca na frente.
-    texto_por_pagina.append({"page": numero, "elements": formas + texto, "bg": fundo})
+    # Cada elemento carrega `z` (índice em get_bboxlog = ordem real de pintura); quem monta a
+    # página (orchestrate.ts) ordena por ele, junto com as imagens (`images`, casadas por bbox).
+    texto_por_pagina.append({"page": numero, "elements": formas + texto, "bg": fundo,
+                             "images": pdf_layout.seqnos_de_imagens(pagina)})
     print(f"  pagina {numero}: {len(formas)} formas, {len(texto)} blocos de texto, "
           f"fundo {fundo or '(nenhum — branco padrão)'}")
 (destino / "text.json").write_text(json.dumps(texto_por_pagina, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
