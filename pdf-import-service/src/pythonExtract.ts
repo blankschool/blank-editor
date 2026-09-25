@@ -70,6 +70,11 @@ export interface ExtractedShapeElement {
   fill: string;
   opacity: number;
   z: number;
+  /** Contorno (cor e largura, em pontos aqui / px depois) — ausente quando só preenche. */
+  stroke?: string;
+  strokeWidth?: number;
+  /** Gradiente (formato `Gradient` de src/types.ts); com ele, `fill` é o CSS equivalente. */
+  grad?: { type: "linear" | "radial"; angle?: number; stops: Array<[string, number]> };
 }
 
 /** Forma vetorial arbitrária (ícone, halftone, contorno de título) — linha/curva, não
@@ -85,6 +90,10 @@ export interface ExtractedPathElement {
   fill: string;
   opacity: number;
   z: number;
+  /** Contorno (cor e largura, em pontos aqui / px depois) — ausente quando só preenche. */
+  stroke?: string;
+  strokeWidth?: number;
+  fillRule?: "evenodd";
 }
 
 /** Posição (bbox em pontos) e ordem de pintura de cada imagem da página — casada depois, por

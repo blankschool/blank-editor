@@ -54,6 +54,9 @@ export type ImportedShapeElement = {
   h: number;
   fill: string;
   opacity: number;
+  stroke?: string;
+  strokeWidth?: number;
+  grad?: { type: "linear" | "radial"; angle?: number; stops: Array<[string, number]> };
 };
 
 /** Forma vetorial arbitrária (linha/curva, não retângulo puro) — mapeia pro `El` tipo
@@ -67,6 +70,9 @@ export type ImportedPathElement = {
   fillPath: string;
   fill: string;
   opacity: number;
+  stroke?: string;
+  strokeWidth?: number;
+  fillRule?: "evenodd";
 };
 
 export type ImportedElement = ImportedTextElement | ImportedImageElement | ImportedShapeElement | ImportedPathElement;

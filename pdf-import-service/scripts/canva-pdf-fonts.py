@@ -30,6 +30,7 @@ import base64, hashlib, io, json, math, re, sys
 from pathlib import Path
 import fitz
 import pdf_layout
+import pdf_shapes
 from fontTools.ttLib import TTFont, newTable
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
@@ -271,87 +272,68 @@ def caixa_nao_rotacionada(x0, y0, x1, y1, ang_rad):
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     return cx - w / 2, cy - h / 2, w, h
 
-def path_para_svg_d(desenho):
-    """Converte os `items` de um desenho do `get_drawings()` num `d` de SVG normalizado 0..1
-    dentro do próprio retângulo do desenho — o mesmo espaço que `El.fillPath` espera (ver
-    `src/types.ts`: os renderers escalam o path inteiro pelo w/h do elemento em vez de
-    reescrever coordenada por coordenada).
-
-    Só liga/curva (`l`/`c`), que é o que sobra depois de tratar `re` puro à parte em
-    `extrair_formas` — um item de tipo diferente (quad, arco) faz a função devolver `None`:
-    melhor recusar o path inteiro do que desenhar ele com um pedaço faltando."""
-    r = desenho["rect"]
-    w, h = r.x1 - r.x0, r.y1 - r.y0
-    if w <= 1e-6 or h <= 1e-6:
-        return None
-    def n(p):
-        return ((p.x - r.x0) / w, (p.y - r.y0) / h)
-    partes = []
-    for i, item in enumerate(desenho.get("items", [])):
-        op = item[0]
-        if op == "l":
-            p0, p1 = item[1], item[2]
-            if i == 0:
-                x0, y0 = n(p0)
-                partes.append(f"M{x0:.5f},{y0:.5f}")
-            x1, y1 = n(p1)
-            partes.append(f"L{x1:.5f},{y1:.5f}")
-        elif op == "c":
-            p0, p1, p2, p3 = item[1], item[2], item[3], item[4]
-            if i == 0:
-                x0, y0 = n(p0)
-                partes.append(f"M{x0:.5f},{y0:.5f}")
-            x1, y1 = n(p1)
-            x2, y2 = n(p2)
-            x3, y3 = n(p3)
-            partes.append(f"C{x1:.5f},{y1:.5f} {x2:.5f},{y2:.5f} {x3:.5f},{y3:.5f}")
-        else:
-            return None
-    if not partes:
-        return None
-    return " ".join(partes) + " Z"
-
 def extrair_formas(page):
-    """Formas vetoriais de cor sólida que não sejam o próprio fundo da página — esse já virou
-    `bg` em `detectar_fundo`; repeti-lo como elemento seria uma camada idêntica empilhada em
-    cima de si mesma.
-
-    Dois formatos de saída: retângulo puro (`items == ["re"]`) vira `type:"rect"`, que mapeia
-    direto pro `El` tipo `rect` do editor sem mudança de render nenhuma; qualquer outra
-    combinação de linha/curva vira `type:"path"` com `fillPath` (ver `path_para_svg_d`),
-    mapeando pro `El` tipo `draw` com preenchimento (item 2.1 do backlog). Um desenho com
-    segmento não suportado (quad, arco) ou `even_odd` (preenchimento com furo, tipo a letra
-    "O") é ignorado — `El.fillPath` não carrega regra de preenchimento ainda, então um
-    even_odd sairia preenchido sólido, errado; melhor não importar essa forma do que importar
-    errada."""
+    """Formas vetoriais (preenchimento, contorno, even-odd) — ver pdf_shapes.py. O fundo da
+    página (preenchimento que cobre tudo) fica de fora: já virou `bg` em `detectar_fundo`."""
     r = page.rect
     formas = []
     for d in page.get_drawings():
-        fill = d.get("fill")
-        if not fill or d.get("even_odd"):
-            continue
-        x0, y0, x1, y1 = d["rect"]
-        cobre_pagina = x0 <= r.x0 + 1 and y0 <= r.y0 + 1 and x1 >= r.x1 - 1 and y1 >= r.y1 - 1
-        if cobre_pagina:
-            continue
-        comandos = [it[0] for it in d.get("items", [])]
-        opacity = round(d.get("fill_opacity", 1.0) or 1.0, 3)
-        if comandos == ["re"]:
-            formas.append(dict(
-                type="rect",
-                x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-                fill=hexcolor(fill), opacity=opacity, z=d.get("seqno", 0),
-            ))
-            continue
-        caminho = path_para_svg_d(d)
-        if caminho is None:
-            continue
-        formas.append(dict(
-            type="path",
-            x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
-            fillPath=caminho, fill=hexcolor(fill), opacity=opacity, z=d.get("seqno", 0),
-        ))
+        el = pdf_shapes.desenho_para_elemento(d, (r.x0, r.y0, r.x1, r.y1))
+        if el:
+            formas.append(el)
     return formas
+
+
+def _valor(doc, xref, chave):
+    tipo, valor = doc.xref_get_key(xref, chave)
+    return None if tipo == "null" else valor
+
+
+def extrair_gradientes(page, doc):
+    """Gradientes pintados com `sh` direto no content stream da página, como `rect` com
+    `grad` (+ `fill` em CSS) na caixa em que o PDF os pintou (recorte incluído) e com `z` da
+    ordem de pintura. Shading dentro de Form XObject não é visto aqui (sem `sh` na página)."""
+    log = page.get_bboxlog()
+    areas = [(i, rr) for i, (tipo, rr) in enumerate(log) if "shade" in tipo]
+    if not areas:
+        return []
+    usos = pdf_shapes.matrizes_dos_sh(page.read_contents())
+    tipo_res, recurso = doc.xref_get_key(page.xref, "Resources/Shading")
+    if tipo_res == "xref":
+        recurso = doc.xref_object(int(recurso.split()[0]))
+    nomes = dict(re.findall(r"/([^\s/<>\[\]]+)\s+(\d+)\s+0\s+R", recurso or ""))
+    get = lambda x, k: _valor(doc, x, k)
+    pm = page.transformation_matrix
+    pagina_m = (pm.a, pm.b, pm.c, pm.d, pm.e, pm.f)
+    out = []
+    pr = page.rect
+    for (seq, bbox_log), (nome, ctm, recorte) in zip(areas, usos):
+        caixa = pdf_shapes.caixa_do_gradiente(tuple(bbox_log), recorte, pagina_m, (pr.x0, pr.y0, pr.x1, pr.y1))
+        if caixa is None:
+            continue
+        xref = int(nomes.get(nome, 0))
+        if not xref:
+            continue
+        try:
+            tipo = int(float(get(xref, "ShadingType") or 0))
+            if tipo not in (2, 3):
+                continue
+            coords = pdf_shapes._numeros(get(xref, "Coords"))
+            fx = pdf_shapes._refs(get(xref, "Function"))
+            if not fx or len(coords) < 4:
+                continue
+            paradas = pdf_shapes.paradas_da_funcao(get, fx[0])
+            if len(paradas) < 2:
+                continue
+            x0, y0, x1, y1 = caixa
+            g, css = pdf_shapes.gradiente_css(tipo, coords, ctm, pagina_m, (x0, y0, x1, y1), paradas)
+        except Exception as erro:  # um gradiente malformado não derruba a página
+            print(f"  gradiente {nome} ignorado: {erro}")
+            continue
+        out.append(dict(type="rect", x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2),
+                        fill=css, grad=g, opacity=1.0, z=seq))
+    return out
+
 
 def estilo_do_span_factory(peso_por_estilo):
     """Fonte/peso/itálico do editor para um span do texttrace. Quando a fonte do span não foi
@@ -458,7 +440,7 @@ estilo_do_span = estilo_do_span_factory(peso_por_estilo)
 avanco_natural = avanco_natural_factory(doc)
 texto_por_pagina = []
 for numero, pagina in enumerate(doc, start=1):
-    formas = extrair_formas(pagina)
+    formas = extrair_formas(pagina) + extrair_gradientes(pagina, doc)
     texto = extrair_texto(pagina, estilo_do_span, avanco_natural)
     fundo = detectar_fundo(pagina)
     # Cada elemento carrega `z` (índice em get_bboxlog = ordem real de pintura); quem monta a

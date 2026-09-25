@@ -82,7 +82,7 @@ const TARGET_WIDTH_PX = 1080;
 function comEscalaDePagina(el: ExtractedPageElement, ptToPx: number): ExtractedPageElement {
   const posicao = { x: el.x * ptToPx, y: el.y * ptToPx, w: el.w * ptToPx, h: el.h * ptToPx };
   if (el.type === "text") return { ...el, ...posicao, size: el.size * ptToPx, ls: (el.ls ?? 0) * ptToPx };
-  return { ...el, ...posicao };
+  return { ...el, ...posicao, ...(el.strokeWidth ? { strokeWidth: el.strokeWidth * ptToPx } : {}) };
 }
 
 export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {

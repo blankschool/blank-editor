@@ -253,7 +253,7 @@ test("com googleFonts configurado e a IA achando um match, o bloco em Inter troc
   assert.equal(texto.font, "Montserrat");
   assert.equal(texto.weight, 700);
   assert.equal(texto.autoFit, true);
-  assert.deepEqual(res.json().fontSubstitutions, [{ original: "DMSans-Bold", replacement: "Montserrat", reason: "ai-suggestion" }]);
+  assert.deepEqual(res.json().fontSubstitutions, [{ original: "DMSans", replacement: "Montserrat", reason: "ai-suggestion" }]);
   assert.equal(doc.fonts[0].source, "fontsource");
   assert.equal(doc.fonts[0].subset, false);
   assert.ok(doc.fonts.some((f: { family: string }) => f.family === "Montserrat"), "a Google Font escolhida deveria entrar em Doc.fonts");
@@ -323,4 +323,36 @@ test("duas camadas com sugestao da IA compartilham a face empacotada pelo Fontso
   assert.equal(textos.length, 2);
   assert.ok(textos.every((t: { font: string }) => t.font === "Montserrat"), "as duas camadas deveriam ter trocado para a mesma face");
   assert.equal(doc.fonts.filter((f: { family: string }) => f.family === "Montserrat").length, 1, "Doc.fonts não deveria ter a mesma face duplicada");
+});
+
+test("fonte do PDF que já está na biblioteca é usada direto, sem IA nem substituição", async () => {
+  let createdDocument: any;
+  let matchChamado = false;
+  const app = buildApp(
+    deps({
+      createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; },
+      listFontFaces: async () => [{ id: "f", sha256: "lib-sha", internalFamily: "DM Sans", postscriptName: null, weight: 700, style: "Regular",
+        stretch: null, os2FsType: null, sfntPath: "fonts/lib.ttf", woff2Path: "fonts/lib.woff2" }],
+    }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK), fakeGoogleFonts({ match: async () => { matchChamado = true; return new Map(); } }),
+  );
+  const res = await postPdf(app, pdfForm());
+  assert.equal(res.statusCode, 201);
+  const texto = createdDocument.pages[0].els.find((el: { type: string }) => el.type === "text");
+  assert.equal(texto.font, "DM Sans");
+  assert.equal(texto.fontOriginal, undefined);
+  assert.equal(matchChamado, false);
+  assert.deepEqual(res.json().fontSubstitutions, []);
+  assert.deepEqual(createdDocument.fonts.map((f: any) => [f.family, f.source]), [["DM Sans", "library"]]);
+});
+
+test("sem a fonte em lugar nenhum, o texto guarda fontOriginal para o editor pedir a fonte", async () => {
+  let createdDocument: any;
+  const app = buildApp(
+    deps({ createTemplate: async (ownerId, { name, document }) => { createdDocument = document; return { id: "t", ownerId, kind: "custom", name, document, favorite: false }; } }),
+    null, fakeStorage(), null, fakePdfImport(RESULT_COM_FALLBACK),
+  );
+  await postPdf(app, pdfForm());
+  const texto = createdDocument.pages[0].els.find((el: { type: string }) => el.type === "text");
+  assert.equal(texto.fontOriginal, "DMSans");
 });

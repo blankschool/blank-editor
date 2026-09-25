@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { completeFontPath } from "./render/completeFontFiles.ts";
 import { normalizeImportedText } from "./render/replacementFonts.ts";
 import { type StockPhotoLibrary } from "./stockPhotos.ts";
-import { createImportFontResolver } from "./render/importFontResolver.ts";
+import { createImportFontResolver, fontFamilyKey } from "./render/importFontResolver.ts";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
@@ -1392,7 +1392,8 @@ export function buildApp(
             id: randomUUID(), type: "rect" as const, name: `forma ${index + 1}`,
             x: el.x, y: el.y, w: el.w, h: el.h,
             rot: 0, opacity: el.opacity, locked: false, hidden: false,
-            fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
+            fill: el.fill, stroke: el.stroke ?? "", strokeWidth: el.strokeWidth ?? 0, radius: 0,
+            ...(el.grad ? { grad: el.grad } : {}),
           };
         }
         if (el.type === "path") {
@@ -1400,8 +1401,8 @@ export function buildApp(
             id: randomUUID(), type: "draw" as const, name: `desenho ${index + 1}`,
             x: el.x, y: el.y, w: el.w, h: el.h,
             rot: 0, opacity: el.opacity, locked: false, hidden: false,
-            fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
-            fillPath: el.fillPath,
+            fill: el.fill, stroke: el.stroke ?? "", strokeWidth: el.strokeWidth ?? 0, radius: 0,
+            fillPath: el.fillPath, ...(el.fillRule ? { fillRule: el.fillRule } : {}),
           };
         }
         return {
@@ -1414,6 +1415,7 @@ export function buildApp(
           ...(el.italic !== undefined ? { italic: el.italic } : {}),
           ...(el.autoFit ? { autoFit: true } : {}),
           ...(el.fontCategory ? { fontCategory: el.fontCategory } : {}),
+          ...(el.fontOriginal ? { fontOriginal: el.fontOriginal } : {}),
           // `lh` não é opcional na prática: o render em canvas (editor.ts) faz `size * lh` pra
           // posicionar cada linha — undefined vira NaN, e `fillText` com coordenada NaN não
           // desenha nada, em silêncio (achado exportando um design importado de verdade: a foto
@@ -1455,6 +1457,32 @@ export function buildApp(
     try {
       const imageSrcById = await uploadImportedImages(ownerId, result.images);
       const registered = new Map<string, { family: string; weight: number; style: "normal" | "italic"; sha256: string; ttf: string; woff2: string; source: string; subset: false }>();
+      const library = await deps.listFontFaces(ownerId).catch(() => []);
+      // Resolve uma face e já a registra no documento. Biblioteca primeiro: é instantâneo (sem
+      // download nem upload) e é onde fica a fonte que a pessoa subiu pelo aviso de "fonte
+      // faltando" — o próximo PDF com a mesma fonte já importa certo.
+      const resolveFace = async (family: string, weight: number, italic: boolean, text: string) => {
+        const key = fontFamilyKey(family);
+        const fromLibrary = library
+          .filter(f => fontFamilyKey(f.internalFamily) === key && /italic/i.test(f.style) === italic)
+          .sort((a, b) => Math.abs(a.weight - weight) - Math.abs(b.weight - weight))[0];
+        if (fromLibrary) {
+          const style = italic ? "italic" as const : "normal" as const;
+          const regKey = `${fromLibrary.internalFamily}/${fromLibrary.weight}/${style}`;
+          if (!registered.has(regKey)) registered.set(regKey, { family: fromLibrary.internalFamily, weight: fromLibrary.weight, style,
+            sha256: fromLibrary.sha256, ttf: fromLibrary.sfntPath, woff2: fromLibrary.woff2Path, source: "library", subset: false });
+          return { family: fromLibrary.internalFamily, weight: fromLibrary.weight, style };
+        }
+        const resolved = await resolveImportFont({ family, weight, italic, text });
+        if (!resolved) return null;
+        const regKey = `${resolved.family}/${resolved.weight}/${resolved.style}`;
+        if (!registered.has(regKey)) {
+          const paths = await uploadFontFace(storage!.client, resolved.sha256, { ext: resolved.ext, bytes: resolved.bytes }, resolved.bytes, resolved.ext);
+          registered.set(regKey, { family: resolved.family, weight: resolved.weight, style: resolved.style,
+            sha256: resolved.sha256, ttf: paths.sfntPath, woff2: paths.woff2Path, source: resolved.source, subset: false });
+        }
+        return { family: resolved.family, weight: resolved.weight, style: resolved.style };
+      };
       const normalized: ImportedPage[] = [];
       for (const page of result.pages) {
         const elements: ImportedPage["elements"] = [];
@@ -1463,48 +1491,47 @@ export function buildApp(
           if (el.type !== "text") { elements.push(el); continue; }
           const pdfFace = result.fonts.find(f => f.familia === el.font && f.peso === el.weight && [...el.text].every(c => f.glifos.includes(c)));
           const fallback = normalizeImportedText({ ...el, fontStyle: el.fontStyle || pdfFace?.estilo });
-          let resolved = await resolveImportFont({ family: el.fontOriginal || el.font, weight: el.weight, italic: Boolean(fallback.italic), text: el.text });
+          const italic = Boolean(fallback.italic);
+          // Nome da família como o PDF a usa ("NewSpirit"), sem o sufixo de estilo que o
+          // Python põe em `fontOriginal` ("NewSpirit-SemiBold") quando não reconstruiu a face.
+          const originalFamily = el.fontOriginal ? el.fontOriginal.replace(/-[^-]*$/, "") : el.font;
+          // Sempre a fonte do PDF: primeiro a biblioteca de fontes (o que alguém já subiu),
+          // depois fontes livres com o mesmo nome. Só então uma substituta — e o elemento
+          // guarda `fontOriginal` para o editor pedir a fonte certa (banner "fonte faltando").
+          let face = await resolveFace(originalFamily, el.weight, italic, el.text);
           let usedAi = false;
-          if (!resolved && googleFonts && page.previewPng) {
+          if (!face && googleFonts && page.previewPng) {
             suggestions ??= await googleFonts.match(page.previewPng, page.elements.filter(e => e.type === "text").map(e => ({
               chave: e.fontOriginal || e.font, bbox: { x: e.x, y: e.y, w: e.w, h: e.h },
             }))).catch(() => new Map<string, FontMatch>());
             const suggestion = suggestions.get(el.fontOriginal || el.font);
             if (suggestion) {
-              resolved = await resolveImportFont({ family: suggestion.family, weight: suggestion.weight, italic: Boolean(fallback.italic), text: el.text });
-              usedAi = Boolean(resolved);
+              face = await resolveFace(suggestion.family, suggestion.weight, italic, el.text);
+              usedAi = Boolean(face);
             }
           }
-          if (!resolved) {
-            fontSubstitutions.push({ original: el.fontOriginal || el.font, replacement: fallback.font!.replace("Blank Complete ", ""), reason: "bundled-fallback" });
-            elements.push(fallback); continue;
+          if (!face) {
+            fontSubstitutions.push({ original: originalFamily, replacement: fallback.font!.replace("Blank Complete ", ""), reason: "bundled-fallback" });
+            elements.push({ ...fallback, fontOriginal: originalFamily }); continue;
           }
-          if (usedAi) fontSubstitutions.push({ original: el.fontOriginal || el.font, replacement: resolved.family, reason: "ai-suggestion" });
-          const register = async (face: NonNullable<typeof resolved>) => {
-            const key = `${face.family}/${face.weight}/${face.style}`;
-            if (registered.has(key)) return;
-            const paths = await uploadFontFace(storage!.client, face.sha256, { ext: face.ext, bytes: face.bytes }, face.bytes, face.ext);
-            registered.set(key, { family: face.family, weight: face.weight, style: face.style,
-              sha256: face.sha256, ttf: paths.sfntPath, woff2: paths.woff2Path, source: face.source, subset: false });
-          };
-          await register(resolved);
+          if (usedAi) fontSubstitutions.push({ original: originalFamily, replacement: face.family, reason: "ai-suggestion" });
+          const mainFace = face;
           // Trechos com fonte/peso/itálico diferentes do principal precisam da própria face
           // registrada; se não resolver, o trecho herda a fonte do elemento (mantém peso/cor).
           const runs = el.runs ? await Promise.all(el.runs.map(async ({ fontOriginal, ...run }) => {
             if (!run.font && run.weight === undefined && run.italic === undefined) return run;
-            const face = await resolveImportFont({
-              family: fontOriginal || run.font || el.fontOriginal || el.font,
-              weight: run.weight ?? el.weight, italic: run.italic ?? resolved!.style === "italic", text: run.text,
-            });
-            if (!face) { const { font: _, ...rest } = run; return rest; }
-            await register(face);
-            return { ...run, ...(face.family !== resolved!.family ? { font: face.family } : {}), weight: face.weight, italic: face.style === "italic" };
+            const runFamily = fontOriginal ? fontOriginal.replace(/-[^-]*$/, "") : run.font || originalFamily;
+            const runFace = await resolveFace(usedAi && !run.font ? mainFace.family : runFamily,
+              run.weight ?? el.weight, run.italic ?? mainFace.style === "italic", run.text);
+            if (!runFace) { const { font: _, ...rest } = run; return rest; }
+            return { ...run, ...(runFace.family !== mainFace.family ? { font: runFace.family } : {}), weight: runFace.weight, italic: runFace.style === "italic" };
           })) : undefined;
           // Só reajusta o corpo (autoFit) quando a fonte foi TROCADA por outra (sugestão de IA):
           // com a mesma família do PDF, as medidas (size/lh/ls/caixa) já batem com o original e
           // o autoFit só mudaria o tamanho do texto em relação ao PDF.
-          elements.push({ ...el, font: resolved.family, weight: resolved.weight, italic: resolved.style === "italic",
-            ...(runs ? { runs } : {}), ...(usedAi ? { autoFit: true } : {}) });
+          const { fontOriginal: _orig, ...rest } = el;
+          elements.push({ ...rest, font: face.family, weight: face.weight, italic: face.style === "italic",
+            ...(runs ? { runs } : {}), ...(usedAi ? { autoFit: true, fontOriginal: originalFamily } : {}) });
         }
         normalized.push({ ...page, elements });
       }

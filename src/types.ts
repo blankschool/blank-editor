@@ -128,6 +128,8 @@ export interface El {
    *  element never needs to touch `d` itself. Independent of `pts` — an element can carry a
    *  filled `fillPath`, a stroked `pts` polyline, or both. */
   fillPath?: string;
+  /** Regra de preenchimento de `fillPath` — "evenodd" deixa furos (a letra "O"), como no PDF. */
+  fillRule?: "evenodd";
 
   [k: string]: unknown;
 }

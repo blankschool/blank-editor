@@ -10,7 +10,8 @@ import { fetchGlobalFonts, registeredDocFont, withGlobalFontFamily, type Registe
 import { b64ToBytes, buildPDF } from "./pdf";
 import type { Doc, DocFont, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
-import { applyStyleToRange } from "./richText";
+import { applyFontToOriginal, familyKey, missingPdfFonts } from "./missingFonts.ts";
+import { applyStyleToRange, rangeEvery, runsFromPieces, type StyleOverride } from "./richText";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import {
   fetchTemplateFromServer, loadTemplateLocally, saveTemplateLocally, syncTemplateToServer, createTemplateOnServer, deleteTemplateOnServer,
@@ -408,7 +409,11 @@ function elInner(e: any) {
       // `fillPath` is normalised 0..1 like `pts` — `transform="scale(w,h)"` blows it up to the
       // element's current pixel size without touching a single coordinate in the string, so
       // resizing the element never needs to rewrite `d`.
-      if (e.fillPath) paths.push(`<path d="${e.fillPath}" fill="${e.fill}" transform="scale(${e.w},${e.h})"/>`);
+      // `non-scaling-stroke` mantém a largura do contorno em px do elemento, não esticada pelo
+      // scale(w,h) — igual ao traço de um PDF importado.
+      if (e.fillPath) paths.push(`<path d="${e.fillPath}" fill="${e.fill || "none"}"${e.fillRule ? ` fill-rule="${e.fillRule}"` : ""}` +
+        (e.stroke && e.strokeWidth ? ` stroke="${e.stroke}" stroke-width="${e.strokeWidth}" vector-effect="non-scaling-stroke"` : "") +
+        ` transform="scale(${e.w},${e.h})"/>`);
       if (e.pts && e.pts.length) {
         const d = e.pts.map((p, i) => `${i ? "L" : "M"}${p[0] * e.w},${p[1] * e.h}`).join(" ");
         paths.push(`<path d="${d}" fill="none" stroke="${e.stroke}" stroke-width="${e.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`);
@@ -638,11 +643,21 @@ function renderToolbar() {
     html += `<button class="qbtn" data-tflip="h" title="Inverter na horizontal">${FLIP_H_ICON}</button>`;
     html += `<button class="qbtn" data-tflip="v" title="Inverter na vertical">${FLIP_V_ICON}</button>`;
   } else if (one) {
-    const showFill = ["rect", "ellipse", "triangle", "star", "line", "icon"].includes(t);
+    const showFill = ["rect", "ellipse", "triangle", "star", "line", "icon"].includes(t) || (t === "draw" && !!e.fillPath && e.fill !== "none");
     const showStroke = ["rect", "ellipse", "draw"].includes(t);
     const showRadius = t === "rect";
-    if (showFill) html += `<input type="color" id="tFill" class="qcolor" title="Preenchimento" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
-    if (showStroke) html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
+    const hex = (c: string, fb: string) => /^#[0-9a-f]{6}$/i.test(c) ? c : fb;
+    if (e.grad?.stops?.length >= 2) {
+      // Gradiente (ex.: vindo de PDF): edita a cor de início e de fim; o ângulo e as paradas
+      // do meio continuam como vieram.
+      const st = e.grad.stops;
+      html += `<input type="color" id="tGrad0" class="qcolor" title="Cor inicial do gradiente" value="${hex(st[0][0], "#000000")}">`;
+      html += `<input type="color" id="tGrad1" class="qcolor" title="Cor final do gradiente" value="${hex(st[st.length - 1][0], "#ffffff")}">`;
+    } else if (showFill) html += `<input type="color" id="tFill" class="qcolor" title="Preenchimento" value="${hex(e.fill, "#000000")}">`;
+    if (showStroke) {
+      html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${hex(e.stroke, "#FFFFFF")}">`;
+      html += `<div class="field" style="width:46px" title="Espessura da borda"><input id="tStrokeW" type="number" min="0" max="200" value="${Math.round((e.strokeWidth || 0) * 10) / 10}"></div>`;
+    }
     if (showRadius) html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
     html += `<button class="qbtn" data-tflip="h" title="Espelhar na horizontal">${FLIP_H_ICON}</button>`;
     html += `<button class="qbtn" data-tflip="v" title="Espelhar na vertical">${FLIP_V_ICON}</button>`;
@@ -684,7 +699,15 @@ $("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
   if (t.id === "tFill") patch({ fill: t.value });
   if (t.id === "tSize" && Number(t.value) >= 6) patch({ size: clamp(Number(t.value), 6, 512) });
-  if (t.id === "tStroke") patch({ stroke: t.value });
+  if (t.id === "tStroke") patch({ stroke: t.value, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2 }) });
+  if (t.id === "tStrokeW") { const n = parseFloat(t.value); if (n >= 0) patch({ strokeWidth: n }); }
+  if (t.id === "tGrad0" || t.id === "tGrad1") {
+    const e = selEls()[0];
+    const stops = e.grad.stops.map((st: [string, number], i: number) =>
+      (t.id === "tGrad0" && i === 0) || (t.id === "tGrad1" && i === e.grad.stops.length - 1) ? [t.value, st[1]] as [string, number] : st);
+    const grad = { ...e.grad, stops };
+    patch({ grad, fill: gradToCss(grad) });
+  }
   if (t.id === "tOp") patch({ opacity: clamp(parseFloat(t.value) / 100, 0, 1) });
   if (t.id === "tLh") { const n = parseFloat(t.value); if (n > 0) patch({ lh: n }); }
   if (t.id === "tLs") { const n = parseFloat(t.value); patch({ ls: n || 0 }); }
@@ -697,7 +720,7 @@ $("toolbar").addEventListener("change", (ev) => {
     if (!Number.isFinite(size) || size < 6) { input.value = String(selEls()[0]?.size ?? 16); return; }
     input.value = String(clamp(size, 6, 512));
   }
-  if (["tFill", "tStroke", "tOp", "tLh", "tLs", "tSize"].includes(id)) commit();
+  if (["tFill", "tStroke", "tStrokeW", "tGrad0", "tGrad1", "tOp", "tLh", "tLs", "tSize"].includes(id)) commit();
 });
 $("toolbar").addEventListener("keydown", (ev) => {
   if (ev.target.id === "tSize" && ev.key === "Enter") { ev.preventDefault(); ev.target.blur(); }
@@ -1275,9 +1298,13 @@ function stopEditing() {
     t.removeEventListener("input", refitEditingText);
     t.removeAttribute("contenteditable");
     if (v !== el.text) {
+      // Mantém negrito/cor/fonte de cada trecho (vindos do PDF ou aplicados à mão) em vez de
+      // achatar a caixa inteira no estilo base a cada edição de texto.
+      const runs = el.runs?.length ? runsFromEditable(t as HTMLElement, v) : null;
       const replacement = replaceTemplateText(el, v, doc.fonts);
       delete el.runs;
       Object.assign(el, replacement);
+      if (runs && runs.some((r) => Object.keys(r).length > 1)) el.runs = runs;
       commit();
       loadDesignFonts(doc).then(() => { if (editorMounted) renderAll(); }).catch(() => toast("Não foi possível carregar as fontes do design."));
     }
@@ -1285,6 +1312,40 @@ function stopEditing() {
   editingId = null;
   hideTextSelToolbar();
   renderAll();
+}
+
+/** Runs lidos da caixa em edição: cada nó de texto com o estilo inline do `<span>` (run) em
+ *  que está. `null` se o texto reconstruído não bater com `expected` (estrutura que o
+ *  contenteditable criou e este leitor não entende) — aí quem chama cai no texto plano. */
+function runsFromEditable(container: HTMLElement, expected: string) {
+  const pieces: Array<{ text: string; style: StyleOverride }> = [];
+  const styleOf = (node: Node): StyleOverride => {
+    const out: StyleOverride = {};
+    const chain: HTMLElement[] = [];
+    for (let n = node.parentElement; n && n !== container; n = n.parentElement) chain.unshift(n);
+    for (const n of chain) {
+      const st = n.style;
+      if (st.fontWeight) out.weight = Number(st.fontWeight) || (st.fontWeight === "bold" ? 700 : 400);
+      if (st.fontStyle) out.italic = st.fontStyle === "italic";
+      if (st.textDecoration) out.underline = st.textDecoration.includes("underline");
+      if (st.color) out.fill = st.color;
+      if (st.fontFamily) out.font = st.fontFamily.split(",")[0].replace(/["']/g, "").trim();
+    }
+    return out;
+  };
+  const walk = (node: Node, first: boolean) => {
+    if (node.nodeType === Node.TEXT_NODE) { pieces.push({ text: (node.textContent || "").replace(/\u00a0/g, " "), style: styleOf(node) }); return; }
+    if (!(node instanceof HTMLElement)) return;
+    if (node.tagName === "BR") { pieces.push({ text: "\n", style: styleOf(node) }); return; }
+    if (!first && (node.tagName === "DIV" || node.tagName === "P")) pieces.push({ text: "\n", style: {} });
+    node.childNodes.forEach((c, i) => walk(c, first && i === 0));
+  };
+  container.childNodes.forEach((c, i) => walk(c, i === 0));
+  const runs = runsFromPieces(pieces);
+  const text = runs.map((r) => r.text).join("").replace(/\n$/, "");
+  if (text !== expected) return null;
+  if (runs.length && runs[runs.length - 1].text.endsWith("\n")) runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\n$/, "");
+  return runs.filter((r) => r.text);
 }
 
 /** Deslocamento em caracteres de texto plano de um ponto de fronteira de Range, relativo ao
@@ -1341,6 +1402,61 @@ document.addEventListener("selectionchange", updateTextSelToolbar);
 // toa. `preventDefault` no `mousedown` evita o input roubar o foco (testado: o `click` que abre
 // o seletor nativo de cor do sistema continua disparando normalmente).
 $("textSelColor").addEventListener("mousedown", (ev) => ev.preventDefault());
+
+/** B/I/U só no trecho selecionado. Liga se alguma parte do trecho ainda não tem o estilo,
+ *  desliga se o trecho inteiro já tem — mesmo comportamento de Docs/Canva. */
+function toggleSelectionStyle(kind: "bold" | "italic" | "underline") {
+  if (!editingId || !pendingTextSelection) return;
+  const el = byId(editingId);
+  if (!el) return;
+  const { start, end } = pendingTextSelection;
+  const base: StyleOverride = { weight: el.weight, italic: el.italic, underline: el.underline };
+  const has = kind === "bold" ? (s: StyleOverride) => (s.weight ?? 400) >= 600
+    : kind === "italic" ? (s: StyleOverride) => !!s.italic : (s: StyleOverride) => !!s.underline;
+  const on = !rangeEvery(el.text, el.runs, start, end, base, has);
+  const override: StyleOverride = kind === "bold" ? { weight: on ? 700 : (el.weight >= 600 ? 400 : el.weight) }
+    : kind === "italic" ? { italic: on } : { underline: on };
+  el.runs = applyStyleToRange(el.text, el.runs, start, end, override);
+  commit();
+  const node = $("pagestack").querySelector(`[data-txt="${editingId}"]`);
+  if (node) {
+    node.innerHTML = textRunsHtml(el);
+    // Reseleciona o mesmo trecho: dá pra aplicar B e depois I em seguida, sem selecionar de novo.
+    reselectTextRange(node as HTMLElement, start, end);
+  }
+  // Negrito/itálico novos precisam da face carregada (se a família tiver) — não bloqueia.
+  loadDesignFonts(doc).catch(() => {});
+}
+
+function reselectTextRange(container: HTMLElement, start: number, end: number) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let pos = 0, n: Node | null, setStart = false;
+  while ((n = walker.nextNode())) {
+    const len = (n.textContent || "").length;
+    if (!setStart && start <= pos + len) { range.setStart(n, start - pos); setStart = true; }
+    if (setStart && end <= pos + len) { range.setEnd(n, end - pos); break; }
+    pos += len;
+  }
+  const sel = document.getSelection();
+  if (sel && setStart) { sel.removeAllRanges(); sel.addRange(range); }
+}
+
+$("textSelToolbar").addEventListener("mousedown", (ev) => {
+  if ((ev.target as HTMLElement).closest("[data-tsel]")) ev.preventDefault();
+});
+$("textSelToolbar").addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-tsel]");
+  if (b) toggleSelectionStyle(b.dataset.tsel as "bold" | "italic" | "underline");
+});
+document.addEventListener("keydown", (ev) => {
+  if (!editingId || !pendingTextSelection || !(ev.metaKey || ev.ctrlKey)) return;
+  const k = ev.key.toLowerCase();
+  const kind = k === "b" ? "bold" : k === "i" ? "italic" : k === "u" ? "underline" : null;
+  if (!kind) return;
+  ev.preventDefault();
+  toggleSelectionStyle(kind);
+}, true);
 $("textSelColor").addEventListener("input", (ev) => {
   if (!editingId || !pendingTextSelection) return;
   const el = byId(editingId);
@@ -1634,7 +1750,7 @@ let fontUploadBusy = false;
  * face) e carrega o .woff2 no navegador via FontFace, para o texto já aparecer certo no canvas
  * — sem isso, a família ficaria só de nome, igual uma fonte da biblioteca nunca carregada.
  */
-async function importarFonte(file: File) {
+async function importarFonte(file: File, forOriginal: string | null = null) {
   const target = doc;
   fontUploadBusy = true;
   renderPanel();
@@ -1658,8 +1774,14 @@ async function importarFonte(file: File) {
     try { await loadDesignFonts(doc); }
     catch { toast("Fonte salva, mas não foi possível carregá-la agora."); }
     if (doc !== target) return;
-    const selecionado = selEls().find((e) => e.type === "text");
-    if (selecionado) patch({ font: face.family }, true); else commit();
+    const pedida = forOriginal;
+    if (pedida) {
+      // Veio do aviso "fonte faltando": troca a substituta nas caixas daquela fonte do PDF.
+      applyMissingFont(pedida, face.family);
+    } else {
+      const selecionado = selEls().find((e) => e.type === "text");
+      if (selecionado) patch({ font: face.family }, true); else commit();
+    }
     renderFontList();
     renderToolbar();
     toast(`Fonte "${fontLabel(face.family)}" importada.`);
@@ -2497,6 +2619,11 @@ async function renderPageCanvas(p: Page, scale: number) {
   }
   return c;
 }
+/** `Gradient` estruturado -> CSS (o que o DOM do editor pinta em `fill`). */
+function gradToCss(g: any): string {
+  const stops = g.stops.map(([c, p]: [string, number]) => `${c} ${(p * 100).toFixed(2)}%`).join(", ");
+  return g.type === "radial" ? `radial-gradient(${stops})` : `linear-gradient(${g.angle || 0}deg, ${stops})`;
+}
 function paintOf(x: CanvasRenderingContext2D, e: any) {
   const g = e.grad;
   if (!g) return e.fill;
@@ -2639,11 +2766,12 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
   }
   else if (e.type === "draw") {
     if (e.fillPath) {
-      x.save();
-      x.scale(e.w, e.h);
-      x.fillStyle = e.fill;
-      try { x.fill(new Path2D(e.fillPath)); } catch (err) { /* malformed path */ }
-      x.restore();
+      try {
+        const p = new Path2D();
+        p.addPath(new Path2D(e.fillPath), new DOMMatrix().scale(e.w, e.h));
+        if (e.fill && e.fill !== "none") { x.fillStyle = e.fill; x.fill(p, e.fillRule === "evenodd" ? "evenodd" : "nonzero"); }
+        if (e.stroke && e.strokeWidth) { x.strokeStyle = e.stroke; x.lineWidth = e.strokeWidth; x.stroke(p); }
+      } catch (err) { /* malformed path */ }
     }
     if (e.pts && e.pts.length) {
       x.beginPath();
@@ -3213,13 +3341,16 @@ $("fileJson").addEventListener("change", async (ev) => {
   } catch (e) { toast("Esse arquivo não é um design criado por este editor."); }
   ev.target.value = "";
 });
+$("fileFont").addEventListener("cancel", () => { missingFontTarget = null; });
 $("fileFont").addEventListener("change", async (ev) => {
   const file = ev.target.files[0];
   ev.target.value = "";
   if (!file) return;
   if (!/\.(ttf|otf)$/i.test(file.name)) { toast("Envie um arquivo .ttf ou .otf."); return; }
   if (file.size > 20_000_000) { toast(`${file.name} passa de 20 MB — ignorado.`); return; }
-  await importarFonte(file);
+  const pedida = missingFontTarget;
+  missingFontTarget = null;
+  await importarFonte(file, pedida);
 });
 $("fileImg").addEventListener("change", async (ev) => {
   const files = [...ev.target.files];
@@ -3360,8 +3491,68 @@ function toast(msg) {
 
 /* ============================ boot ============================ */
 function renderAll() {
-  renderCanvas(); renderProps(); renderLayers();
+  renderCanvas(); renderProps(); renderLayers(); renderMissingFonts();
 }
+
+/* ------------------------- fontes do PDF faltando ------------------------- */
+/** Designs em que a pessoa clicou "Depois" — o aviso vira um chip até ela reabrir. */
+const missingFontsLater = new Set<string>();
+let missingFontTarget: string | null = null;
+let missingFontsLibraryChecked = "";
+
+function renderMissingFonts() {
+  const bar = $("fontMissing");
+  const missing = missingPdfFonts(doc.pages);
+  if (!missing.length) { bar.hidden = true; return; }
+  const docKey = doc.seedId || doc.name || "";
+  // Uma consulta à biblioteca por design, em segundo plano: se alguém já subiu a fonte, o
+  // botão vira "Usar" (um clique, sem arquivo). Nunca bloqueia o render.
+  if (missingFontsLibraryChecked !== docKey) { missingFontsLibraryChecked = docKey; void refreshGlobalFonts().then(renderMissingFonts); }
+  bar.hidden = false;
+  if (missingFontsLater.has(docKey)) {
+    bar.className = "fontMissing is-chip";
+    bar.innerHTML = `<span class="fm-text">${missing.length === 1 ? "1 fonte do PDF faltando" : `${missing.length} fontes do PDF faltando`}</span>`;
+    return;
+  }
+  const m = missing[0];
+  const inLibrary = globalFonts.some((f) => familyKey(f.family) === familyKey(m.family));
+  const more = missing.length > 1 ? ` <span class="fm-sub">+${missing.length - 1}</span>` : "";
+  bar.className = "fontMissing";
+  bar.innerHTML = `<span class="fm-text">Fonte <b>${esc(m.family)}</b> não está na biblioteca${more} <span class="fm-sub">· usando ${esc(fontLabel(m.replacement))} por enquanto</span></span>`
+    + (inLibrary
+      ? `<button class="fm-add" data-fm-use="${esc(m.family)}">Usar ${esc(m.family)}</button>`
+      : `<button class="fm-add" data-fm-add="${esc(m.family)}">Adicionar fonte</button>`)
+    + `<button class="fm-later" data-fm-later>Depois</button>`;
+}
+
+function applyMissingFont(original: string, family: string) {
+  const n = applyFontToOriginal(doc.pages, original, family);
+  if (!n) return;
+  commit();
+  renderAll();
+  toast(`${original}: ${n === 1 ? "1 texto atualizado" : `${n} textos atualizados`}.`);
+}
+
+$("fontMissing").addEventListener("click", async (ev) => {
+  const t = ev.target as HTMLElement;
+  const docKey = doc.seedId || doc.name || "";
+  if (t.closest("[data-fm-later]")) { missingFontsLater.add(docKey); renderMissingFonts(); return; }
+  if ($("fontMissing").classList.contains("is-chip")) { missingFontsLater.delete(docKey); renderMissingFonts(); return; }
+  const add = t.closest<HTMLElement>("[data-fm-add]");
+  if (add) { missingFontTarget = add.dataset.fmAdd!; if (!fontUploadBusy) $("fileFont").click(); return; }
+  const use = t.closest<HTMLElement>("[data-fm-use]");
+  if (use) {
+    const original = use.dataset.fmUse!;
+    const face = globalFonts.find((f) => familyKey(f.family) === familyKey(original));
+    if (!face) return;
+    const target = doc;
+    const fonts = withGlobalFontFamily(target.fonts ?? [], globalFonts, face.family);
+    try { await loadDesignFonts({ ...target, fonts }); } catch { toast("Não foi possível carregar essa fonte."); return; }
+    if (doc !== target) return;
+    doc.fonts = fonts;
+    applyMissingFont(original, face.family);
+  }
+});
 
 // The app now has three routes (login/console/editor) sharing one page, and
 // this container starts hidden. Booting here — instead of at module-eval

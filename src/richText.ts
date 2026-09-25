@@ -88,3 +88,35 @@ export function applyStyleToRange(
   }
   return merged.map((s) => ({ text: text.slice(s.start, s.end), ...s.style }));
 }
+
+/** O trecho `[start,end)` INTEIRO satisfaz `pred` (estilo efetivo = run por cima do elemento)?
+ *  É o que decide se B/I/U da seleção liga ou desliga — igual Docs/Canva: se todo o trecho já
+ *  está em negrito, clicar tira; se só parte está, clicar põe em tudo. */
+export function rangeEvery(
+  text: string,
+  runs: TextRun[] | undefined,
+  rangeStart: number,
+  rangeEnd: number,
+  base: StyleOverride,
+  pred: (style: StyleOverride) => boolean,
+): boolean {
+  const start = Math.min(rangeStart, rangeEnd), end = Math.max(rangeStart, rangeEnd);
+  return segmentsFromRuns(text, runs)
+    .filter((s) => s.end > start && s.start < end)
+    .every((s) => pred({ ...base, ...cleanStyle(s.style) }));
+}
+
+/** Runs a partir do conteúdo de uma caixa em edição (`contenteditable`): cada nó de texto
+ *  herda o estilo do `<span>` mais próximo. Recebe só o que interessa de cada nó, pra ser
+ *  testável sem DOM. Quebras de linha já chegam como "\n" no texto dos pedaços. */
+export function runsFromPieces(pieces: Array<{ text: string; style: StyleOverride }>): TextRun[] {
+  const out: TextRun[] = [];
+  for (const p of pieces) {
+    if (!p.text) continue;
+    const style = cleanStyle(p.style);
+    const last = out[out.length - 1];
+    if (last && stylesEqual(cleanStyle(last), style)) last.text += p.text;
+    else out.push({ text: p.text, ...style });
+  }
+  return out;
+}

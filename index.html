@@ -65,6 +65,7 @@
     <section class="editor-workspace" aria-label="Área de edição">
       <div class="toolbar" id="toolbar" role="toolbar" aria-label="Propriedades da seleção"></div>
       <main class="stage" id="stage" aria-label="Canvas">
+        <div class="fontMissing" id="fontMissing" role="status" hidden></div>
         <div class="world" id="world">
           <div class="pagestack" id="pagestack"></div>
           <div class="ovl" id="ovl"></div>
@@ -72,6 +73,9 @@
         <div class="document-scroll" id="documentScroll" tabindex="0" aria-label="Rolar páginas"><div id="documentScrollSize"></div></div>
         <div class="seltoolbar" id="seltoolbar" hidden></div>
         <div class="textSelToolbar" id="textSelToolbar" hidden>
+          <button class="qbtn" data-tsel="bold" style="font-weight:800" title="Negrito no trecho (Ctrl+B)">B</button>
+          <button class="qbtn" data-tsel="italic" style="font-style:italic" title="Itálico no trecho (Ctrl+I)">I</button>
+          <button class="qbtn" data-tsel="underline" style="text-decoration:underline" title="Sublinhado no trecho (Ctrl+U)">U</button>
           <input type="color" id="textSelColor" class="qcolor" title="Cor do trecho selecionado">
         </div>
         <div class="proppop" id="proppop" hidden>

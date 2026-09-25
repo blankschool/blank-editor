@@ -648,3 +648,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* ---------- login page ---------- */
 
+
+/* Aviso de fonte do PDF que não está na biblioteca — discreto, no topo do canvas, sem cobrir
+   a página; "Depois" encolhe para um chip que reabre o aviso. */
+.fontMissing {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 15;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
+  background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warning);
+  border-radius: 10px; padding: 6px 8px 6px 12px; box-shadow: var(--shadow-lg); font-size: 12.5px;
+}
+.fontMissing[hidden] { display: none; }
+.fontMissing .fm-text { color: var(--text, inherit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fontMissing .fm-text b { font-weight: 600; }
+.fontMissing .fm-sub { color: var(--muted); }
+.fontMissing button { height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; white-space: nowrap; }
+.fontMissing .fm-add { background: var(--accent); color: #fff; }
+.fontMissing .fm-later { color: var(--muted); }
+.fontMissing.is-chip { padding: 4px 10px; cursor: pointer; border-left-width: 1px; }
