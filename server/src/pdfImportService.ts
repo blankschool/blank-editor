@@ -25,6 +25,14 @@ export type ImportedTextElement = {
    *  IA (server/src/render/googleFontMatch.ts) — sem isso não haveria como saber, depois da
    *  troca, qual fonte a arte original usava. */
   fontOriginal?: string;
+  /** Entrelinha, espaçamento entre letras (px), alinhamento e opacidade medidos no PDF
+   *  (pdf-import-service/scripts/pdf_layout.py). Ausentes em respostas de versões antigas. */
+  lh?: number;
+  ls?: number;
+  align?: "left" | "center" | "right";
+  opacity?: number;
+  /** Trechos de estilo dentro da caixa (mesmo formato de `TextRun` em src/types.ts). */
+  runs?: Array<{ text: string; font?: string; fontOriginal?: string; weight?: number; italic?: boolean; fill?: string }>;
 };
 
 export type ImportedImageElement = {

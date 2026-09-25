@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { countPdfPages, extractPageImages, renderPagePreview, type ExtractedImageElement } from "./extractImages.ts";
 import { extractFontsAndText, type ExtractedPageElement } from "./pythonExtract.ts";
 import { isFlattenedPage } from "./flatDetection.ts";
+import { assignImageZ, sortByPaintOrder } from "./paintOrder.ts";
 
 export class FlattenedPdfError extends Error {
   constructor() {
@@ -30,7 +31,7 @@ export interface ImportedImage {
 
 export type ImportedElement =
   | (ExtractedPageElement & { name?: string })
-  | { type: "image"; name: string; x: number; y: number; w: number; h: number; imageId: string };
+  | { type: "image"; name: string; x: number; y: number; w: number; h: number; imageId: string; z?: number | null };
 
 export interface ImportedPage {
   w: number;
@@ -80,7 +81,7 @@ const TARGET_WIDTH_PX = 1080;
  */
 function comEscalaDePagina(el: ExtractedPageElement, ptToPx: number): ExtractedPageElement {
   const posicao = { x: el.x * ptToPx, y: el.y * ptToPx, w: el.w * ptToPx, h: el.h * ptToPx };
-  if (el.type === "text") return { ...el, ...posicao, size: el.size * ptToPx };
+  if (el.type === "text") return { ...el, ...posicao, size: el.size * ptToPx, ls: (el.ls ?? 0) * ptToPx };
   return { ...el, ...posicao };
 }
 
@@ -93,7 +94,7 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
     const pageCount = await countPdfPages(pdfPath);
     if (pageCount < 1) throw new Error("PDF sem páginas");
 
-    const [{ fonts, elementsByPage, bgByPage }, ...imagePages] = await Promise.all([
+    const [{ fonts, elementsByPage, bgByPage, imageOrderByPage }, ...imagePages] = await Promise.all([
       extractFontsAndText(pdfPath, resolve(workDir, "fonts")),
       ...Array.from({ length: pageCount }, (_, i) =>
         extractPageImages(pdfPath, i + 1, resolve(workDir, `page-${i + 1}`), TARGET_WIDTH_PX)),
@@ -107,18 +108,18 @@ export async function importCanvaPdf(pdfBytes: Buffer): Promise<ImportResult> {
       const pageNumber = index + 1;
       const pageElements = (elementsByPage.get(pageNumber) ?? [])
         .map((el) => comEscalaDePagina(el, imageResult.ptToPx));
-      // Formas atrás de tudo, texto na frente — a única ordem que dá pra afirmar sem
-      // ambiguidade: formas e texto vêm do mesmo passo em Python (nessa ordem relativa,
-      // já correta), mas imagem vem de um passo totalmente separado (poppler-utils), sem
-      // informação de ordem de pintura entre as duas fontes de extração.
+      // Ordem de camadas = ordem real de pintura do PDF (`z`, ver paintOrder.ts). Antes era
+      // fixa (formas → imagens → texto), o que trocava camadas sempre que o design tinha texto
+      // atrás de foto ou forma por cima de imagem.
       const shapeElements = pageElements.filter((el) => el.type === "rect" || el.type === "path");
       const textElements = pageElements.filter((el) => el.type === "text");
-      const imageElements: ImportedElement[] = imageResult.elements.map((el: ExtractedImageElement) => {
+      const imageZ = assignImageZ(imageResult.elements, imageOrderByPage.get(pageNumber) ?? [], imageResult.ptToPx);
+      const imageElements: ImportedElement[] = imageResult.elements.map((el: ExtractedImageElement, i) => {
         const id = randomUUID();
         images.push({ id, contentType: el.contentType, bytes: el.bytes });
-        return { type: "image", name: el.name, x: el.x, y: el.y, w: el.w, h: el.h, imageId: id };
+        return { type: "image", name: el.name, x: el.x, y: el.y, w: el.w, h: el.h, imageId: id, z: imageZ[i] };
       });
-      const elements = [...shapeElements, ...imageElements, ...textElements];
+      const elements = sortByPaintOrder<ImportedElement>([...shapeElements, ...imageElements, ...textElements]);
 
       if (isFlattenedPage(
         // Formas não contam pra detecção de achatado — só "tem texto de verdade?" e "tem uma

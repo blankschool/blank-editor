@@ -1407,9 +1407,10 @@ export function buildApp(
         return {
           id: randomUUID(), type: "text" as const, name: `texto ${index + 1}`,
           x: el.x, y: el.y, w: el.w, h: el.h,
-          rot: el.rot, opacity: 1, locked: false, hidden: false,
+          rot: el.rot, opacity: el.opacity ?? 1, locked: false, hidden: false,
           fill: el.fill, stroke: "", strokeWidth: 0, radius: 0,
           text: el.text, font: el.font, weight: el.weight, size: el.size,
+          ...(el.runs?.length ? { runs: el.runs.map(({ fontOriginal: _, ...run }) => run) } : {}),
           ...(el.italic !== undefined ? { italic: el.italic } : {}),
           ...(el.autoFit ? { autoFit: true } : {}),
           ...(el.fontCategory ? { fontCategory: el.fontCategory } : {}),
@@ -1417,7 +1418,9 @@ export function buildApp(
           // posicionar cada linha — undefined vira NaN, e `fillText` com coordenada NaN não
           // desenha nada, em silêncio (achado exportando um design importado de verdade: a foto
           // saía, o texto sumia). 1.25 é o valor que os outros textos deste projeto já usam.
-          lh: 1.25, align: "left",
+          // Entrelinha/espaçamento/alinhamento medidos no PDF; 1.25/0/left só para respostas
+          // de versões antigas do microsserviço, que não mediam.
+          lh: el.lh ?? 1.25, ls: el.ls ?? 0, align: el.align ?? "left",
         };
       }),
     }));
@@ -1477,13 +1480,31 @@ export function buildApp(
             elements.push(fallback); continue;
           }
           if (usedAi) fontSubstitutions.push({ original: el.fontOriginal || el.font, replacement: resolved.family, reason: "ai-suggestion" });
-          const key = `${resolved.family}/${resolved.weight}/${resolved.style}`;
-          if (!registered.has(key)) {
-            const paths = await uploadFontFace(storage!.client, resolved.sha256, { ext: resolved.ext, bytes: resolved.bytes }, resolved.bytes, resolved.ext);
-            registered.set(key, { family: resolved.family, weight: resolved.weight, style: resolved.style,
-              sha256: resolved.sha256, ttf: paths.sfntPath, woff2: paths.woff2Path, source: resolved.source, subset: false });
-          }
-          elements.push({ ...el, font: resolved.family, weight: resolved.weight, italic: resolved.style === "italic", autoFit: true });
+          const register = async (face: NonNullable<typeof resolved>) => {
+            const key = `${face.family}/${face.weight}/${face.style}`;
+            if (registered.has(key)) return;
+            const paths = await uploadFontFace(storage!.client, face.sha256, { ext: face.ext, bytes: face.bytes }, face.bytes, face.ext);
+            registered.set(key, { family: face.family, weight: face.weight, style: face.style,
+              sha256: face.sha256, ttf: paths.sfntPath, woff2: paths.woff2Path, source: face.source, subset: false });
+          };
+          await register(resolved);
+          // Trechos com fonte/peso/itálico diferentes do principal precisam da própria face
+          // registrada; se não resolver, o trecho herda a fonte do elemento (mantém peso/cor).
+          const runs = el.runs ? await Promise.all(el.runs.map(async ({ fontOriginal, ...run }) => {
+            if (!run.font && run.weight === undefined && run.italic === undefined) return run;
+            const face = await resolveImportFont({
+              family: fontOriginal || run.font || el.fontOriginal || el.font,
+              weight: run.weight ?? el.weight, italic: run.italic ?? resolved!.style === "italic", text: run.text,
+            });
+            if (!face) { const { font: _, ...rest } = run; return rest; }
+            await register(face);
+            return { ...run, ...(face.family !== resolved!.family ? { font: face.family } : {}), weight: face.weight, italic: face.style === "italic" };
+          })) : undefined;
+          // Só reajusta o corpo (autoFit) quando a fonte foi TROCADA por outra (sugestão de IA):
+          // com a mesma família do PDF, as medidas (size/lh/ls/caixa) já batem com o original e
+          // o autoFit só mudaria o tamanho do texto em relação ao PDF.
+          elements.push({ ...el, font: resolved.family, weight: resolved.weight, italic: resolved.style === "italic",
+            ...(runs ? { runs } : {}), ...(usedAi ? { autoFit: true } : {}) });
         }
         normalized.push({ ...page, elements });
       }

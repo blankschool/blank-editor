@@ -2551,6 +2551,14 @@ function tokenizeRuns(runs: any[]): any[] {
  *  inteira. Precisa remedir a largura de cada palavra (não só a linha inteira) porque uma
  *  palavra em negrito no meio da frase é mais larga que a mesma palavra sem negrito — ela pode
  *  empurrar a quebra de linha pra um ponto diferente do que o texto plano teria. */
+/** Baseline (textBaseline "alphabetic") da linha `i` no mesmo modelo do CSS line-height:
+ *  a área ascent+descent da fonte atual fica centrada na caixa de linha de altura `lh`. */
+function cssBaseline(x: CanvasRenderingContext2D, i: number, lh: number): number {
+  const m = x.measureText("Hg");
+  const asc = m.fontBoundingBoxAscent, desc = m.fontBoundingBoxDescent;
+  return i * lh + (lh - (asc + desc)) / 2 + asc;
+}
+
 function drawRichText(x: CanvasRenderingContext2D, e: any) {
   const tokens = tokenizeRuns(e.runs);
   const spaceWidth = (run: any) => { x.font = richFont(e, run); return x.measureText(" ").width; };
@@ -2577,14 +2585,15 @@ function drawRichText(x: CanvasRenderingContext2D, e: any) {
     let lineWidth = 0;
     line.forEach((tok, j) => { lineWidth += wordWidth(tok) + (j > 0 ? spaceWidth(tok.run) : 0); });
     let cx = e.align === "center" ? (e.w - lineWidth) / 2 : e.align === "right" ? e.w - lineWidth : 0;
-    const ty = i * lh + (lh - e.size) / 2;
+    x.font = richFont(e, line[0]?.run ?? {});
+    const ty = cssBaseline(x, i, lh);
     line.forEach((tok, j) => {
       if (j > 0) cx += spaceWidth(tok.run);
       x.font = richFont(e, tok.run);
       x.fillStyle = tok.run.fill || e.fill;
       x.fillText(tok.text, cx, ty);
       const w = x.measureText(tok.text).width;
-      if (tok.run.underline) x.fillRect(cx, ty + e.size * 1.02, w, Math.max(1, e.size / 16));
+      if (tok.run.underline) x.fillRect(cx, ty + e.size * 0.12, w, Math.max(1, e.size / 16));
       cx += w;
     });
   });
@@ -2670,8 +2679,12 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
         measure.remove();
       }
     }
-    x.textBaseline = "top";
-    if (e.runs && e.runs.length) { drawRichText(x, e); return; }
+    // Baseline como no CSS (editorTextHtml): meia-entrelinha em volta da área de conteúdo
+    // ascent+descent da fonte, não do em-box — senão o PNG/PDF exportado desloca o texto em
+    // relação ao que o editor mostra (e ao PDF importado, medido nesse mesmo modelo).
+    x.textBaseline = "alphabetic";
+    (x as any).letterSpacing = `${Number(e.ls) || 0}px`;
+    if (e.runs && e.runs.length) { drawRichText(x, e); (x as any).letterSpacing = "0px"; return; }
     x.fillStyle = e.fill;
     x.font = `${e.italic ? "italic " : ""}${e.weight} ${e.size}px "${e.font}", Inter, system-ui, sans-serif`;
     const lh = e.size * e.lh;
@@ -2688,10 +2701,11 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
     lines.forEach((ln, i) => {
       const w = x.measureText(ln).width;
       const tx = e.align === "center" ? (e.w - w) / 2 : e.align === "right" ? e.w - w : 0;
-      const ty = i * lh + (lh - e.size) / 2;
+      const ty = cssBaseline(x, i, lh);
       x.fillText(ln, tx, ty);
-      if (e.underline) { x.fillRect(tx, ty + e.size * 1.02, w, Math.max(1, e.size / 16)); }
+      if (e.underline) { x.fillRect(tx, ty + e.size * 0.12, w, Math.max(1, e.size / 16)); }
     });
+    (x as any).letterSpacing = "0px";
   }
 }
 
