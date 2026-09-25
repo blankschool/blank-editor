@@ -2239,7 +2239,7 @@ function fontListHtml(): string {
   const query = fontQuery.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
   const shared = fontCategory ? [] : [...new Set(globalFonts.map(f => f.family))]
     .filter(f => fontLabel(f).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().includes(query));
-  const status = globalFontsLoading ? `<p class="phint">Carregando fontes compartilhadas…</p>`
+  const status = globalFontsLoading ? `<div aria-busy="true" aria-label="Carregando fontes">${'<div class="sk skrow"></div>'.repeat(6)}</div>`
     : globalFontsError ? `<p class="phint">Não foi possível carregar as fontes compartilhadas.</p><button data-retry-fonts>Tentar novamente</button>` : "";
   if (!found.length && !mine.length && !shared.length) return status || `<p class="phint">Nenhuma fonte com esse nome.</p>`;
   return status
@@ -2332,7 +2332,7 @@ let stockDebounce: ReturnType<typeof setTimeout> | undefined;
 function stockListHtml(): string {
   if (stockState === "desligado") return `<p class="phint">O banco de imagens não está configurado neste servidor.</p>`;
   if (stockState === "erro") return `<p class="phint">Não foi possível buscar agora. Tente de novo.</p>`;
-  if (stockState === "buscando" && !stockPhotos.length) return `<p class="phint">Buscando…</p>`;
+  if (stockState === "buscando" && !stockPhotos.length) return `<div class="skgrid" aria-busy="true" aria-label="Buscando fotos">${'<div class="sk"></div>'.repeat(8)}</div>`;
   if (!stockPhotos.length) {
     return `<p class="phint">${stockQuery.trim() ? "Nenhuma foto com esse termo." : "Digite um termo para buscar."}</p>`;
   }
@@ -4522,6 +4522,21 @@ let pendingDocument = false;
 // Harmless (they'd all converge on the same result) but wasteful, so skip re-entry.
 let loadingTemplateId: string | null = null;
 
+/** Mostra uma página-esqueleto no canvas enquanto o design abre, em vez do design anterior ou de um canvas vazio. */
+function showStageSkeleton(on: boolean) {
+  const stage = document.getElementById("stage");
+  if (!stage) return;
+  let sk = stage.querySelector<HTMLElement>(".stageSkeleton");
+  if (!on) { sk?.remove(); return; }
+  if (sk) return;
+  sk = document.createElement("div");
+  sk.className = "stageSkeleton";
+  sk.setAttribute("aria-busy", "true");
+  sk.setAttribute("aria-label", "Abrindo design");
+  sk.innerHTML = `<div class="page sk"><div class="sk" style="height:9%;width:70%"></div><div class="sk" style="height:5%;width:45%"></div><div class="sk" style="flex:1"></div><div class="sk" style="height:5%;width:60%"></div></div>`;
+  stage.appendChild(sk);
+}
+
 /** Opens a template by id, preferring the server's copy over the local cache — the server is the source of truth once a template exists there. */
 export async function openTemplateById(id: string) {
   if (loadingTemplateId === id) return;
@@ -4534,11 +4549,12 @@ export async function openTemplateById(id: string) {
   // the console silently updated the URL but left the console on screen until a manual reload.
   const target = `#/editor/${encodeURIComponent(id)}`;
   if (location.hash !== target) location.hash = target;
+  showStageSkeleton(true);
   try {
     await openTemplateDocument(await fetchTemplateFromServer(id));
     return;
   } catch { /* offline, or not created on the server yet — fall back to whatever's local */ }
-  finally { if (loadingTemplateId === id) loadingTemplateId = null; }
+  finally { if (loadingTemplateId === id) loadingTemplateId = null; showStageSkeleton(false); }
   const local = loadTemplateLocally(id) ?? (id === TWEET_TEMPLATE_ID ? createTweetTemplateDocument() : null);
   if (local) await openTemplateDocument(local).catch(() => toast("Não foi possível carregar as fontes do design."));
   else toast("Não foi possível abrir esse template.");

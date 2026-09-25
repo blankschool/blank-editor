@@ -66,9 +66,9 @@ const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-
 function SkeletonCard() {
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="aspect-square animate-pulse rounded-lg bg-inset" />
-      <div className="h-3 w-2/3 animate-pulse rounded bg-inset" />
-      <div className="h-2.5 w-1/3 animate-pulse rounded bg-inset" />
+      <div className="aspect-square sk rounded-lg" />
+      <div className="sk h-3 w-2/3 rounded" />
+      <div className="sk h-2.5 w-1/3 rounded" />
     </div>
   );
 }
@@ -260,7 +260,7 @@ export function DesignsView() {
     return (
       <div className="flex flex-col gap-7 p-5" aria-busy="true" aria-label="Carregando designs">
         {overlay}
-        <div className="h-9 w-40 animate-pulse rounded bg-inset" />
+        <div className="sk h-9 w-40 rounded" />
         <div className={GRID}>
           {Array.from({ length: 8 }, (_, i) => (
             <SkeletonCard key={i} />

@@ -13,10 +13,20 @@
      /api/v1/auth/me, via cookie httpOnly que o JS nunca lê direto), nenhuma das três rotas
      aparece ainda — sem isso, quem já está logado veria a tela de login piscar por um
      instante a cada refresh. router.ts esconde isto assim que a sessão resolve. -->
-<div id="view-loading" style="position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#0b0e11;">
-  <div style="width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,255,255,0.18); border-top-color:#fff; animation:be-spin 0.8s linear infinite;"></div>
+<div id="view-loading" aria-busy="true" aria-label="Carregando" style="position:fixed; inset:0; background:#000; display:grid; grid-template-rows:64px 1fr; grid-template-columns:240px 1fr;">
+  <div style="grid-column:1/3; border-bottom:1px solid #1c2127; display:flex; align-items:center; gap:12px; padding:0 32px;"><i class="bsk" style="width:32px;height:32px;border-radius:8px"></i><i class="bsk" style="width:140px;height:14px"></i></div>
+  <div class="bsk-side" style="border-right:1px solid #1c2127; padding:20px 12px; display:flex; flex-direction:column; gap:12px;"><i class="bsk" style="height:40px;border-radius:8px"></i><i class="bsk" style="height:14px;width:70%"></i><i class="bsk" style="height:14px;width:60%"></i><i class="bsk" style="height:14px;width:50%"></i></div>
+  <div style="padding:24px; display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:16px; align-content:start;"><i class="bsk" style="height:36px;width:160px;grid-column:1/-1"></i><i class="bsk bcard"></i><i class="bsk bcard"></i><i class="bsk bcard"></i><i class="bsk bcard"></i><i class="bsk bcard"></i><i class="bsk bcard"></i></div>
 </div>
-<style>@keyframes be-spin { to { transform: rotate(360deg); } }</style>
+<style>
+  .bsk { display:block; position:relative; overflow:hidden; background:#12161a; border-radius:6px; }
+  .bsk::after { content:""; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent); animation:bsk 1.3s ease-in-out infinite; }
+  .bcard { aspect-ratio:1; border-radius:10px; }
+  @keyframes bsk { to { transform:translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) { .bsk::after { animation:none; } }
+  @media (max-width: 767px) { #view-loading { grid-template-columns:1fr !important; } #view-loading .bsk-side { display:none !important; } }
+  @media (prefers-color-scheme: light) { #view-loading { background:#fff !important; } #view-loading > div { border-color:#e6e8eb !important; } .bsk { background:#eef0f2; } .bsk::after { background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent); } }
+</style>
 <div id="view-login" style="display:none; height:100%"></div>
 <div id="view-console" style="display:none; height:100%"></div>
 <div id="view-p" style="display:none; height:100%; overflow-y:auto"></div>
