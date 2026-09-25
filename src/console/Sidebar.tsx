@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, LayoutGrid, Monitor, Moon, PanelLeft, Plus, Search, Settings, Sun } from "lucide-react";
+import { BookOpen, LayoutGrid, Monitor, Moon, PanelLeft, Plus, CircleUserRound, Sun } from "lucide-react";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { cn } from "@/lib/utils";
 import { Segmented } from "@/components/ui/segmented";
@@ -8,7 +8,7 @@ import { DEV_VIEWS, goToView, openNewDesign, set, useConsole, type View } from "
 const NAV: ReadonlyArray<{ view: View; label: string; icon: typeof LayoutGrid }> = [
   { view: "designs", label: "Designs", icon: LayoutGrid },
   { view: "docs", label: "Documentação", icon: BookOpen },
-  { view: "account", label: "Conta", icon: Settings },
+  { view: "account", label: "Conta", icon: CircleUserRound },
 ];
 
 const THEME_OPTIONS = [
@@ -18,6 +18,7 @@ const THEME_OPTIONS = [
 ];
 
 const THEME_ICON: Record<ThemeChoice, typeof Monitor> = { system: Monitor, light: Sun, dark: Moon };
+const THEME_LABEL: Record<ThemeChoice, string> = { system: "Sistema", light: "Claro", dark: "Escuro" };
 const THEME_ORDER: ThemeChoice[] = ["system", "light", "dark"];
 
 function ThemeControl({ expanded }: { expanded: boolean }) {
@@ -33,8 +34,8 @@ function ThemeControl({ expanded }: { expanded: boolean }) {
     return (
       <button
         type="button"
-        title={`Tema: ${choice}`}
-        aria-label={`Tema: ${choice}`}
+        title={`Tema: ${THEME_LABEL[choice]}`}
+        aria-label={`Tema: ${THEME_LABEL[choice]}`}
         onClick={() => apply(THEME_ORDER[(THEME_ORDER.indexOf(choice) + 1) % THEME_ORDER.length])}
         className="mx-2 flex h-10 items-center justify-center rounded-md text-faint hover:bg-surface-2 hover:text-muted"
       >
@@ -94,24 +95,9 @@ export function Sidebar() {
         </button>
       </div>
 
-      {expanded && (
-        <div className="px-3 pb-4 pt-1">
-          <div className="flex h-10 items-center gap-2 rounded-md border border-line bg-surface-2 px-3">
-            <Search size={16} strokeWidth={1.5} className="flex-none text-faint" />
-            <input
-              value={s.search}
-              onChange={(e) => set("search", e.target.value)}
-              placeholder="Buscar…"
-              aria-label="Buscar"
-              className="min-w-0 flex-1 border-none bg-transparent text-sm text-text outline-none"
-            />
-          </div>
-        </div>
-      )}
-
       <nav className="flex flex-col gap-1 px-3">
         {NAV.map(({ view, label, icon: Icon }) => {
-          const active = s.view === view || (view === "account" && DEV_VIEWS.includes(s.view));
+          const active = s.view === view || (view === "account" && DEV_VIEWS.includes(s.view)) || (view === "designs" && s.view === "import");
           return (
             <button
               key={view}

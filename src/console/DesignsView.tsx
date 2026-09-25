@@ -1,8 +1,8 @@
-import { useEffect } from "react";
-import { CloudOff, Plus, Sparkles, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CloudOff, FileUp, Plus, Search, Sparkles, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
-import { goToView, loadTemplates, openNewDesign, recentTemplates, set, useConsole } from "./store";
+import { goToView, importTemplatePdf, loadTemplates, openNewDesign, recentTemplates, set, useConsole } from "./store";
 import { DesignCard } from "./DesignCard";
 
 const SORTS = [{ value: "Recentes" }, { value: "A-Z" }, { value: "Favoritos" }] as const;
@@ -57,6 +57,126 @@ function EmptyState() {
         <Upload size={12} strokeWidth={1.5} />
         ou importar um PDF do Canva
       </button>
+    </div>
+  );
+}
+
+const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+
+function SkeletonCard() {
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="aspect-square animate-pulse rounded-lg bg-inset" />
+      <div className="h-3 w-2/3 animate-pulse rounded bg-inset" />
+      <div className="h-2.5 w-1/3 animate-pulse rounded bg-inset" />
+    </div>
+  );
+}
+
+/** Card temporário no começo da grade enquanto um PDF solto na home é importado. */
+function ImportingCard({ name }: { name: string }) {
+  return (
+    <div className="flex flex-col overflow-hidden rounded-lg border border-accent/40 bg-surface" aria-live="polite">
+      <div className="flex aspect-square animate-pulse items-center justify-center bg-inset">
+        <FileUp size={26} strokeWidth={1.6} className="text-accent" aria-hidden />
+      </div>
+      <div className="flex flex-col gap-1 px-3.5 py-3">
+        <strong className="truncate font-display text-[13.5px] font-semibold">Importando…</strong>
+        <span className="truncate text-[11px] text-faint">{name}</span>
+      </div>
+    </div>
+  );
+}
+
+function hasPdf(event: DragEvent) {
+  const items = event.dataTransfer?.items;
+  if (!items) return false;
+  return [...items].some((item) => item.kind === "file" && (item.type === "application/pdf" || item.type === ""));
+}
+
+/** Soltar um PDF em qualquer lugar da home importa como design novo. */
+function usePdfDrop() {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  useEffect(() => {
+    const enter = (e: DragEvent) => {
+      if (!hasPdf(e)) return;
+      e.preventDefault();
+      depth.current += 1;
+      setOver(true);
+    };
+    const overFn = (e: DragEvent) => {
+      if (hasPdf(e)) e.preventDefault();
+    };
+    const leave = () => {
+      depth.current = Math.max(0, depth.current - 1);
+      if (depth.current === 0) setOver(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      depth.current = 0;
+      setOver(false);
+      void importTemplatePdf(e.dataTransfer.files[0]);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragover", overFn);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragover", overFn);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
+  return over;
+}
+
+function SearchField() {
+  const s = useConsole();
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      input.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return (
+    <div className="flex h-10 w-full max-w-[360px] items-center gap-2 rounded-md border border-line bg-surface-2 px-3 focus-within:border-accent">
+      <Search size={16} strokeWidth={1.6} className="flex-none text-faint" aria-hidden />
+      <input
+        ref={input}
+        value={s.search}
+        onChange={(e) => set("search", e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && set("search", "")}
+        placeholder="Buscar nos seus designs"
+        aria-label="Buscar nos seus designs"
+        className="min-w-0 flex-1 border-none bg-transparent text-sm text-text outline-none"
+      />
+      {s.search ? (
+        <button
+          type="button"
+          title="Limpar busca"
+          aria-label="Limpar busca"
+          onClick={() => {
+            set("search", "");
+            input.current?.focus();
+          }}
+          className="flex h-6 w-6 flex-none items-center justify-center rounded-sm text-faint hover:bg-surface hover:text-text"
+        >
+          <X size={14} strokeWidth={1.8} />
+        </button>
+      ) : (
+        <kbd className="flex-none rounded border border-line px-1.5 font-mono text-[10px] text-faint" title="Atalho: /">
+          /
+        </kbd>
+      )}
     </div>
   );
 }
@@ -125,12 +245,34 @@ export function DesignsView() {
   // "Recentes" é a home com destaque; os outros dois são navegar um subconjunto específico.
   const heroLayout = !searching && s.sort === "Recentes";
 
+  const dragging = usePdfDrop();
+  const importing = s.pdfImportStatus === "processando" ? (s.pdfImportFile?.name ?? "PDF") : null;
+  const importingCard = importing ? <ImportingCard name={importing} /> : null;
+
+  const overlay = dragging && (
+    <div className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 border-2 border-dashed border-accent bg-accent-soft/80">
+      <FileUp size={40} strokeWidth={1.6} className="text-accent" aria-hidden />
+      <span className="font-display text-[17px] font-semibold text-text">Solte para importar como novo design</span>
+    </div>
+  );
+
   if (!s.templatesLoaded) {
-    return <div className="p-5 font-mono text-xs text-faint">carregando…</div>;
+    return (
+      <div className="flex flex-col gap-7 p-5" aria-busy="true" aria-label="Carregando designs">
+        {overlay}
+        <div className="h-9 w-40 animate-pulse rounded bg-inset" />
+        <div className={GRID}>
+          {Array.from({ length: 8 }, (_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="flex flex-col gap-7 p-5">
+      {overlay}
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="font-display text-[17px] font-semibold -tracking-[0.01em]">Seus designs</h1>
@@ -144,7 +286,13 @@ export function DesignsView() {
                 : `${all.length} ${all.length === 1 ? "design" : "designs"}`}
           </span>
         </div>
-        <div className="flex-1" />
+        <div className="flex flex-1 justify-center">
+          <SearchField />
+        </div>
+        <Button variant="outline" onClick={() => goToView("import")}>
+          <FileUp size={15} strokeWidth={1.8} />
+          Importar PDF
+        </Button>
         {/* Total de designs, não `all.length`: "Favoritos" filtra a lista, e se isso
             escondesse o controle junto, filtrar pra zero favoritos trancaria a pessoa
             nessa visão sem jeito de voltar pra "Recentes". */}
@@ -152,6 +300,8 @@ export function DesignsView() {
           <Segmented aria-label="Ordenar" value={s.sort} onValueChange={(v) => set("sort", v)} options={SORTS} />
         )}
       </div>
+
+      {importingCard && (all.length === 0 || !heroLayout) && <div className={GRID}>{importingCard}</div>}
 
       {all.length === 0 ? (
         s.sync === "failed" ? (
@@ -177,6 +327,7 @@ export function DesignsView() {
               três recentes da mesma linha. */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr]">
             <NewDesignCard />
+            {importingCard}
             {recent.map((t) => (
               <DesignCard key={t.id} template={t} />
             ))}

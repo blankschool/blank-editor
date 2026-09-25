@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { ImageOff, Pencil, Star } from "lucide-react";
+import { Copy, Download, ImageOff, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -44,7 +51,7 @@ function Cover({ id, version }: { id: string; version: string }) {
     return (
       <div className="flex flex-col items-center gap-1.5 text-faint">
         <ImageOff size={22} strokeWidth={1.4} aria-hidden />
-        <span className="text-[10px]">sem capa</span>
+        <span className="text-[11px]">Sem miniatura</span>
       </div>
     );
   }
@@ -93,9 +100,9 @@ function Name({ template }: { template: TemplateSummary }) {
           }}
           title="Renomear"
           aria-label={`Renomear ${template.name}`}
-          className="flex h-5 w-5 flex-none items-center justify-center rounded-[6px] text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
+          className="flex h-6 w-6 flex-none items-center justify-center rounded-[6px] text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
         >
-          <Pencil size={11} strokeWidth={1.7} />
+          <Pencil size={14} strokeWidth={1.7} />
         </button>
       </div>
     );
@@ -157,12 +164,42 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
               title={template.favorite ? "Remover dos favoritos" : "Favoritar"}
               aria-label={template.favorite ? `Remover ${name} dos favoritos` : `Favoritar ${name}`}
               aria-pressed={template.favorite}
-              className={`absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 shadow-pop backdrop-blur transition-opacity ${
+              className={`absolute right-11 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 shadow-pop backdrop-blur transition-opacity ${
                 template.favorite ? "opacity-100 text-accent" : "opacity-0 text-faint hover:text-text group-hover:opacity-100 focus-visible:opacity-100"
               }`}
             >
               <Star size={14} strokeWidth={1.8} fill={template.favorite ? "currentColor" : "none"} />
             </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                title="Mais opções"
+                aria-label={`Mais opções de ${name}`}
+                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-surface/90 text-faint opacity-0 shadow-pop backdrop-blur transition-opacity hover:text-text focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+              >
+                <MoreHorizontal size={16} strokeWidth={1.8} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+                <DropdownMenuItem onSelect={() => setTimeout(() => startRenaming(id), 0)}>
+                  <Pencil size={15} strokeWidth={1.6} />
+                  Renomear
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => duplicateTemplate(id, name)}>
+                  <Copy size={15} strokeWidth={1.6} />
+                  Duplicar
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => downloadTemplate(id)}>
+                  <Download size={15} strokeWidth={1.6} />
+                  Baixar
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem danger onSelect={() => askDeleteTemplate(id, name)}>
+                  <Trash2 size={15} strokeWidth={1.6} />
+                  Excluir
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <div className="flex flex-col gap-1 px-3.5 py-3">
             <Name template={template} />
@@ -172,14 +209,18 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
       </ContextMenuTrigger>
 
       <ContextMenuContent>
-        <ContextMenuItem
+        <ContextMenuItem className="flex items-center gap-2"
           onSelect={() => {
             setTimeout(() => startRenaming(id), 0); // depois do restore de foco do Radix, senão o autoFocus do input é desfeito
           }}
         >
+          <Pencil size={15} strokeWidth={1.6} />
           Renomear
         </ContextMenuItem>
-        <ContextMenuItem onSelect={() => duplicateTemplate(id, name)}>Duplicar</ContextMenuItem>
+        <ContextMenuItem className="flex items-center gap-2" onSelect={() => duplicateTemplate(id, name)}>
+          <Copy size={15} strokeWidth={1.6} />
+          Duplicar
+        </ContextMenuItem>
         <ContextMenuItem onSelect={() => toggleTemplateFavorite(id)}>
           {template.favorite ? "Remover dos favoritos" : "Favoritar"}
         </ContextMenuItem>
@@ -192,7 +233,10 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
         >
           Testar na API
         </ContextMenuItem>
-        <ContextMenuItem onSelect={() => downloadTemplate(id)}>Baixar</ContextMenuItem>
+        <ContextMenuItem className="flex items-center gap-2" onSelect={() => downloadTemplate(id)}>
+          <Download size={15} strokeWidth={1.6} />
+          Baixar
+        </ContextMenuItem>
         {/* onSelect com preventDefault: o menu tem que ficar aberto para o "ID copiado" ser visto. */}
         <ContextMenuItem
           onSelect={(event) => {
@@ -203,7 +247,8 @@ export function DesignCard({ template }: { template: TemplateSummary }) {
           {s.copied === `tpl-${id}` ? "ID copiado" : "Copiar ID"}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem danger onSelect={() => askDeleteTemplate(id, name)}>
+        <ContextMenuItem className="flex items-center gap-2" danger onSelect={() => askDeleteTemplate(id, name)}>
+          <Trash2 size={15} strokeWidth={1.6} />
           Excluir
         </ContextMenuItem>
       </ContextMenuContent>

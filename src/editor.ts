@@ -8,6 +8,7 @@ import {
 import { loadDesignFonts } from "./designFontLoader";
 import { fetchGlobalFonts, registeredDocFont, withGlobalFontFamily, type RegisteredFontFace } from "./globalFontLibrary.ts";
 import { b64ToBytes, buildPDF } from "./pdf";
+import { buildZip } from "./zip";
 import type { Doc, DocFont, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
 import { copyStyle, distribute, pasteStyle, toggleBullets, type CopiedStyle } from "./editorActions.ts";
@@ -98,7 +99,9 @@ let lastClickId: string | null = null;
 let lastClickTime = 0;
 // Keep the position/layers inspector open across selection and history changes.
 let propPopOpen = false;
-let panelTab: "organize" | "layers" | "code" = "organize";
+let ratioLock = false;
+let layerFilter: "all" | "overlap" = "all";
+let panelTab: "organize" | "layers" | "code" | "effects" = "organize";
 let ctxMenuOpen = false;
 let activeTab: string | null = null;
 let fitView = true;
@@ -269,11 +272,26 @@ function forgetDeletedDesign(id: string | undefined) {
   designGone = true;
   if (id) forgetRecentDesign(id);
 }
+const SAVE_ICON = (paths: string, cls = "") => `<svg class="${cls}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const SAVE_STATES = {
+  saved: { label: "Todas as alterações foram salvas", icon: SAVE_ICON(`<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/><path d="m9 14 2 2 4-4"/>`), text: "" },
+  saving: { label: "Salvando…", icon: SAVE_ICON(`<path d="M21 12a9 9 0 1 1-6.2-8.6"/>`, "spin"), text: "Salvando…" },
+  error: { label: "Erro ao salvar", icon: SAVE_ICON(`<path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.3-.2"/><path d="M21.5 15.5A4.5 4.5 0 0 0 17.5 10h-1.8A7 7 0 0 0 10 5.1"/>`), text: "Erro ao salvar" },
+  gone: { label: "Design excluído", icon: SAVE_ICON(`<path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.3-.2"/><path d="M21.5 15.5A4.5 4.5 0 0 0 17.5 10h-1.8A7 7 0 0 0 10 5.1"/>`), text: "Design excluído" },
+} as const;
+/** Nuvem como no Canva: só ícone quando salvo; texto aparece apenas enquanto salva ou se falhar. */
+function setSaveStatus(st: HTMLElement, state: keyof typeof SAVE_STATES) {
+  const d = SAVE_STATES[state];
+  st.innerHTML = d.icon + (d.text ? `<span>${d.text}</span>` : "");
+  st.title = d.label; st.setAttribute("aria-label", d.label);
+  st.dataset.state = state === "gone" ? "error" : state;
+}
+{ const st = document.getElementById("saveStatus"); if (st) setSaveStatus(st, "saved"); }
 function persist() {
   clearTimeout(persistTimer);
   const seq = ++persistSeq;
   const st = document.getElementById("saveStatus");
-  if (st) { st.textContent = "Salvando…"; st.dataset.state = "saving"; }
+  if (st) setSaveStatus(st, "saving");
   persistTimer = setTimeout(async () => {
     try { localStorage.setItem(LS, JSON.stringify(doc)); } catch (e) { /* quota or blocked */ }
     saveTemplateLocally(doc);
@@ -281,10 +299,7 @@ function persist() {
     if (result === "saved" && looksGenerated(doc.seedId)) void refreshGenerationReview();
     if (result === "gone") forgetDeletedDesign(doc.seedId);
     if (seq !== persistSeq) return;
-    if (st) {
-      st.textContent = { saved: "Salvo", gone: "Design excluído", failed: "Erro ao salvar" }[result];
-      st.dataset.state = result === "saved" ? "saved" : "error";
-    }
+    if (st) setSaveStatus(st, result === "saved" ? "saved" : result === "gone" ? "gone" : "error");
   }, 400);
 }
 function loadPersisted() {
@@ -470,11 +485,10 @@ function pageHeaderHtml(i: number, p: Page): string {
   return `<div class="pagehead" data-pageidx="${i}">
     <span class="plabel2">Página ${i + 1}<small>${p.hidden ? " · oculta" : ` · ${p.w} × ${p.h}`}</small></span>
     <div class="pageminis">
-      ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover para cima", i === 0)}
-      ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover para baixo", i === doc.pages.length - 1)}
-      ${pageMini("hidepage", p.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn, i, p.hidden ? "Mostrar página" : "Ocultar página")}
+      ${pageMini("moveuppage", PAGE_MINI.up, i, "Mover página para cima", i === 0)}
+      ${pageMini("movedownpage", PAGE_MINI.down, i, "Mover página para baixo", i === doc.pages.length - 1)}
       ${pageMini("duppage", PAGE_MINI.dup, i, "Duplicar página")}
-      ${doc.pages.length > 1 ? pageMini("delpage", PAGE_MINI.del, i, "Excluir página") : ""}
+      ${pageMini("pagemore", PAGE_MINI.more, i, "Mais opções da página")}
     </div>
   </div>`;
 }
@@ -494,7 +508,7 @@ function renderCanvas() {
         .join("")}</div>
     </div>`).join("") +
     `<button class="addpagebtn" id="addPageCanvas" style="top:${stackHeight() + 20 / zoom}px; width:${stackW}px;">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6M12 12v6"/></svg>
       Adicionar página
     </button>`;
   fitTextElements(stack);
@@ -589,7 +603,7 @@ function renderOverlay() {
   } else {
     const b = bbox(els);
     html += `<div class="box multi" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px">
-      <div class="tag num" style="left:0;top:0">${els.length} selected</div>
+      <div class="tag num" style="left:0;top:0">${els.length} selecionados</div>
       ${["nw", "ne", "se", "sw"].map((k) => {
         const [, fx, fy] = HANDLES.find((h) => h[0] === k);
         return `<div class="hdl" data-h="${k}" data-multi="1" title="Redimensionar" style="left:${fx * 100}%;top:${fy * 100}%;cursor:${CURSORS[k]};pointer-events:auto"></div>`;
@@ -627,20 +641,59 @@ function positionFloatingUI() {
 }
 
 const EYEDROP_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>`;
-const PAINT_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="6" x="2" y="2" rx="2"/><path d="M10 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="4" height="6" x="8" y="16" rx="1"/></svg>`;
+const PAINT_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.622 17.897-10.68-2.913"/><path d="M18.376 2.622a1 1 0 1 1 3.002 3.002L17.36 9.643a.5.5 0 0 0 0 .707l.944.944a2.41 2.41 0 0 1 0 3.408l-.944.944a.5.5 0 0 1-.707 0L8.354 7.348a.5.5 0 0 1 0-.707l.944-.944a2.41 2.41 0 0 1 3.408 0l.944.944a.5.5 0 0 0 .707 0z"/><path d="M9 8c-1.804 2.71-3.97 3.46-6.583 3.948a.507.507 0 0 0-.302.819l7.32 8.883a1 1 0 0 0 1.185.204C12.735 20.405 16 16.792 16 15"/></svg>`;
 const QALIGN_ICON = {
   left: `<path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/>`,
   center: `<path d="M4 6h16"/><path d="M7 12h10"/><path d="M5.5 18h13"/>`,
   right: `<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>`,
   justify: `<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>`,
 };
-const FLIP_H_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 7L4 12l4 5z"/><path d="M16 7l4 5-4 5z"/></svg>`;
-const FLIP_V_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M7 8l5-4 5 4z"/><path d="M7 16l5 4 5-4z"/></svg>`;
 const REPLACE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 14l3-3 2.5 2.5L17 10l2 2"/><circle cx="8" cy="9" r="1.3"/></svg>`;
 const LOCK_ICON = (locked: boolean) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${locked ? `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>` : `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>`}</svg>`;
 const DUP_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 const DEL_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
-const MORE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+const MORE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>`;
+const icon24 = (body: string) => `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const RADIUS_ICON = icon24(`<path d="M3 21V10a7 7 0 0 1 7-7h11"/>`);
+const SPACING_ICON = icon24(`<path d="M21 5H11"/><path d="M21 12H11"/><path d="M21 19H11"/><path d="m3 8 3-3 3 3"/><path d="m3 16 3 3 3-3"/><path d="M6 5v14"/>`);
+const OPACITY_ICON = icon24(`<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h6v6H3z M9 3h6v6H9z M15 9h6v6h-6z M9 15h6v6H9z" fill="currentColor" stroke="none" opacity=".35"/>`);
+const BORDER_ICON = icon24(`<path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1M9 21h1M14 3h1M14 21h1M3 9v1M21 9v1M3 14v1M21 14v1"/>`);
+const MINUS_ICON = icon24(`<path d="M5 12h14"/>`);
+const PLUS_ICON = icon24(`<path d="M5 12h14"/><path d="M12 5v14"/>`);
+const BOLD_ICON = icon24(`<path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/>`);
+const ITALIC_ICON = icon24(`<path d="M19 4h-9"/><path d="M14 20H5"/><path d="M15 4 9 20"/>`);
+const UNDERLINE_ICON = icon24(`<path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/>`);
+const STRIKE_ICON = icon24(`<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><path d="M4 12h16"/>`);
+const CASE_UPPER_ICON = icon24(`<path d="m3 15 4-8 4 8"/><path d="M4 13h6"/><path d="M15 11h4.5a2 2 0 0 1 0 4H15V7h4a2 2 0 0 1 0 4"/>`);
+const LIST_ICON = icon24(`<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>`);
+const SPARKLES_ICON = icon24(`<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/>`);
+const FLIP2_ICON = icon24(`<path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/>`);
+const FLIP2V_ICON = icon24(`<path d="m17 3-5 5-5-5h10"/><path d="m17 21-5-5-5 5h10"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/>`);
+const TEXT_MORE_ICON = icon24(`<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>`);
+const FONT_SIZES = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 120, 144];
+const COLOR_PRESETS = ["#000000", "#545454", "#737373", "#a6a6a6", "#d9d9d9", "#ffffff", "#ff3131", "#ff5757", "#ff66c4", "#cb6ce6", "#8c52ff", "#5e17eb", "#0097b2", "#0cc0df", "#5ce1e6", "#38b6ff", "#5170ff", "#004aad", "#00bf63", "#7ed957", "#c1ff72", "#ffde59", "#ffbd59", "#ff914d"];
+const hex6 = (c: string | undefined, fb: string) => /^#[0-9a-f]{6}$/i.test(c || "") ? c! : fb;
+/** Botão de cor da barra: "A" sublinhado (texto), quadrado cheio (preenchimento), anel (borda) ou degradê. */
+function colorBtn(kind: "text" | "fill" | "stroke" | "grad", popKind: TbPopKind, label: string, css: string, id: string): string {
+  const open = tbPopKind === popKind;
+  const inner = kind === "text"
+    ? `<span class="qswatch-text">${icon24(`<path d="M4 20h16"/><path d="m6 16 6-12 6 12"/><path d="M8 12h8"/>`)}<i style="background:${css}"></i></span>`
+    : `<span class="qswatch qswatch-${kind}" style="${kind === "stroke" ? `border-color:${css}` : `background:${css}`}"></span>`;
+  return `<button class="qbtn qcolorbtn" id="${id}" data-tbpop="${popKind}" aria-haspopup="dialog" aria-expanded="${open}" aria-pressed="${open}" title="${label}" aria-label="${label}">${inner}</button>`;
+}
+const SWAP_ICON = icon24(`<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>`);
+const LINE_ENDS: Array<[string, string]> = [["", "Nenhuma"], ["arrow", "Seta"], ["triangle", "Triângulo"], ["circle", "Círculo"], ["bar", "Barra"]];
+/** Prévia da ponta de uma linha, desenhada sempre à direita (o início é espelhado). */
+function lineEndIcon(kind: string | undefined, side: "start" | "end"): string {
+  const k = kind || "";
+  const tip = k === "arrow" ? `<path d="m15 7 5 5-5 5"/>`
+    : k === "triangle" ? `<path d="M14 7l6 5-6 5z" fill="currentColor"/>`
+    : k === "circle" ? `<circle cx="17" cy="12" r="3" fill="currentColor"/>`
+    : k === "bar" ? `<path d="M20 6v12"/>` : "";
+  const line = `<path d="M3 12h${k === "circle" ? 11 : k === "triangle" ? 11 : 17}"/>`;
+  return icon24(`<g${side === "start" ? ` transform="matrix(-1 0 0 1 24 0)"` : ""}>${line}${tip}</g>`);
+}
+
 
 /* Fixed contextual bar (Toolbar): per-type controls for the current selection, docked
  * above the stage — never floats over the element itself. Mirrors the exact control set
@@ -651,6 +704,7 @@ function renderToolbar() {
   // Stays in flow (never [hidden]) even with nothing selected — .toolbar's min-height
   // reserves the same space either way, so selecting/deselecting never shifts the stage.
   if (!els.length || editingId) {
+    closeTbPop();
     bar.innerHTML = `<button class="qbtn" data-open-panel="page" title="Fundo e tamanho da página">Fundo da página</button>
       <div class="qsep"></div><button class="qbtn" id="tLayers">Camadas</button>
       <span class="toolbar-hint">${editingId ? "Editando texto" : "Selecione um elemento para editar"}</span>`;
@@ -664,29 +718,24 @@ function renderToolbar() {
   if (one && t === "text") {
     html += `<button class="qfont" id="tFont" aria-pressed="${activeTab === "fonts"}" title="Fonte — abrir a biblioteca"><span>${esc(fontLabel(e.font || "Inter"))}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>`;
     html += `<div class="qsep"></div>`;
-    html += `<button class="qbtn" id="tSizeDown" title="Diminuir corpo">−</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" value="${Math.round(e.size)}" aria-label="Tamanho da fonte"><button class="qbtn" id="tSizeUp" title="Aumentar corpo">+</button>`;
+    html += `<button class="qbtn" id="tSizeDown" title="Diminuir tamanho da fonte" aria-label="Diminuir tamanho da fonte">${MINUS_ICON}</button><input class="qsizeval num" id="tSize" type="number" min="6" max="512" list="tSizeList" value="${Math.round(e.size)}" aria-label="Tamanho da fonte" title="Tamanho da fonte"><datalist id="tSizeList">${FONT_SIZES.map((n) => `<option value="${n}"></option>`).join("")}</datalist><button class="qbtn" id="tSizeUp" title="Aumentar tamanho da fonte" aria-label="Aumentar tamanho da fonte">${PLUS_ICON}</button>`;
     html += `<div class="qsep"></div>`;
-    html += `<input type="color" id="tFill" class="qcolor" title="Cor do texto" value="${/^#[0-9a-f]{6}$/i.test(e.fill) ? e.fill : "#000000"}">`;
+    html += colorBtn("text", "fill", "Cor do texto", hex6(e.fill, "#000000"), "tFill");
     html += `<div class="qsep"></div>`;
-    html += `<button class="qbtn" data-ttw="bold" aria-pressed="${e.weight >= 700}" style="font-weight:800" title="Negrito">B</button>`;
-    html += `<button class="qbtn" data-ttw="italic" aria-pressed="${!!e.italic}" style="font-style:italic" title="Itálico">I</button>`;
-    html += `<button class="qbtn" data-ttw="underline" aria-pressed="${!!e.underline}" style="text-decoration:underline" title="Sublinhado">U</button>`;
-    html += `<button class="qbtn" data-ttw="strike" aria-pressed="${!!e.strike}" style="text-decoration:line-through" title="Tachado">S</button>`;
-    html += `<button class="qbtn" data-ttw="caps" aria-pressed="${!!e.caps}" title="Maiúsculas">aA</button>`;
-    html += `<button class="qbtn" data-ttw="bullets" aria-pressed="${String(e.text || "").startsWith("• ")}" title="Lista com marcadores"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>`;
+    html += `<button class="qbtn" data-ttw="bold" aria-pressed="${e.weight >= 700}" title="Negrito (⌘B)" aria-label="Negrito">${BOLD_ICON}</button>`;
+    html += `<button class="qbtn" data-ttw="italic" aria-pressed="${!!e.italic}" title="Itálico (⌘I)" aria-label="Itálico">${ITALIC_ICON}</button>`;
+    html += `<button class="qbtn" data-ttw="underline" aria-pressed="${!!e.underline}" title="Sublinhado (⌘U)" aria-label="Sublinhado">${UNDERLINE_ICON}</button>`;
+    html += `<button class="qbtn" data-ttw="bullets" aria-pressed="${String(e.text || "").startsWith("• ")}" title="Lista com marcadores" aria-label="Lista com marcadores">${LIST_ICON}</button>`;
+    html += tbPopBtn("textMore", "tTextMore", "Mais formatação: tachado e letras maiúsculas", TEXT_MORE_ICON, !!e.strike || !!e.caps);
     html += `<div class="qsep"></div>`;
-    html += (["left", "center", "right", "justify"] as const).map((a) => `<button class="qbtn" data-tta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
+    html += (["left", "center", "right", "justify"] as const).map((a) => `<button class="qbtn" data-tta="${a}" aria-pressed="${e.align === a}" title="Alinhar ${PT_ALIGN[a]}" aria-label="Alinhar ${PT_ALIGN[a]}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${QALIGN_ICON[a]}</svg></button>`).join("");
     html += `<div class="qsep"></div>`;
-    html += `<div class="field" style="width:52px" title="Entrelinha"><input id="tLh" value="${e.lh}"></div>`;
-    html += `<div class="field" style="width:52px" title="Espaçamento entre letras"><input id="tLs" value="${e.ls}"></div>`;
-    html += `<button class="qbtn" id="tFx" aria-pressed="${!!e.textFx || !!e.curve}" title="Efeitos: sombra, contorno, fundo, degradê, curvar">Efeitos</button>`;
+    html += tbPopBtn("spacing", "tSpacing", "Espaçamento", SPACING_ICON);
   } else if (one && t === "image") {
     html += `<button class="qbtn" id="tReplace" title="Substituir imagem">${REPLACE_ICON}</button>`;
-    html += `<button class="qbtn" id="tAsBg" title="Usar como fundo da página">Usar como fundo</button>`;
-    html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#FFFFFF"}">`;
-    html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
-    html += `<button class="qbtn" data-tflip="h" title="Inverter na horizontal">${FLIP_H_ICON}</button>`;
-    html += `<button class="qbtn" data-tflip="v" title="Inverter na vertical">${FLIP_V_ICON}</button>`;
+    html += colorBtn("stroke", "stroke", "Cor da borda", hex6(e.stroke, "#FFFFFF"), "tStroke");
+    html += `${tbPopBtn("radius", "tRadius", "Arredondar cantos", RADIUS_ICON, (e.radius || 0) > 0)}`;
+    html += tbPopBtn("flip", "tFlip", "Inverter", FLIP2_ICON);
   } else if (one) {
     const showFill = ["rect", "ellipse", "triangle", "star", "line", "icon"].includes(t) || (t === "draw" && !!e.fillPath && e.fill !== "none");
     const showStroke = ["rect", "ellipse", "draw"].includes(t);
@@ -696,36 +745,45 @@ function renderToolbar() {
       // Gradiente (ex.: vindo de PDF): edita a cor de início e de fim; o ângulo e as paradas
       // do meio continuam como vieram.
       const st = e.grad.stops;
-      html += `<input type="color" id="tGrad0" class="qcolor" title="Cor inicial do gradiente" value="${hex(st[0][0], "#000000")}">`;
-      html += `<input type="color" id="tGrad1" class="qcolor" title="Cor final do gradiente" value="${hex(st[st.length - 1][0], "#ffffff")}">`;
-    } else if (showFill) html += `<input type="color" id="tFill" class="qcolor" title="Preenchimento" value="${hex(e.fill, "#000000")}">`;
+      html += colorBtn("grad", "grad", "Cores do degradê", `linear-gradient(135deg, ${hex(st[0][0], "#000000")}, ${hex(st[st.length - 1][0], "#ffffff")})`, "tGrad");
+    } else if (showFill) html += colorBtn("fill", "fill", t === "line" ? "Cor da linha" : "Cor de preenchimento", hex(e.fill, "#000000"), "tFill");
     if (showStroke) {
-      html += `<input type="color" id="tStroke" class="qcolor" title="Cor da borda" value="${hex(e.stroke, "#FFFFFF")}">`;
-      html += `<div class="field" style="width:46px" title="Espessura da borda"><input id="tStrokeW" type="number" min="0" max="200" value="${Math.round((e.strokeWidth || 0) * 10) / 10}"></div>`;
-      html += `<select id="tDash" class="qselect" title="Estilo da borda">${[["", "Sólida"], ["dashed", "Tracejada"], ["dotted", "Pontilhada"]].map(([v, l]) => `<option value="${v}"${(e.strokeDash || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+      html += tbPopBtn("border", "tBorder", "Estilo da borda", BORDER_ICON, (e.strokeWidth || 0) > 0);
     }
     if (t === "line") {
-      const opts = (cur: string | undefined) => [["", "—"], ["arrow", "Seta"], ["triangle", "Triângulo"], ["circle", "Círculo"], ["bar", "Barra"]]
-        .map(([v, l]) => `<option value="${v}"${(cur || "") === v ? " selected" : ""}>${l}</option>`).join("");
-      html += `<select id="tArrowStart" class="qselect" title="Ponta inicial">${opts(e.arrowStart)}</select>`;
-      html += `<button class="qbtn" id="tArrowSwap" title="Trocar pontas">⇄</button>`;
-      html += `<select id="tArrowEnd" class="qselect" title="Ponta final">${opts(e.arrowEnd)}</select>`;
+      html += tbPopBtn("arrowStart", "tArrowStart", "Início da linha", lineEndIcon(e.arrowStart, "start"));
+      html += `<button class="qbtn" id="tArrowSwap" title="Trocar pontas" aria-label="Trocar pontas">${SWAP_ICON}</button>`;
+      html += tbPopBtn("arrowEnd", "tArrowEnd", "Fim da linha", lineEndIcon(e.arrowEnd, "end"));
     }
-    if (showRadius) html += `<button class="qbtn" id="tRadDown" title="Diminuir raio dos cantos">⌐</button><span class="qsizeval num">${Math.round(e.radius || 0)}</span><button class="qbtn" id="tRadUp" title="Aumentar raio dos cantos">◠</button>`;
-    html += `<button class="qbtn" data-tflip="h" title="Espelhar na horizontal">${FLIP_H_ICON}</button>`;
-    html += `<button class="qbtn" data-tflip="v" title="Espelhar na vertical">${FLIP_V_ICON}</button>`;
+    if (showRadius) html += `${tbPopBtn("radius", "tRadius", "Arredondar cantos", RADIUS_ICON, (e.radius || 0) > 0)}`;
+    html += tbPopBtn("flip", "tFlip", "Inverter", FLIP2_ICON);
   }
 
   if (one && "EyeDropper" in window && t !== "image") html += `<button class="qbtn" id="tEyedrop" title="Conta-gotas: pegar uma cor da tela">${EYEDROP_ICON}</button>`;
-  html += `<button class="qbtn" id="tCopyStyle" aria-pressed="${!!copiedStyle}" title="Copiar estilo (Ctrl+Alt+C) — depois clique no elemento que vai receber">${PAINT_ICON}</button>`;
+  html += `<button class="qbtn" id="tCopyStyle" aria-pressed="${!!copiedStyle}" title="Copiar estilo (⌥⌘C)" aria-label="Copiar estilo">${PAINT_ICON}</button>`;
+  if (copiedStyle) html += `<span class="qchip" role="status">Clique no destino · Esc cancela</span>`;
   html += `<div class="qsep"></div>`;
-  html += `<div class="field" style="width:74px" title="Transparência"><input type="range" id="tOp" min="0" max="100" value="${Math.round((e.opacity ?? 1) * 100)}"></div>`;
-  html += `<div class="qsep"></div>`;
-  html += `<button class="qbtn" id="tPosition" aria-pressed="${propPopOpen && panelTab === "organize"}" title="Posição">Posição</button>`;
-  html += `<button class="qbtn" id="tLayers" title="Camadas">Camadas</button>`;
+  html += tbPopBtn("opacity", "tOpacity", "Transparência", OPACITY_ICON, (e.opacity ?? 1) < 1);
+  html += `<div class="qgroup-text">`;
+  if (one && t === "text") {
+    const fxOn = !!(e.shadow || e.curve || e.textFx);
+    html += `<button class="qbtn qtext" id="tFx" aria-pressed="${propPopOpen && panelTab === "effects"}" title="Efeitos: sombra, contorno, fundo, degradê, curvar">${SPARKLES_ICON}<span>Efeitos</span>${fxOn ? `<i class="qdot" aria-label="Efeito ativo"></i>` : ""}</button>`;
+  }
+  html += `<button class="qbtn qtext" id="tPosition" aria-pressed="${propPopOpen && (panelTab === "organize" || panelTab === "layers")}" title="Posição: organizar e camadas">Posição</button></div>`;
 
   bar.innerHTML = html;
+  placeTbPop();
+  updateToolbarFade();
 }
+/** Marca as bordas da barra que têm conteúdo escondido (fade via mask em chrome.css). */
+function updateToolbarFade() {
+  const bar = $("toolbar");
+  const max = bar.scrollWidth - bar.clientWidth;
+  bar.classList.toggle("is-scroll-l", max > 1 && bar.scrollLeft > 1);
+  bar.classList.toggle("is-scroll-r", max > 1 && bar.scrollLeft < max - 1);
+}
+$("toolbar").addEventListener("scroll", () => { updateToolbarFade(); placeTbPop(); }, { passive: true });
+window.addEventListener("resize", updateToolbarFade);
 /** Mudar o corpo da caixa inteira mantém a proporção dos trechos com corpo próprio (um título
  *  com uma palavra maior continua com ela maior), como no Canva. */
 function sizePatch(e: any, size: number) {
@@ -743,8 +801,6 @@ $("toolbar").addEventListener("click", (ev) => {
     if (k === "bold") patch({ weight: e.weight >= 700 ? 400 : 700 }, true);
     if (k === "italic") patch({ italic: !e.italic }, true);
     if (k === "underline") patch({ underline: !e.underline }, true);
-    if (k === "strike") patch({ strike: !e.strike }, true);
-    if (k === "caps") patch({ caps: !e.caps }, true);
     if (k === "bullets") { const r = toggleBullets(e.text, e.runs); patch({ text: r.text, ...(r.runs ? { runs: r.runs } : {}) }, true); }
     renderToolbar(); return;
   }
@@ -754,58 +810,42 @@ $("toolbar").addEventListener("click", (ev) => {
   if (tf) { flip(tf.dataset.tflip); return; }
   if (t.closest("#tSizeUp")) { const e = selEls()[0]; patch(sizePatch(e, (e.size || 16) + 2), true); renderToolbar(); return; }
   if (t.closest("#tSizeDown")) { const e = selEls()[0]; patch(sizePatch(e, Math.max(6, (e.size || 16) - 2)), true); renderToolbar(); return; }
-  if (t.closest("#tRadUp")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) + 4) }, true); renderToolbar(); return; }
-  if (t.closest("#tRadDown")) { const e = selEls()[0]; patch({ radius: Math.max(0, (e.radius || 0) - 4) }, true); renderToolbar(); return; }
+  const pb = t.closest<HTMLElement>("[data-tbpop]");
+  if (pb) { toggleTbPop(pb.dataset.tbpop as TbPopKind); return; }
   if (t.closest("#tReplace")) { $("fileImgReplace").click(); return; }
   if (t.closest("#tCopyStyle")) { armCopyStyle(); return; }
   if (t.closest("#tArrowSwap")) { const e = selEls()[0]; patch({ arrowStart: e.arrowEnd, arrowEnd: e.arrowStart }, true); renderToolbar(); return; }
-  if (t.closest("#tAsBg")) {
-    const e = selEls()[0];
-    const pg = doc.pages[pageIdxOf(e.id)];
-    pg.bgImage = e.src; pg.els = pg.els.filter((x) => x.id !== e.id); sel = [];
-    commit(); renderAll(); toast("Imagem virou o fundo da página"); return;
-  }
   if (t.closest("#tEyedrop")) { void eyedrop(); return; }
   if (t.closest("#tFont")) { setPanel(activeTab === "fonts" ? null : "fonts"); return; }
-  if (t.closest("#tFx")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
+  if (t.closest("#tFx")) { propPopOpen = true; panelTab = "effects"; renderProps(); positionFloatingUI(); return; }
   if (t.closest("#tPosition")) { propPopOpen = true; panelTab = "organize"; renderProps(); positionFloatingUI(); return; }
 });
 $("toolbar").addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
-  if (t.id === "tFill") patch({ fill: t.value });
   if (t.id === "tSize" && Number(t.value) >= 6) patch(sizePatch(selEls()[0], clamp(Number(t.value), 6, 512)));
-  if (t.id === "tStroke") patch({ stroke: t.value, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2 }) });
-  if (t.id === "tStrokeW") { const n = parseFloat(t.value); if (n >= 0) patch({ strokeWidth: n }); }
-  if (t.id === "tGrad0" || t.id === "tGrad1") {
-    const e = selEls()[0];
+});
+/** Cores escolhidas no popover de cor (#tbPop): texto/preenchimento, borda e as pontas do degradê. */
+function applyColor(target: string, value: string) {
+  const e = selEls()[0]; if (!e) return;
+  if (target === "fill") patch({ fill: value });
+  else if (target === "stroke") patch({ stroke: value, ...(e.strokeWidth ? {} : { strokeWidth: 2 }) });
+  else if ((target === "grad0" || target === "grad1") && e.grad?.stops?.length) {
+    const last = e.grad.stops.length - 1;
     const stops = e.grad.stops.map((st: [string, number], i: number) =>
-      (t.id === "tGrad0" && i === 0) || (t.id === "tGrad1" && i === e.grad.stops.length - 1) ? [t.value, st[1]] as [string, number] : st);
+      (target === "grad0" && i === 0) || (target === "grad1" && i === last) ? [value, st[1]] as [string, number] : st);
     const grad = { ...e.grad, stops };
     patch({ grad, fill: gradToCss(grad) });
   }
-  if (t.id === "tOp") patch({ opacity: clamp(parseFloat(t.value) / 100, 0, 1) });
-  if (t.id === "tLh") { const n = parseFloat(t.value); if (n > 0) patch({ lh: n }); }
-  if (t.id === "tLs") { const n = parseFloat(t.value); patch({ ls: n || 0 }); }
-});
+}
 $("toolbar").addEventListener("change", (ev) => {
   const id = (ev.target as HTMLElement).id;
-  if (id === "tArrowStart" || id === "tArrowEnd") {
-    const v = (ev.target as HTMLSelectElement).value || undefined;
-    patch(id === "tArrowStart" ? { arrowStart: v as any } : { arrowEnd: v as any }, true);
-    return;
-  }
-  if (id === "tDash") {
-    const v = (ev.target as HTMLSelectElement).value;
-    patch({ strokeDash: (v || undefined) as any, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2, stroke: selEls()[0]?.stroke || "#000000" }) }, true);
-    return;
-  }
   if (id === "tSize") {
     const input = ev.target as HTMLInputElement;
     const size = Number(input.value);
     if (!Number.isFinite(size) || size < 6) { input.value = String(selEls()[0]?.size ?? 16); return; }
     input.value = String(clamp(size, 6, 512));
   }
-  if (["tFill", "tStroke", "tStrokeW", "tGrad0", "tGrad1", "tOp", "tLh", "tLs", "tSize"].includes(id)) commit();
+  if (id === "tSize") commit();
 });
 $("toolbar").addEventListener("keydown", (ev) => {
   if (ev.target.id === "tSize" && ev.key === "Enter") { ev.preventDefault(); ev.target.blur(); }
@@ -815,6 +855,14 @@ $("toolbar").addEventListener("focusout", (ev) => {
   ev.target.value = String(selEls()[0]?.size ?? 16);
   if (snap() !== baseline) commit();
 });
+
+function useImageAsBg() {
+  const e = selEls()[0];
+  if (!e || e.type !== "image") return;
+  const pg = doc.pages[pageIdxOf(e.id)];
+  pg.bgImage = e.src; pg.els = pg.els.filter((x) => x.id !== e.id); sel = [];
+  commit(); renderAll(); toast("Imagem virou o fundo da página");
+}
 
 /* The slim always-visible bar above the selection — Canva's own "floating toolbar" only ever
  * carries universal actions (never per-type controls, those live in the fixed Toolbar above). */
@@ -826,8 +874,8 @@ function renderSelToolbar() {
   let html = "";
   html += `<button class="qbtn" id="qLock" aria-pressed="${locked}" title="${locked ? "Desbloquear" : "Bloquear"}">${LOCK_ICON(locked)}</button>`;
   html += `<button class="qbtn" id="qDup" title="Duplicar (⌘D)">${DUP_ICON}</button>`;
-  html += `<button class="qbtn" id="qDel" title="Excluir (⌫)" style="color:var(--danger)">${DEL_ICON}</button>`;
-  html += `<button class="qbtn" id="qMore" aria-pressed="${ctxMenuOpen}" title="Mais">${MORE_ICON}</button>`;
+  html += `<button class="qbtn" id="qDel" title="Excluir (Delete)" aria-label="Excluir" style="color:var(--danger)">${DEL_ICON}</button>`;
+  html += `<button class="qbtn" id="qMore" aria-pressed="${ctxMenuOpen}" title="Mais opções" aria-label="Mais opções">${MORE_ICON}</button>`;
   bar.innerHTML = html;
 }
 $("seltoolbar").addEventListener("click", (ev) => {
@@ -838,6 +886,170 @@ $("seltoolbar").addEventListener("click", (ev) => {
   const more = t.closest<HTMLElement>("#qMore");
   if (more) { const r = more.getBoundingClientRect(); openContextMenu(r.left, r.bottom + 6); return; }
 });
+/* Popovers do Toolbar (arredondar cantos, espaçamento, transparência, borda, pontas da linha):
+ * um botão com ícone abre um painel pequeno com controles rotulados, como no Canva. Fica fora
+ * do #toolbar para sobreviver aos re-renders da barra durante o arraste de um slider. */
+type TbPopKind = "radius" | "spacing" | "opacity" | "border" | "arrowStart" | "arrowEnd" | "textMore" | "flip" | "fill" | "stroke" | "grad";
+let tbPopKind: TbPopKind | null = null;
+const tbPopEl = document.createElement("div");
+tbPopEl.className = "tbpop"; tbPopEl.id = "tbPop"; tbPopEl.hidden = true;
+tbPopEl.setAttribute("role", "dialog");
+(document.getElementById("view-editor") || document.body).appendChild(tbPopEl);
+function tbPopBtn(kind: TbPopKind, id: string, label: string, iconHtml: string, active = false): string {
+  const open = tbPopKind === kind;
+  return `<button class="qbtn${active ? " is-set" : ""}" id="${id}" data-tbpop="${kind}" aria-haspopup="dialog" aria-expanded="${open}" aria-pressed="${open}" title="${label}" aria-label="${label}">${iconHtml}</button>`;
+}
+function closeTbPop() {
+  if (!tbPopKind) return;
+  tbPopKind = null; tbPopEl.hidden = true;
+  $("toolbar").querySelectorAll("[data-tbpop]").forEach((b) => { b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-pressed", "false"); });
+}
+function toggleTbPop(kind: TbPopKind) {
+  if (tbPopKind === kind) { closeTbPop(); return; }
+  tbPopKind = kind; renderTbPop(); renderToolbar();
+}
+const sliderRow = (id: string, label: string, min: number, max: number, step: number, val: number, suffix = "") =>
+  `<div class="tbpop-row"><label for="${id}">${label}</label>
+    <div class="tbpop-ctl"><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}">
+    <span class="tbpop-num"><input type="number" id="${id}N" data-twin="${id}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}">${suffix}</span></div></div>`;
+function renderTbPop() {
+  const e = selEls()[0];
+  if (!tbPopKind || !e) { closeTbPop(); return; }
+  const k = tbPopKind;
+  let html = "";
+  if (k === "radius") {
+    const max = Math.max(1, Math.floor(Math.min(e.w, e.h) / 2));
+    html = `<h5>Arredondar cantos</h5>` + sliderRow("tpRadius", "Arredondamento de cantos", 0, max, 1, Math.min(max, Math.round(e.radius || 0)));
+  } else if (k === "spacing") {
+    html = `<h5>Espaçamento</h5>` + sliderRow("tLs", "Espaçamento entre letras", -200, 800, 1, Math.round(e.ls || 0))
+      + sliderRow("tLh", "Espaçamento entre linhas", 0.5, 2.5, 0.05, Math.round((e.lh || 1.2) * 100) / 100);
+  } else if (k === "opacity") {
+    html = `<h5>Transparência</h5>` + sliderRow("tOp", "Opacidade", 0, 100, 1, Math.round((e.opacity ?? 1) * 100), "%");
+  } else if (k === "border") {
+    const w = e.strokeWidth || 0, cur = w <= 0 ? "none" : (e.strokeDash || "solid");
+    const styles: Array<[string, string, string]> = [
+      ["none", "Sem borda", `<circle cx="12" cy="12" r="8"/><path d="m6.5 17.5 11-11"/>`],
+      ["solid", "Sólida", `<path d="M3 12h18"/>`],
+      ["dashed", "Tracejada", `<path d="M3 12h4M10 12h4M17 12h4"/>`],
+      ["dotted", "Pontilhada", `<path d="M4 12h.01M9 12h.01M14 12h.01M19 12h.01" stroke-width="3"/>`]];
+    html = `<h5>Estilo da borda</h5><div class="tbpop-grid" role="group" aria-label="Estilo da borda">${styles.map(([v, l, ic]) =>
+      `<button class="qbtn" data-dash="${v}" aria-pressed="${cur === v}" title="${l}" aria-label="${l}">${icon24(ic)}</button>`).join("")}</div>`
+      + sliderRow("tStrokeW", "Espessura da borda", 0, 50, 1, Math.round(w))
+      + `<div class="tbpop-row tbpop-inline"><label for="tStroke">Cor da borda</label><input type="color" id="tStroke" class="qcolor" value="${/^#[0-9a-f]{6}$/i.test(e.stroke) ? e.stroke : "#000000"}"></div>`;
+  } else if (k === "textMore") {
+    html = `<h5>Mais formatação</h5><div class="tbpop-list">
+      <button class="qbtn tbpop-item" data-ttw="strike" aria-pressed="${!!e.strike}">${STRIKE_ICON}<span>Tachado</span></button>
+      <button class="qbtn tbpop-item" data-ttw="caps" aria-pressed="${!!e.caps}" aria-label="Letras maiúsculas">${CASE_UPPER_ICON}<span>Letras maiúsculas</span></button></div>`;
+  } else if (k === "flip") {
+    html = `<h5>Inverter</h5><div class="tbpop-list">
+      <button class="qbtn tbpop-item" data-tflip="h">${FLIP2_ICON}<span>Inverter na horizontal</span></button>
+      <button class="qbtn tbpop-item" data-tflip="v">${FLIP2V_ICON}<span>Inverter na vertical</span></button></div>`;
+  } else if (k === "fill" || k === "stroke" || k === "grad") {
+    const rows: Array<[string, string, string]> = k === "grad"
+      ? [["grad0", "Cor inicial", hex6(e.grad?.stops?.[0]?.[0], "#000000")], ["grad1", "Cor final", hex6(e.grad?.stops?.[(e.grad?.stops?.length || 1) - 1]?.[0], "#ffffff")]]
+      : [[k, k === "stroke" ? "Cor da borda" : e.type === "text" ? "Cor do texto" : e.type === "line" ? "Cor da linha" : "Cor de preenchimento", hex6(k === "stroke" ? e.stroke : e.fill, k === "stroke" ? "#ffffff" : "#000000")]];
+    const docColors = [...new Set(doc.pages.flatMap((pg) => pg.els.flatMap((x) => [x.fill, x.stroke])).filter((c): c is string => /^#[0-9a-f]{6}$/i.test(c || "")).map((c) => c.toLowerCase()))].slice(0, 12);
+    const sw = (target: string, c: string) => `<button class="tbpop-sw" data-color="${c}" data-target="${target}" style="background:${c}" title="${c.toUpperCase()}" aria-label="Cor ${c.toUpperCase()}"></button>`;
+    html = `<h5>${k === "grad" ? "Cores do degradê" : rows[0][1]}</h5>` + rows.map(([target, label, v]) =>
+      `<div class="tbpop-row tbpop-inline"><label for="tpColor-${target}">${k === "grad" ? label : "Cor personalizada"}</label><input type="color" id="tpColor-${target}" data-target="${target}" class="qcolor" value="${v}"></div>`
+      + (k === "grad" ? "" : (docColors.length ? `<div class="tbpop-row"><label>Cores do documento</label><div class="tbpop-swatches">${docColors.map((c) => sw(target, c)).join("")}</div></div>` : "")
+        + `<div class="tbpop-row"><label>Cores padrão</label><div class="tbpop-swatches">${COLOR_PRESETS.map((c) => sw(target, c)).join("")}</div></div>`)).join("");
+  } else {
+    const side = k === "arrowStart" ? "start" : "end";
+    const cur = (side === "start" ? e.arrowStart : e.arrowEnd) || "";
+    html = `<h5>${side === "start" ? "Início da linha" : "Fim da linha"}</h5><div class="tbpop-grid" role="group">${LINE_ENDS.map(([v, l]) =>
+      `<button class="qbtn" data-end="${v}" aria-pressed="${cur === v}" title="${l}" aria-label="${l}">${lineEndIcon(v, side)}</button>`).join("")}</div>`;
+  }
+  tbPopEl.innerHTML = html;
+  tbPopEl.setAttribute("aria-label", tbPopEl.querySelector("h5")?.textContent || "");
+  tbPopEl.hidden = false;
+  placeTbPop();
+}
+function placeTbPop() {
+  if (!tbPopKind) return;
+  const b = $("toolbar").querySelector(`[data-tbpop="${tbPopKind}"]`) as HTMLElement | null;
+  if (!b) { closeTbPop(); return; }
+  const r = b.getBoundingClientRect();
+  const w = tbPopEl.offsetWidth || 260;
+  tbPopEl.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  tbPopEl.style.top = r.bottom + 8 + "px";
+}
+function applyTbPopInput(id: string, v: number) {
+  const e = selEls()[0]; if (!e || !Number.isFinite(v)) return;
+  if (id === "tpRadius") patch({ radius: clamp(v, 0, Math.min(e.w, e.h) / 2) });
+  if (id === "tLs") patch({ ls: clamp(v, -200, 800) });
+  if (id === "tLh" && v > 0) patch({ lh: clamp(v, 0.5, 2.5) });
+  if (id === "tOp") patch({ opacity: clamp(v / 100, 0, 1) });
+  if (id === "tStrokeW") patch({ strokeWidth: clamp(v, 0, 200), ...(v > 0 && !e.stroke ? { stroke: "#000000" } : {}) });
+}
+tbPopEl.addEventListener("input", (ev) => {
+  const t = ev.target as HTMLInputElement;
+  if (t.id === "tStroke") { patch({ stroke: t.value, ...(selEls()[0]?.strokeWidth ? {} : { strokeWidth: 2 }) }); return; }
+  if (t.id.startsWith("tpColor-")) { applyColor(t.dataset.target || "", t.value); renderToolbar(); return; }
+  const base = t.dataset.twin || t.id;
+  const twin = tbPopEl.querySelector<HTMLInputElement>(t.dataset.twin ? `#${base}` : `#${base}N`);
+  if (twin) twin.value = t.value;
+  applyTbPopInput(base, parseFloat(t.value));
+});
+tbPopEl.addEventListener("change", () => { if (snap() !== baseline) commit(); renderToolbar(); });
+tbPopEl.addEventListener("click", (ev) => {
+  const t = ev.target as HTMLElement;
+  const d = t.closest<HTMLElement>("[data-dash]");
+  if (d) {
+    const v = d.dataset.dash, e = selEls()[0];
+    if (v === "none") patch({ strokeWidth: 0, strokeDash: undefined }, true);
+    else patch({ strokeDash: (v === "solid" ? undefined : v) as any, ...(e?.strokeWidth ? {} : { strokeWidth: 2, stroke: e?.stroke || "#000000" }) }, true);
+    renderTbPop(); renderToolbar(); return;
+  }
+  const swc = t.closest<HTMLElement>("[data-color]");
+  if (swc) { applyColor(swc.dataset.target || "", swc.dataset.color || ""); commit(); renderTbPop(); renderToolbar(); return; }
+  const tw = t.closest<HTMLElement>("[data-ttw]");
+  if (tw) {
+    const e = selEls()[0]; if (!e) return;
+    if (tw.dataset.ttw === "strike") patch({ strike: !e.strike }, true);
+    if (tw.dataset.ttw === "caps") patch({ caps: !e.caps }, true);
+    renderTbPop(); renderToolbar(); return;
+  }
+  const tf = t.closest<HTMLElement>("[data-tflip]");
+  if (tf) { flip(tf.dataset.tflip); closeTbPop(); return; }
+  const en = t.closest<HTMLElement>("[data-end]");
+  if (en) {
+    const v = (en.dataset.end || undefined) as any;
+    patch(tbPopKind === "arrowStart" ? { arrowStart: v } : { arrowEnd: v }, true);
+    renderTbPop(); renderToolbar(); return;
+  }
+});
+window.addEventListener("pointerdown", (ev) => {
+  const t = ev.target as HTMLElement | null;
+  if (tbPopKind && t && !t.closest("#tbPop, [data-tbpop]")) closeTbPop();
+}, true);
+window.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && tbPopKind) { closeTbPop(); ev.stopPropagation(); } }, true);
+window.addEventListener("resize", placeTbPop);
+
+/* Tooltip próprio nas barras (Toolbar, barra flutuante, barra de trecho, popovers): aparece
+ * depois de 400 ms, sem o atraso longo e o visual do title nativo. O title vira data-tip. */
+const tipEl = document.createElement("div");
+tipEl.className = "tip"; tipEl.setAttribute("role", "tooltip"); tipEl.hidden = true;
+document.body.appendChild(tipEl);
+let tipTimer = 0, tipFor: HTMLElement | null = null;
+function hideTip() { clearTimeout(tipTimer); tipFor = null; tipEl.hidden = true; }
+document.addEventListener("pointerover", (ev) => {
+  const host = (ev.target as HTMLElement).closest?.<HTMLElement>("#toolbar [title], #toolbar [data-tip], #seltoolbar [title], #seltoolbar [data-tip], #textSelToolbar [title], #textSelToolbar [data-tip], #tbPop [title], #tbPop [data-tip]");
+  if (!host || host === tipFor) return;
+  if (host.title) { host.dataset.tip = host.title; if (!host.getAttribute("aria-label")) host.setAttribute("aria-label", host.title); host.removeAttribute("title"); }
+  hideTip(); tipFor = host;
+  tipTimer = window.setTimeout(() => {
+    if (tipFor !== host || !host.isConnected) return;
+    tipEl.textContent = host.dataset.tip || ""; tipEl.hidden = false;
+    const r = host.getBoundingClientRect(), w = tipEl.offsetWidth;
+    tipEl.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+    const below = r.bottom + 8 + tipEl.offsetHeight < window.innerHeight;
+    tipEl.style.top = (below ? r.bottom + 8 : r.top - 8 - tipEl.offsetHeight) + "px";
+  }, 400);
+});
+document.addEventListener("pointerout", (ev) => { if (tipFor && !tipFor.contains(ev.relatedTarget as Node)) hideTip(); });
+document.addEventListener("pointerdown", hideTip, true);
+
 $("fileImgReplace").addEventListener("change", async (ev) => {
   const input = ev.target as HTMLInputElement;
   const f = input.files?.[0];
@@ -871,6 +1083,21 @@ function closeContextMenu() {
   $("ctxmenu").hidden = true;
   renderSelToolbar();
 }
+const ci = (p: string) => `<svg class="ctxicon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const CI = {
+  copy: ci(`<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`),
+  style: ci(`<rect x="2" y="2" width="16" height="6" rx="2"/><path d="M10 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="8" y="16" width="4" height="6" rx="1"/>`),
+  paste: ci(`<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>`),
+  dup: ci(`<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16V4a2 2 0 0 1 2-2h12"/><path d="M15 12v6M12 15h6"/>`),
+  del: ci(`<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6M14 11v6"/>`),
+  group: ci(`<path d="M3 7V5c0-1.1.9-2 2-2h2M17 3h2c1.1 0 2 .9 2 2v2M21 17v2c0 1.1-.9 2-2 2h-2M7 21H5c-1.1 0-2-.9-2-2v-2"/><rect x="7" y="7" width="7" height="5" rx="1"/><rect x="10" y="12" width="7" height="5" rx="1"/>`),
+  ungroup: ci(`<rect x="5" y="4" width="8" height="6" rx="1"/><rect x="11" y="14" width="8" height="6" rx="1"/>`),
+  layers: ci(`<path d="m12.8 2.2 8.6 3.9a1 1 0 0 1 0 1.8l-8.6 3.9a2 2 0 0 1-1.6 0L2.6 7.9a1 1 0 0 1 0-1.8l8.6-3.9a2 2 0 0 1 1.6 0z"/><path d="m22 12-9.2 4.2a2 2 0 0 1-1.6 0L2 12"/><path d="m22 17-9.2 4.2a2 2 0 0 1-1.6 0L2 17"/>`),
+  align: ci(`<path d="M12 2v20"/><rect x="5" y="5" width="14" height="5" rx="1"/><rect x="8" y="14" width="8" height="5" rx="1"/>`),
+  image: ci(`<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>`),
+  lock: ci(`<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`),
+  unlock: ci(`<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>`),
+};
 const CTX_ORDER = [["front", "Trazer para a frente"], ["up", "Avançar"], ["down", "Recuar"], ["back", "Enviar para trás"]] as const;
 const CTX_ALIGN = [["left", "Esquerda"], ["cx", "Centro"], ["right", "Direita"], ["top", "Cima"], ["cy", "Meio"], ["bottom", "Baixo"]] as const;
 function renderContextMenu() {
@@ -881,28 +1108,30 @@ function renderContextMenu() {
   const canUngroup = canUngroupElements(page().els, sel);
   const dis = (ok: boolean) => (ok ? "" : "disabled");
   $("ctxmenu").innerHTML = `
-    <button class="ctxitem" data-ctx="copy" ${dis(hasSel)}>Copiar<span class="ctxkey">⌘C</span></button>
-    <button class="ctxitem" disabled title="Sem suporte ainda">Copiar estilo<span class="ctxkey">⌥⌘C</span></button>
-    <button class="ctxitem" data-ctx="paste" ${dis(!!clipboard?.length)}>Colar<span class="ctxkey">⌘V</span></button>
-    <button class="ctxitem" data-ctx="duplicate" ${dis(hasSel)}>Duplicar<span class="ctxkey">⌘D</span></button>
-    <button class="ctxitem danger" data-ctx="delete" ${dis(hasSel)}>Excluir<span class="ctxkey">DELETE</span></button>
+    <button class="ctxitem" data-ctx="copy" ${dis(hasSel)}>${CI.copy}Copiar<span class="ctxkey">⌘C</span></button>
+    ${copiedStyle || hasSel ? `<button class="ctxitem" data-ctx="copystyle" ${dis(hasSel)}>${CI.style}Copiar estilo<span class="ctxkey">⌥⌘C</span></button>` : ""}
+    <button class="ctxitem" data-ctx="paste" ${dis(!!clipboard?.length)}>${CI.paste}Colar<span class="ctxkey">⌘V</span></button>
+    <button class="ctxitem" data-ctx="duplicate" ${dis(hasSel)}>${CI.dup}Duplicar<span class="ctxkey">⌘D</span></button>
     <div class="ctxsep"></div>
-    <button class="ctxitem" data-ctx="group" ${dis(canGroup)}>Agrupar<span class="ctxkey">⌘G</span></button>
-    <button class="ctxitem" data-ctx="ungroup" ${dis(canUngroup)}>Desagrupar<span class="ctxkey">⇧⌘G</span></button>
+    <button class="ctxitem" data-ctx="group" ${dis(canGroup)}>${CI.group}Agrupar<span class="ctxkey">⌘G</span></button>
+    <button class="ctxitem" data-ctx="ungroup" ${dis(canUngroup)}>${CI.ungroup}Desagrupar<span class="ctxkey">⇧⌘G</span></button>
     <div class="ctxsep"></div>
-    <div class="ctxitem has-sub">Camada<span class="ctxarrow">›</span>
+    <div class="ctxitem has-sub">${CI.layers}Camada<span class="ctxarrow">›</span>
       <div class="ctxsub">
         ${CTX_ORDER.map(([k, label]) => `<button class="ctxitem" data-ctxorder="${k}" ${dis(hasSel)}>${label}</button>`).join("")}
       </div>
     </div>
-    <div class="ctxitem has-sub">Alinhar à página<span class="ctxarrow">›</span>
+    <div class="ctxitem has-sub">${CI.align}Alinhar à página<span class="ctxarrow">›</span>
       <div class="ctxsub ctxalign">
         ${CTX_ALIGN.map(([k, label]) => `<button class="ctxitem" data-ctxalign="${k}" ${dis(hasSel)}>${label}</button>`).join("")}
       </div>
     </div>
+    ${els.length === 1 && els[0].type === "image" ? `<div class="ctxsep"></div><button class="ctxitem" data-ctx="asbg">${CI.image}Usar como fundo</button>` : ""}
     <div class="ctxsep"></div>
-    <button class="ctxitem" data-ctx="lock" ${dis(hasSel)}>${locked ? "Desbloquear" : "Bloquear"}</button>
-    <button class="ctxitem" disabled title="Sem suporte ainda">Adicionar link<span class="ctxkey">⌘K</span></button>
+    <button class="ctxitem" data-ctx="lock" ${dis(hasSel)}>${locked ? CI.unlock : CI.lock}${locked ? "Desbloquear" : "Bloquear"}</button>
+    <button class="ctxitem" data-ctx="code" ${dis(hasSel)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>Ver código (JSON)</button>
+    <div class="ctxsep"></div>
+    <button class="ctxitem danger" data-ctx="delete" ${dis(hasSel)}>${CI.del}Excluir<span class="ctxkey">Delete</span></button>
   `;
 }
 $("ctxmenu").addEventListener("click", (ev) => {
@@ -910,10 +1139,16 @@ $("ctxmenu").addEventListener("click", (ev) => {
   if (!b || b.disabled) return;
   if (b.dataset.ctx === "copy") copySel();
   else if (b.dataset.ctx === "paste") paste();
+  else if (b.dataset.ctx === "copystyle") { if (!copiedStyle) armCopyStyle(); }
+  else if (b.dataset.ctx === "asbg") useImageAsBg();
   else if (b.dataset.ctx === "duplicate") duplicateSel();
   else if (b.dataset.ctx === "delete") deleteSel();
+  else if (b.dataset.ctx === "code") { panelTab = "code"; propPopOpen = true; renderProps(); positionFloatingUI(); }
   else if (b.dataset.ctx === "group") groupSel();
   else if (b.dataset.ctx === "ungroup") ungroupSel();
+  else if (b.dataset.ctx === "pghide") togglePageHidden(+b.dataset.page!);
+  else if (b.dataset.ctx === "pgadd") insertBlankPageAfter(+b.dataset.page!);
+  else if (b.dataset.ctx === "pgdel") deletePage(+b.dataset.page!);
   else if (b.dataset.ctx === "lock") { const locked = selEls().every((e) => e.locked); for (const e of selEls()) e.locked = !locked; commit(); renderAll(); }
   else if (b.dataset.ctxorder) order(b.dataset.ctxorder);
   else if (b.dataset.ctxalign) align(b.dataset.ctxalign);
@@ -964,7 +1199,7 @@ $("stage").addEventListener("pointerdown", (ev) => {
   // bar, the thumbnail strip, and each page's own floating header/add-page button are UI
   // chrome living inside .stage — not canvas content, so a click there must never fall
   // through to marquee-select.
-  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas, #textSelToolbar")) return;
+  if ((ev.target as HTMLElement).closest("#seltoolbar, #proppop, #tbPop, #documentScroll, #ctxmenu, .pagehead, #addPageCanvas, #textSelToolbar")) return;
   // Right-click only pans when it actually drags — a plain right-click (no movement) opens
   // the Context Menu instead, matching how canvas tools commonly split the two.
   if (ev.button === 2) { startRightClickPanOrMenu(ev); return; }
@@ -1308,7 +1543,7 @@ function startDraw(ev) {
       const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       s.dataset.ink = "1";
       s.setAttribute("style", `position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;overflow:visible`);
-      s.innerHTML = `<path d="${pts.map((q, i) => `${i ? "L" : "M"}${q[0] - b.x},${q[1] - b.y}`).join(" ")}" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
+      s.innerHTML = `<path d="${pts.map((q, i) => `${i ? "L" : "M"}${q[0] - b.x},${q[1] - b.y}`).join(" ")}" fill="none" stroke="${pen.color}" stroke-width="${pen.width}" stroke-opacity="${pen.alpha}" stroke-linecap="round" stroke-linejoin="round"/>`;
       $("ovl").appendChild(s);
     },
     up: () => {
@@ -1319,7 +1554,7 @@ function startDraw(ev) {
       addEl("draw", {
         x: Math.round(b.x), y: Math.round(b.y - pageTop(doc.active)), w: Math.round(b.w), h: Math.round(b.h),
         pts: pts.map((q) => [(q[0] - b.x) / (b.w || 1), (q[1] - b.y) / (b.h || 1)]),
-        name: "Desenho",
+        name: "Desenho", stroke: pen.color, strokeWidth: pen.width, opacity: pen.alpha,
       });
     },
   };
@@ -1661,7 +1896,7 @@ $("textSelColor").addEventListener("input", (ev) => {
 
 /* scroll + zoom wheel */
 $("stage").addEventListener("wheel", (ev) => {
-  if ((ev.target as HTMLElement).closest("#proppop, #seltoolbar, #ctxmenu, #documentScroll")) return;
+  if ((ev.target as HTMLElement).closest("#proppop, #tbPop, #seltoolbar, #ctxmenu, #documentScroll")) return;
   ev.preventDefault();
   // Ctrl/Cmd+wheel zooms the document — and so does a trackpad pinch, which the browser
   // reports as exactly that. A bare wheel ALWAYS scrolls the document and must never touch
@@ -1717,9 +1952,11 @@ function zoomFit() {
 /* ============================ commands ============================ */
 function deleteSel() {
   const locked = selEls().some((e) => e.locked);
+  const before = selEls().filter((e) => !e.locked).length;
   for (const p of doc.pages) p.els = p.els.filter((e) => !sel.includes(e.id) || e.locked);
   if (!locked) sel = [];
   commit(); renderAll();
+  if (before) toast(before > 1 ? `${before} elementos excluídos` : "Elemento excluído", { kind: "ok", action: { label: "Desfazer", fn: undo } });
 }
 function groupSel() {
   if (!groupElements(page().els, sel, uid())) return;
@@ -1899,17 +2136,18 @@ function patch(props: Partial<El>, immediate?: boolean) {
 
 /* ============================ left rail + panels ============================ */
 const TABS = [
-  { id: "text", label: "Texto", icon: `<path d="M4 6h16"/><path d="M12 6v14"/>` },
-  { id: "fonts", label: "Fontes", icon: `<path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>` },
-  { id: "elements", label: "Formas", icon: `<circle cx="9" cy="9" r="5"/><rect x="11" y="11" width="9" height="9" rx="1.5"/>` },
-  { id: "uploads", label: "Imagens", icon: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 15.5l5-5 4 4 3.5-3.5 4.5 4.5"/><circle cx="8.5" cy="8.5" r="1.4"/>` },
+  { id: "text", label: "Texto", icon: `<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>` },
+  { id: "fonts", label: "Fontes", icon: `<path d="m3 17 4-10 4 10"/><path d="M4.5 13h5"/><circle cx="17" cy="14" r="3"/><path d="M20 11v6"/>` },
+  { id: "elements", label: "Elementos", icon: `<path d="M8.3 10a.7.7 0 0 1-.63-1.02l3.7-6.3a.7.7 0 0 1 1.26 0l3.7 6.3A.7.7 0 0 1 15.7 10z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/>` },
+  { id: "uploads", label: "Uploads", icon: `<path d="M12 13v8"/><path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/><path d="m8 17 4-4 4 4"/>` },
+  { id: "photos", label: "Fotos", icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>` },
   { id: "draw", label: "Desenho", icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
-  { id: "page", label: "Tela", icon: `<path d="M12 3s6.5 6.8 6.5 10.5A6.5 6.5 0 1 1 5.5 13.5C5.5 9.8 12 3 12 3z"/>` },
+  { id: "page", label: "Página", tip: "Página — fundo e tamanho", icon: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>` },
 ];
 function renderRail() {
   $("rail").innerHTML = TABS.map((t) => `
-    <button class="railbtn" data-tab="${t.id}" aria-pressed="${activeTab === t.id}" title="${t.label}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
+    <button class="railbtn" data-tab="${t.id}" aria-pressed="${activeTab === t.id}" title="${(t as { tip?: string }).tip || t.label} (clique de novo para fechar)" aria-label="${t.label}">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
       ${t.label}
     </button>`).join("");
 }
@@ -2073,6 +2311,14 @@ async function importarFonte(file: File, forOriginal: string | null = null) {
  * contamina o <canvas> e faz a exportação inteira falhar.
  */
 let stockQuery = "";
+let shapeQuery = "";
+/* Configuração da caneta do painel Desenho — vale para os próximos traços. */
+const PEN_TYPES = [
+  { id: "pen", n: "Caneta", width: 6, alpha: 1, icon: `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/><path d="M13.5 7.5l3 3"/>` },
+  { id: "marker", n: "Marcador", width: 16, alpha: 1, icon: `<path d="M9 15l-4 4v2h4l4-4"/><path d="M9 15l7-11 4 4-11 7z"/>` },
+  { id: "highlighter", n: "Marca-texto", width: 28, alpha: 0.4, icon: `<path d="M9 11l-6 6v3h9l3-3"/><path d="M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>` },
+];
+const pen = { type: "pen", color: "#FFFFFF", width: 6, alpha: 1 };
 let stockPhotos: Array<{ id: string; thumb: string; alt: string; photographer: string; pageUrl: string }> = [];
 let stockState: "vazio" | "buscando" | "ok" | "erro" | "desligado" = "vazio";
 let stockPage = 1;
@@ -2152,6 +2398,18 @@ async function inserirStock(id: string, tile: HTMLElement) {
   }
 }
 
+/** Campo "Cor": amostra clicável + o hex em texto ao lado (antes o rótulo dizia "Hex" sem mostrar o valor). */
+function colorField(id, value) {
+  return `<div class="field colorfield"><label for="${id}">Cor</label><input type="color" id="${id}" value="${value}"><span class="num hexval" data-hex-for="${id}">${String(value).toUpperCase()}</span></div>`;
+}
+function filterShapes() {
+  const q = shapeQuery.trim().toLowerCase();
+  let n = 0;
+  document.querySelectorAll<HTMLElement>("#shapeList [data-add]").forEach((b) => { const ok = !q || b.dataset.name!.includes(q); b.hidden = !ok; if (ok) n++; });
+  const empty = document.getElementById("shapeEmpty");
+  if (empty) empty.hidden = n > 0;
+}
+
 function renderPanel() {
   const el = $("panel");
   el.classList.remove("pages-index");
@@ -2159,14 +2417,14 @@ function renderPanel() {
   el.hidden = false;
   const P = page();
   if (activeTab === "text") {
-    el.innerHTML = `<h4 class="ptitle">Texto</h4><p class="phint">Clique para adicionar. Dê duplo clique em qualquer texto da tela para editá-lo no lugar.</p>
+    el.innerHTML = `<h4 class="ptitle" title="Dê duplo clique em qualquer texto da tela para editá-lo no lugar">Texto</h4>
       <button class="texttile" data-add="text" data-size="88" data-weight="700" title="Adicionar título" style="font-size:21px;font-weight:700">Título</button>
       <button class="texttile" data-add="text" data-size="52" data-weight="600" title="Adicionar subtítulo" style="font-size:16px;font-weight:600">Subtítulo</button>
       <button class="texttile" data-add="text" data-size="30" data-weight="400" title="Adicionar corpo de texto" style="font-size:13px">Corpo de texto</button>`;
   }
   if (activeTab === "fonts") {
     ensureFontCatalogLoaded();
-    el.innerHTML = `<h4 class="ptitle">Fontes</h4><p class="phint">Clique numa fonte para aplicar ao texto selecionado.</p>
+    el.innerHTML = `<h4 class="ptitle" title="Clique numa fonte para aplicar ao texto selecionado">Fontes</h4>
       <button class="dropzone" id="pickFont" aria-busy="${fontUploadBusy}" title="Importar um arquivo .ttf ou .otf">
         ${fontUploadBusy ? "Importando…" : "Importar fonte (.ttf/.otf)…"}</button>
       <input class="fontsearch" id="fontSearch" type="search" placeholder="Buscar fonte…" aria-label="Buscar fonte" value="${esc(fontQuery)}">
@@ -2180,44 +2438,61 @@ function renderPanel() {
       ["ellipse", "Elipse", `<circle cx="12" cy="12" r="9"/>`],
       ["triangle", "Triângulo", `<polygon points="12,3 21,20 3,20"/>`],
       ["star", "Estrela", `<polygon points="12,3 14.6,9.3 21,9.9 16.2,14.2 17.6,20.5 12,17.2 6.4,20.5 7.8,14.2 3,9.9 9.4,9.3"/>`],
-      ["line", "Linha", `<rect x="3" y="11" width="18" height="2.5" rx="1.2"/>`],
+      ["line", "Linha", `<path d="M4 12h16"/>`],
     ];
-    el.innerHTML = `<h4 class="ptitle">Formas</h4><p class="phint">Formas vetoriais que você reestiliza no painel de propriedades.</p>
-      <div class="grid2">${shapes.map(([t, n, ic]) => `
-        <button class="tile" data-add="${t}" title="Adicionar ${n.toLowerCase()}"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">${ic}</svg>${n}</button>`).join("")}</div>`;
+    el.innerHTML = `<h4 class="ptitle">Formas</h4>
+      <input class="fontsearch" id="shapeSearch" type="search" placeholder="Buscar formas…" aria-label="Buscar formas" value="${esc(shapeQuery)}">
+      <div class="grid3 ptiles" id="shapeList">${shapes.map(([t, n, ic]) => `
+        <button class="tile" data-add="${t}" data-name="${n.toLowerCase()}" title="Adicionar ${n.toLowerCase()}" aria-label="Adicionar ${n.toLowerCase()}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${n}</span></button>`).join("")}</div>
+      <p class="phint" id="shapeEmpty" hidden>Nenhuma forma com esse nome.</p>`;
+    filterShapes();
   }
   if (activeTab === "uploads") {
-    el.innerHTML = `<h4 class="ptitle">Imagens</h4><p class="phint">Suas próprias imagens, deste dispositivo. Ficam guardadas dentro do design.</p>
-      <button class="dropzone" id="pickImg" title="Escolher imagens do dispositivo">Escolher imagens…</button>
-      <div class="sec"><h4>Banco de imagens</h4>
-        <p class="phint" style="margin-bottom:8px">Fotos do Pexels, de uso livre. A foto escolhida é copiada para dentro do design.</p>
-        <input class="fontsearch" id="stockSearch" type="search" placeholder="Buscar foto…" aria-label="Buscar foto no banco de imagens" value="${esc(stockQuery)}">
+    el.innerHTML = `<h4 class="ptitle">Uploads</h4>
+      <button class="dropzone" id="pickImg" title="Enviar imagens deste dispositivo">Enviar imagens do dispositivo…</button>`;
+  }
+  if (activeTab === "photos") {
+    el.innerHTML = `<h4 class="ptitle">Fotos</h4>
+      <input class="fontsearch" id="stockSearch" type="search" placeholder="Buscar fotos…" aria-label="Buscar fotos no banco de imagens" value="${esc(stockQuery)}">
+      <div class="sec"><h4>Banco de imagens <span class="phint" style="font-weight:400">· Pexels</span></h4>
         <div id="stockList">${stockListHtml()}</div>
       </div>`;
   }
   if (activeTab === "draw") {
-    el.innerHTML = `<h4 class="ptitle">Desenho</h4><p class="phint">Caneta à mão livre. Cada traço vira uma camada editável.</p>
-      <button class="tile" style="width:100%;height:44px;flex-direction:row;gap:8px" id="drawOn" aria-pressed="${tool === "draw"}" title="${tool === "draw" ? "Parar de desenhar" : "Começar a desenhar"}">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/></svg>
-        ${tool === "draw" ? "Desenhando — clique para parar" : "Começar a desenhar"}</button>`;
+    const drawing = tool === "draw";
+    el.innerHTML = `<h4 class="ptitle">Desenho</h4>
+      <div class="grid3 ptiles" role="radiogroup" aria-label="Tipo de caneta">${PEN_TYPES.map((t) => `
+        <button class="tile" data-pen="${t.id}" role="radio" aria-checked="${pen.type === t.id}" aria-pressed="${pen.type === t.id}" title="${t.n}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg><span>${t.n}</span></button>`).join("")}</div>
+      <div class="sec"><h4>Cor</h4>
+        <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-pencolor="${c}" aria-pressed="${pen.color.toLowerCase() === c.toLowerCase()}" title="Cor ${c}" style="background:${c}"></button>`).join("")}</div>
+        ${colorField("penColor", pen.color)}
+      </div>
+      <div class="sec"><h4>Espessura <span class="num pval" id="penWidthVal">${pen.width}</span></h4>
+        <input type="range" id="penWidth" min="1" max="60" value="${pen.width}" aria-label="Espessura do traço">
+        <h4 style="margin-top:10px">Transparência <span class="num pval" id="penAlphaVal">${Math.round((1 - pen.alpha) * 100)}%</span></h4>
+        <input type="range" id="penAlpha" min="0" max="90" value="${Math.round((1 - pen.alpha) * 100)}" aria-label="Transparência do traço">
+      </div>
+      <button class="tbtn primary pdraw" id="drawOn" aria-pressed="${drawing}" title="${drawing ? "Parar de desenhar (Esc)" : "Começar a desenhar (P)"}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${drawing ? `<rect x="6" y="6" width="12" height="12" rx="2"/>` : `<path d="M4 20l1.2-4.2L15.5 5.5l3 3L8.2 18.8 4 20z"/>`}</svg>
+        ${drawing ? "Parar de desenhar" : "Começar a desenhar"}</button>`;
   }
   if (activeTab === "page") {
-    el.innerHTML = `<h4 class="ptitle">Tela</h4><p class="phint">Cor de fundo e tamanho da tela na página ${doc.active + 1}.</p>
+    el.innerHTML = `<h4 class="ptitle">Página <span class="phint" style="font-weight:400">· fundo e tamanho da página ${doc.active + 1}</span></h4>
       <div class="sec"><h4>Fundo</h4>
         <div class="grid4" style="margin-bottom:8px">${PALETTE.slice(0, 8).map((c) => `<button class="swatch" data-bg="${c}" aria-pressed="${P.bg.toLowerCase() === c}" title="Fundo da página ${c}" style="background:${c}"></button>`).join("")}</div>
-        <div class="field"><label>Hex</label><input type="color" id="bgPick" value="${/^#[0-9a-f]{6}$/i.test(P.bg) ? P.bg : "#ffffff"}"></div>
+        ${colorField("bgPick", /^#[0-9a-f]{6}$/i.test(P.bg) ? P.bg : "#ffffff")}
         <h4 style="margin-top:10px">Degradê</h4>
         <div class="grid4" style="margin-bottom:8px">${BG_GRADS.map(([a, b, ang], i) => `<button class="swatch" data-bggrad="${i}" title="Fundo em degradê" style="background:linear-gradient(${ang}deg,${a},${b})"></button>`).join("")}</div>
         ${P.bgImage ? `<div class="row" style="margin-bottom:8px"><button class="tbtn ghost" data-bgimg-clear style="flex:1;height:30px;font-size:11.5px">Remover imagem de fundo</button></div>`
           : `<p class="phint">Imagem de fundo: selecione uma imagem e use <b>Usar como fundo</b> na barra.</p>`}
       </div>
-      <div class="sec"><h4>Fundo do canvas</h4><p class="phint" style="margin-bottom:8px">A área ao redor da página — não o conteúdo dela.</p>
+      <div class="sec"><h4 title="A área ao redor da página — não o conteúdo dela">Fundo do canvas</h4>
         <div class="grid4" style="margin-bottom:8px">${STAGE_BG_PRESETS.map((c) => `<button class="swatch" data-stagebg="${c}" aria-pressed="${(stageBg || "").toLowerCase() === c.toLowerCase()}" title="Fundo do canvas ${c}" style="background:${c}"></button>`).join("")}</div>
         <div class="row" style="margin-bottom:8px"><button class="tbtn ghost" data-stagebg-reset style="flex:1;height:30px;font-size:11.5px" aria-pressed="${!stageBg}">Seguir o tema</button></div>
-        <div class="field"><label>Hex</label><input type="color" id="stageBgPick" value="${stageBg || stageGroundHex()}"></div>
+        ${colorField("stageBgPick", stageBg || stageGroundHex())}
       </div>
-      <div class="sec"><h4>Tamanho</h4><p class="phint" style="margin-bottom:8px">Aplica a todas as páginas do documento.</p>
-        <div class="grid2" style="margin-bottom:8px">${PAGE_SIZES.map((s) => `<button class="tile" style="height:46px;font-size:10px" data-size="${s.w}x${s.h}">${s.n}<span class="num" style="color:var(--faint)">${s.w}×${s.h}</span></button>`).join("")}</div>
+      <div class="sec"><h4 title="Aplica a todas as páginas do documento">Tamanho</h4>
+        <div class="grid2" style="margin-bottom:8px">${PAGE_SIZES.map((s) => `<button class="tile sizetile" data-size="${s.w}x${s.h}" title="${s.n} — ${s.w}×${s.h}"><span>${s.n}</span><span class="num">${s.w}×${s.h}</span></button>`).join("")}</div>
         <div class="row"><div class="field"><label>L</label><input class="num" id="pgW" value="${P.w}"></div><div class="field"><label>A</label><input class="num" id="pgH" value="${P.h}"></div></div>
       </div>`;
   }
@@ -2232,20 +2507,27 @@ function renderLayers() {
   if (box.classList.contains("layer-dragging")) return;
   const scrollTop = box.scrollTop;
   const P = page();
-  box.innerHTML = `<p class="phint" id="layerDragHint">Arraste para reordenar. O topo da lista fica na frente.<br>Ou use Alt + ↑ / ↓ na alça da camada.</p>` +
+  const cur = selEls();
+  const hit = (a: El, b: El) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const shown = layerFilter === "overlap" && cur.length ? P.els.filter((e) => cur.some((c) => c.id === e.id || hit(c, e))) : P.els;
+  box.innerHTML = `<div class="layer-filter" role="group" aria-label="Filtrar camadas">
+      <button class="chip" data-layerfilter="all" aria-pressed="${layerFilter === "all"}" title="Mostrar todas as camadas">Todas</button>
+      <button class="chip" data-layerfilter="overlap" aria-pressed="${layerFilter === "overlap"}" title="Só as camadas que se sobrepõem à seleção">Sobrepostas</button>
+    </div>
+    <span id="layerDragHint" hidden>Arraste para reordenar; o topo da lista fica na frente. Ou use Alt + ↑ / ↓ na alça. Duplo clique no nome para renomear.</span>` +
     `<div class="layer-list" role="list" aria-label="Camadas da página ${doc.active + 1}">` +
-    (P.els.length ? [...P.els].reverse().map((e) => {
+    (shown.length ? [...shown].reverse().map((e) => {
       const scale = Math.min(32 / Math.max(1, e.w), 32 / Math.max(1, e.h));
       return `<div class="layer${e.hidden ? " is-hidden" : ""}" data-layer="${esc(e.id)}" data-selected="${sel.includes(e.id)}" role="listitem">
-        <button class="layer-grip" data-layer-grip="${esc(e.id)}" aria-label="Arrastar camada ${esc(e.name)}" aria-describedby="layerDragHint" title="${e.locked ? "Desbloqueie para reordenar" : "Arrastar para reordenar · Alt + ↑ / ↓"}" aria-disabled="${e.locked}">
+        <button class="layer-grip" data-layer-grip="${esc(e.id)}" aria-label="Arrastar camada ${esc(e.name)}" aria-describedby="layerDragHint" title="${e.locked ? "Desbloqueie para reordenar" : "Arraste para reordenar (o topo fica na frente) · Alt + ↑ / ↓"}" aria-disabled="${e.locked}">
           <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor"><circle cx="3" cy="5" r="1.2"/><circle cx="9" cy="5" r="1.2"/><circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/><circle cx="3" cy="15" r="1.2"/><circle cx="9" cy="15" r="1.2"/></svg>
         </button>
         <button class="layer-select" aria-label="Selecionar camada ${esc(e.name)}" aria-pressed="${sel.includes(e.id)}">
           <span class="layer-preview" aria-hidden="true"><span class="layer-preview-art" style="width:${e.w}px;height:${e.h}px;left:${(40 - e.w * scale) / 2}px;top:${(40 - e.h * scale) / 2}px;transform:scale(${scale})">${elInner(e)}</span></span>
-          <span class="lname" title="${esc(e.name)}">${esc(e.name)}<small>${TYPE_PT[e.type] || "Elemento"}${e.group ? " · grupo" : ""}${e.locked ? " · bloqueada" : ""}</small></span>
+          <span class="lname" data-rename="${esc(e.id)}" title="${esc(e.name)} — duplo clique para renomear">${esc(e.name)}<small>${TYPE_PT[e.type] || "Elemento"}${e.group ? " · grupo" : ""}${e.locked ? " · bloqueada" : ""}</small></span>
         </button>
-        <button class="mini" data-layer-lock="${esc(e.id)}" title="${e.locked ? "Desbloquear" : "Bloquear"}" aria-label="${e.locked ? "Desbloquear" : "Bloquear"} camada ${esc(e.name)}">${LOCK_ICON(e.locked)}</button>
-        <button class="mini" data-hide="${esc(e.id)}" title="${e.hidden ? "Mostrar" : "Ocultar"}" aria-label="${e.hidden ? "Mostrar" : "Ocultar"} camada ${esc(e.name)}">
+        <button class="mini${e.locked ? " on" : ""}" data-layer-lock="${esc(e.id)}" title="${e.locked ? "Desbloquear" : "Bloquear"}" aria-label="${e.locked ? "Desbloquear" : "Bloquear"} camada ${esc(e.name)}">${LOCK_ICON(e.locked)}</button>
+        <button class="mini${e.hidden ? " on" : ""}" data-hide="${esc(e.id)}" title="${e.hidden ? "Mostrar" : "Ocultar"}" aria-label="${e.hidden ? "Mostrar" : "Ocultar"} camada ${esc(e.name)}">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">${e.hidden ? PAGE_MINI.hideOff : PAGE_MINI.hideOn}</svg>
         </button>
         <button class="mini" data-layermenu="${esc(e.id)}" title="Menu da camada" aria-label="Menu da camada ${esc(e.name)}">${MORE_ICON}</button>
@@ -2348,11 +2630,24 @@ $("panel").addEventListener("click", (ev) => {
   if (stockTile) { void inserirStock(stockTile.dataset.stock, stockTile); return; }
   if (ev.target.closest("#stockMore")) { void buscarStock(stockPage + 1); return; }
   if (ev.target.closest("#drawOn")) { setTool(tool === "draw" ? "select" : "draw"); return; }
+  const penBtn = ev.target.closest("[data-pen]");
+  if (penBtn) {
+    const t = PEN_TYPES.find((x) => x.id === penBtn.dataset.pen)!;
+    Object.assign(pen, { type: t.id, width: t.width, alpha: t.alpha });
+    renderPanel(); return;
+  }
+  const penSw = ev.target.closest("[data-pencolor]");
+  if (penSw) { pen.color = penSw.dataset.pencolor; renderPanel(); return; }
 });
 $("panel").addEventListener("input", (ev) => {
   // Só a lista é redesenhada: um renderPanel() inteiro recriaria o próprio campo de busca e
   // o cursor sairia dele a cada tecla.
   if (ev.target.id === "fontSearch") { fontQuery = ev.target.value; renderFontList(); return; }
+  if (ev.target.id === "shapeSearch") { shapeQuery = ev.target.value; filterShapes(); return; }
+  if (ev.target.type === "color") { const hx = document.querySelector(`[data-hex-for="${ev.target.id}"]`); if (hx) hx.textContent = ev.target.value.toUpperCase(); }
+  if (ev.target.id === "penColor") { pen.color = ev.target.value; return; }
+  if (ev.target.id === "penWidth") { pen.width = +ev.target.value; $("penWidthVal").textContent = String(pen.width); return; }
+  if (ev.target.id === "penAlpha") { pen.alpha = 1 - +ev.target.value / 100; $("penAlphaVal").textContent = `${ev.target.value}%`; return; }
   if (ev.target.id === "stockSearch") {
     // Debounce porque cada tecla aqui seria uma requisição ao provedor, que tem cota por hora.
     stockQuery = ev.target.value;
@@ -2383,6 +2678,12 @@ function renderProps() {
   }
   if (panelTab === "layers") { renderLayers(); return; }
   if (panelTab === "code") { renderCodePanel(); return; }
+  if (panelTab === "effects") {
+    const fe = selEls();
+    if (fe.length === 1 && fe[0].type === "text") { $("props").innerHTML = textFxPanel(fe[0]); return; }
+    panelTab = "organize";
+    tabs?.querySelector('[data-ptab="organize"]')?.setAttribute("aria-pressed", "true");
+  }
 
   const box = $("props");
   const els = selEls();
@@ -2394,15 +2695,14 @@ function renderProps() {
   const one = els.length === 1;
 
   box.innerHTML = `
-    ${one ? `<div class="sec"><h4>Camada</h4><div class="field" title="Nome desta camada — é o que aparece na lista Camadas"><input id="pName" value="${esc(e.name)}" style="font-family:var(--body)"></div></div>` : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
-    ${one && e.type === "text" ? textFxPanel(e) : ""}
+    ${one ? "" : `<div class="sec"><h4>${els.length} objetos selecionados</h4></div>`}
 
     <div class="sec"><h4>Organizar</h4>
       <div class="seg order-actions" style="margin-bottom:12px">
-        ${[["front", "Para o topo", `<rect width="8" height="8" x="8" y="8" rx="2"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>`],
-           ["up", "Para frente", `<path d="m18 15-6-6-6 6"/>`],
+        ${[["up", "Para frente", `<path d="m18 15-6-6-6 6"/>`],
            ["down", "Para trás", `<path d="m6 9 6 6 6-6"/>`],
-           ["back", "Para o fundo", `<rect width="8" height="8" x="14" y="14" rx="2"/><rect width="8" height="8" x="2" y="2" rx="2"/><path d="M7 14v1a2 2 0 0 0 2 2h1"/><path d="M14 7h1a2 2 0 0 1 2 2v1"/>`]]
+           ["front", "Para o topo", `<rect width="8" height="8" x="8" y="8" rx="2" fill="currentColor"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/>`],
+           ["back", "Para o fundo", `<rect width="8" height="8" x="14" y="14" rx="2" fill="currentColor"/><rect width="8" height="8" x="2" y="2" rx="2" fill="currentColor"/><rect width="8" height="8" x="8" y="8" rx="2"/>`]]
           .map(([k, tip, ic]) => `<button data-order="${k}" title="${tip}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg><span>${tip}</span></button>`).join("")}
       </div>
       <h4 class="align-label">${els.length > 1 ? "Alinhar seleção" : "Alinhar à página"}</h4><div class="seg align-actions" style="margin-bottom:12px">
@@ -2419,21 +2719,17 @@ function renderProps() {
         <button data-distribute="h" title="Distribuir na horizontal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect width="4" height="14" x="3" y="5" rx="1"/><rect width="4" height="14" x="10" y="5" rx="1"/><rect width="4" height="14" x="17" y="5" rx="1"/></svg><span>Horizontal</span></button>
         <button data-distribute="v" title="Distribuir na vertical"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect width="14" height="4" x="5" y="3" rx="1"/><rect width="14" height="4" x="5" y="10" rx="1"/><rect width="14" height="4" x="5" y="17" rx="1"/></svg><span>Vertical</span></button>
       </div>` : ""}
-      <div class="seg">
-        <button data-flip="h" title="Espelhar na horizontal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/></svg></button>
-        <button data-flip="v" title="Espelhar na vertical"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m17 3-5 5-5-5h10"/><path d="m17 21-5-5-5 5h10"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/></svg></button>
-        <button data-cmd="duplicate" title="Duplicar (⌘D)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></button>
-        <button data-cmd="delete" title="Excluir (⌫)" style="color:var(--danger)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-      </div>
     </div>
 
     ${one ? `<div class="sec"><h4>Avançados</h4>
-      <div class="grid2" style="gap:6px">
-        <div class="field" title="Largura, em px"><label>L</label><input id="pW" value="${Math.round(e.w)}"></div>
-        <div class="field" title="${e.type === "text" ? "Altura — automática no texto, definida pelo conteúdo" : "Altura, em px"}"><label>A</label><input id="pH" value="${Math.round(e.h)}" ${e.type === "text" ? "disabled" : ""}></div>
-        <div class="field" title="X — distância da borda esquerda da página, em px"><label>X</label><input id="pX" value="${Math.round(e.x)}"></div>
-        <div class="field" title="Y — distância do topo da página, em px"><label>Y</label><input id="pY" value="${Math.round(e.y)}"></div>
-        <div class="field" title="Rotação, em graus"><label>∠</label><input id="pR" value="${Math.round(e.rot)}"></div>
+      <div class="adv-grid">
+        <div class="field" title="Largura, em px"><label for="pW">Largura</label><input id="pW" value="${Math.round(e.w)}"><span class="unit">px</span></div>
+        <button class="ratiolock" id="pRatio" aria-pressed="${ratioLock}" title="Manter proporção" aria-label="Manter proporção"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+        <div class="field" title="${e.type === "text" ? "Altura — automática no texto, definida pelo conteúdo" : "Altura, em px"}"><label for="pH">Altura</label><input id="pH" value="${Math.round(e.h)}" ${e.type === "text" ? "disabled" : ""}><span class="unit">px</span></div>
+        <div class="field" title="Distância da borda esquerda da página, em px"><label for="pX">X</label><input id="pX" value="${Math.round(e.x)}"><span class="unit">px</span></div>
+        <span></span>
+        <div class="field" title="Distância do topo da página, em px"><label for="pY">Y</label><input id="pY" value="${Math.round(e.y)}"><span class="unit">px</span></div>
+        <div class="field" title="Rotação, em graus"><label for="pR">Rotação</label><input id="pR" value="${Math.round(e.rot)}"><span class="unit">°</span></div>
       </div></div>` : ""}`;
 }
 
@@ -2470,9 +2766,26 @@ $("ptabs")?.addEventListener("click", (ev) => {
   panelTab = b.dataset.ptab as "organize" | "layers" | "code";
   renderProps();
 });
-$("closeProps").addEventListener("click", () => { propPopOpen = false; positionFloatingUI(); });
+$("closeProps").addEventListener("click", () => { propPopOpen = false; renderToolbar(); positionFloatingUI(); });
+$("props").addEventListener("dblclick", (ev) => {
+  const span = (ev.target as HTMLElement).closest<HTMLElement>("[data-rename]");
+  if (!span) return;
+  const el = byId(span.dataset.rename);
+  if (!el) return;
+  const input = document.createElement("input");
+  input.className = "lrename"; input.value = el.name; input.setAttribute("aria-label", "Nome da camada");
+  span.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const finish = (save: boolean) => { if (done) return; done = true; const v = input.value.trim(); if (save && v && v !== el.name) { el.name = v.slice(0, 80); commit(); } renderLayers(); };
+  input.addEventListener("keydown", (k) => { k.stopPropagation(); if (k.key === "Enter") finish(true); if (k.key === "Escape") finish(false); });
+  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("click", (c) => c.stopPropagation());
+  input.addEventListener("pointerdown", (c) => c.stopPropagation());
+});
 $("props").addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
+  const lf = t.closest<HTMLElement>("[data-layerfilter]");
+  if (lf) { layerFilter = lf.dataset.layerfilter as "all" | "overlap"; renderLayers(); return; }
   const lockBtn = t.closest<HTMLElement>("[data-layer-lock]");
   if (lockBtn) { const el = byId(lockBtn.dataset.layerLock); if (el) { el.locked = !el.locked; commit(); renderAll(); } return; }
   const hideBtn = t.closest<HTMLElement>("[data-hide]");
@@ -2496,15 +2809,15 @@ $("props").addEventListener("click", (ev) => {
   if (g("order")) return order(g("order").dataset.order);
   if (g("align")) return align(g("align").dataset.align);
   if (g("distribute")) return distributeSel(g("distribute").dataset.distribute as "h" | "v");
-  if (g("flip")) return flip(g("flip").dataset.flip);
-  if (g("cmd")) return g("cmd").dataset.cmd === "delete" ? deleteSel() : duplicateSel();
+  if (t.closest("#pRatio")) { ratioLock = !ratioLock; renderProps(); return; }
 });
 $("props").addEventListener("input", (ev) => {
   const id = (ev.target as HTMLElement).id, v = (ev.target as HTMLInputElement).value, n = parseFloat(v);
   const map = {
     pX: () => patch({ x: n || 0 }), pY: () => patch({ y: n || 0 }),
-    pW: () => n > 0 && patch({ w: n }), pH: () => n > 0 && patch({ h: n }),
-    pR: () => patch({ rot: n || 0 }), pName: () => patch({ name: v }),
+    pW: () => { if (!(n > 0)) return; const e = selEls()[0]; if (ratioLock && e && e.type !== "text" && e.w > 0) { patch({ w: n, h: Math.round(n * e.h / e.w) }); const h = document.getElementById("pH") as HTMLInputElement | null; if (h) h.value = String(Math.round(selEls()[0].h)); } else patch({ w: n }); },
+    pH: () => { if (!(n > 0)) return; const e = selEls()[0]; if (ratioLock && e && e.h > 0) { patch({ h: n, w: Math.round(n * e.w / e.h) }); const w = document.getElementById("pW") as HTMLInputElement | null; if (w) w.value = String(Math.round(selEls()[0].w)); } else patch({ h: n }); },
+    pR: () => patch({ rot: n || 0 }),
   };
   if (map[id]) { map[id](); }
   if (["pW", "pH", "pR"].includes(id)) renderOverlay();
@@ -2532,16 +2845,17 @@ async function buildThumbs() {
 const dirtyThumb = (id?: string) => { thumbs.delete(id || page().id); buildThumbs(); };
 
 const PAGE_MINI = {
-  up: `<path d="M12 19V6"/><path d="M6 11l6-5 6 5"/>`,
-  down: `<path d="M12 5v13"/><path d="M6 13l6 5 6-5"/>`,
+  up: `<path d="M18 15l-6-6-6 6"/>`,
+  down: `<path d="M6 9l6 6 6-6"/>`,
   hideOn: `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.6"/>`,
   hideOff: `<path d="M3 3l18 18"/><path d="M10.6 5.2A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.4 4.2M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7c1.3 0 2.5-.3 3.6-.7"/>`,
-  dup: `<rect x="3" y="3" width="13" height="13" rx="2"/><rect x="8" y="8" width="13" height="13" rx="2"/>`,
+  dup: `<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16V4a2 2 0 0 1 2-2h12"/><path d="M15 12v6M12 15h6"/>`,
   del: `<path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/>`,
+  more: `<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>`,
 };
 const pageMini = (action: string, icon: string, i: number, title: string, disabled = false) => `
   <button class="pmini${["moveuppage", "movedownpage", "hidepage"].includes(action) ? " page-secondary" : ""}" data-${action}="${i}" title="${title}" aria-label="${title}" ${disabled ? "disabled" : ""}>
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
   </button>`;
 
 // Shared by the on-canvas page headers and thumbnail strip.
@@ -2598,7 +2912,34 @@ $("pagestack").addEventListener("click", (ev) => {
   const up = t.closest<HTMLElement>("[data-moveuppage]"); if (up) { movePageUp(+up.dataset.moveuppage); return; }
   const down = t.closest<HTMLElement>("[data-movedownpage]"); if (down) { movePageDown(+down.dataset.movedownpage); return; }
   const hide = t.closest<HTMLElement>("[data-hidepage]"); if (hide) { togglePageHidden(+hide.dataset.hidepage); return; }
+  const more = t.closest<HTMLElement>("[data-pagemore]");
+  if (more) { const r = more.getBoundingClientRect(); openPageMenu(+more.dataset.pagemore, r.left, r.bottom + 4); return; }
 });
+/** "Mais opções da página" reaproveita o #ctxmenu: ocultar, página em branco abaixo, excluir. */
+function openPageMenu(i: number, x: number, y: number) {
+  const p = doc.pages[i]; if (!p) return;
+  ctxMenuOpen = true;
+  const el = $("ctxmenu");
+  el.innerHTML = `
+    <button class="ctxitem" data-ctx="pghide" data-page="${i}">${ci(p.hidden ? PAGE_MINI.hideOn : PAGE_MINI.hideOff)}${p.hidden ? "Mostrar página" : "Ocultar página"}</button>
+    <button class="ctxitem" data-ctx="pgadd" data-page="${i}">${ci(`<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6M12 12v6"/>`)}Adicionar página em branco abaixo</button>
+    <div class="ctxsep"></div>
+    <button class="ctxitem danger" data-ctx="pgdel" data-page="${i}" ${doc.pages.length > 1 ? "" : "disabled"}>${CI.del}Excluir página</button>`;
+  el.hidden = false;
+  el.style.left = x + "px"; el.style.top = y + "px";
+  requestAnimationFrame(() => {
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) el.style.left = Math.max(8, window.innerWidth - r.width - 8) + "px";
+    if (r.bottom > window.innerHeight - 8) el.style.top = Math.max(8, y - r.height - 36) + "px";
+  });
+}
+function insertBlankPageAfter(i: number) {
+  const ref = doc.pages[i];
+  const p = blankPage(); p.w = ref.w; p.h = ref.h;
+  doc.pages.splice(i + 1, 0, p); doc.active = i + 1; sel = [];
+  commit(); renderAll(); refreshPagesUI();
+  scrollToPage(doc.active); applyWorld();
+}
 
 /* ---------- thumbnail strip ---------- */
 function renderThumbStrip() {
@@ -2631,7 +2972,6 @@ function currentPagesMode(): "document" | "thumb" | "grid" {
 }
 function updatePagesModeButtons() {
   const m = currentPagesMode();
-  $("docViewBtn").setAttribute("aria-pressed", String(m === "document"));
   $("thumbViewBtn").setAttribute("aria-pressed", String(m === "thumb"));
   $("gridViewBtn").setAttribute("aria-pressed", String(m === "grid"));
 }
@@ -2651,10 +2991,12 @@ function setPagesMode(mode: "document" | "thumb" | "grid") {
   // Keep scale while the strip reserves its own space below the canvas.
   clampView(); applyWorld(); renderOverlay();
 }
-$("docViewBtn").addEventListener("click", () => setPagesMode("document"));
 $("thumbViewBtn").addEventListener("click", () => setPagesMode("thumb"));
 $("gridViewBtn").addEventListener("click", () => setPagesMode("grid"));
-$("pageCountBtn").addEventListener("click", () => setPagesMode("grid"));
+$("fullscreenBtn").addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+});
 
 /* ---------- grid view ---------- */
 function renderGridView() {
@@ -2815,7 +3157,7 @@ if (window.claude?.use) {
  *  roda como site publicado de verdade (sem `window.claude`), que é o deploy de produção deste
  *  projeto. O tipo MIME vem da extensão do arquivo porque `data` chega em três formas diferentes
  *  (string do JSON, Uint8Array do PDF, Blob já tipado do canvas) e só o nome é comum às três. */
-const DOWNLOAD_MIME_BY_EXT = { json: "application/json", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", html: "text/html" };
+const DOWNLOAD_MIME_BY_EXT = { json: "application/json", pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", html: "text/html", zip: "application/zip" };
 async function browserDownload({ filename, data }) {
   const ext = filename.split(".").pop().toLowerCase();
   const blob = data instanceof Blob ? data : new Blob([data], { type: DOWNLOAD_MIME_BY_EXT[ext] || "application/octet-stream" });
@@ -2831,20 +3173,85 @@ async function browserDownload({ filename, data }) {
 }
 
 let expFmt = "png", expScale = 2;
+/** Com 2+ páginas visíveis o modal pergunta "todas ou só a atual" (padrão: todas, como no
+ *  Canva). PNG/JPG de várias páginas saem num .zip só; PDF/HTML respeitam a mesma escolha. */
+let expScope: "all" | "current" = "all";
+let expBusy = false;
+const isImageFmt = (f: string) => f === "png" || f === "jpg";
+
+/** Páginas que a exportação atual vai gerar. Ocultas ficam de fora (igual PDF/apresentação);
+ *  com uma página só visível, imagem continua sendo "a página em tela", como sempre foi. */
+function exportPages(): Page[] {
+  const pages = presentablePages();
+  if (pages.length > 1) return expScope === "all" ? pages : [page()];
+  return isImageFmt(expFmt) ? [page()] : pages;
+}
+
+function expThumb(p: Page, cls: string) {
+  const src = thumbs.get(p.id);
+  return `<span class="expthumb ${cls}" style="background:${esc(p.bg)};aspect-ratio:${+p.w}/${+p.h}">${src ? `<img src="${esc(src)}" alt="">` : ""}</span>`;
+}
+
+function renderExportScope() {
+  const pages = presentablePages();
+  const show = pages.length > 1 && expFmt !== "json";
+  $("expPagesSec").hidden = !show;
+  if (!show) return;
+  const n = pages.length, cur = doc.active + 1, fmt = expFmt.toUpperCase();
+  // Primeira página por cima: as de trás entram antes no DOM.
+  const stack = pages.slice(0, 3).map((p, i) => expThumb(p, `s${i}`)).reverse().join("");
+  const card = (scope: string, preview: string, title: string, sub: string) => `
+    <button class="expcard" role="radio" data-scope="${scope}" aria-checked="${expScope === scope}">
+      <span class="expstack">${preview}</span>
+      <span class="exptitle">${title}</span>
+      <span class="expsub">${sub}</span>
+    </button>`;
+  $("expScope").innerHTML =
+    card("all", stack, "Todas as páginas", `${n} páginas`) +
+    card("current", expThumb(page(), "s0"), "Página atual", `Página ${cur}`);
+  $("expScopeHint").textContent = expScope === "current" ? `Só a página ${cur}, em ${fmt}.`
+    : isImageFmt(expFmt) ? `${n} imagens ${fmt} num único arquivo .zip.`
+    : expFmt === "pdf" ? `Um PDF com as ${n} páginas.`
+    : `Uma página HTML com as ${n} telas.`;
+}
 
 /** PNG sem o fundo da página (logo, figurinha, sobreposição) — como o "fundo transparente" do Canva. */
 let expTransparent = false;
 $("expTransparent").addEventListener("change", (ev) => { expTransparent = (ev.target as HTMLInputElement).checked; });
 
+const EXP_FMTS: [string, string, string][] = [
+  ["png", "PNG", "Imagem de alta qualidade"],
+  ["jpg", "JPG", "Arquivo de imagem pequeno"],
+  ["pdf", "PDF", "Impressão e documentos"],
+  ["json", "JSON", "Dados do design"],
+  ["html", "HTML", "Página web"],
+];
+$("fmts").addEventListener("change", (ev) => { if (!expBusy) { expFmt = (ev.target as HTMLSelectElement).value; renderExport(); } });
+$("scales").addEventListener("input", (ev) => { if (!expBusy) { expScale = +(ev.target as HTMLInputElement).value; renderExport(); } });
 function renderExport() {
-  $("fmts").innerHTML = ["png", "jpg", "pdf", "json", "html"].map((f) =>
-    `<button class="fmt" data-fmt="${f}" aria-pressed="${expFmt === f}" title="Exportar como ${f.toUpperCase()}">${f.toUpperCase()}</button>`).join("");
-  $("scales").innerHTML = [1, 2, 3].map((s) =>
-    `<button data-scale="${s}" aria-pressed="${expScale === s}" title="Escala ${s}×">${s}×</button>`).join("");
-  $("scales").parentElement.style.display = (expFmt === "json") ? "none" : "";
+  $("fmts").innerHTML = EXP_FMTS.map(([f, label]) =>
+    `<option value="${f}" ${expFmt === f ? "selected" : ""}>${label}${f === "png" ? " (sugerido)" : ""}</option>`).join("");
+  $("fmtHint").textContent = EXP_FMTS.find(([f]) => f === expFmt)?.[2] || "";
+  const sc = $("scales") as HTMLInputElement;
+  sc.value = String(expScale);
+  $("scaleVal").textContent = `${expScale}×`;
+  $("scalePx").textContent = `${Math.round(page().w * expScale)} × ${Math.round(page().h * expScale)} px`;
+  sc.parentElement!.style.display = (expFmt === "json") ? "none" : "";
   $("expTransparentRow").hidden = expFmt !== "png";
   ($("expTransparent") as HTMLInputElement).checked = expTransparent;
+  renderExportScope();
 }
+
+/** Enquanto gera, o modal fica aberto com o progresso no botão — renderizar cada página a 2–3×
+ *  leva centenas de ms, e fechar antes deixaria o usuário sem saber se algo está acontecendo. */
+function setExportBusy(busy: boolean, label = "Baixar") {
+  expBusy = busy;
+  for (const id of ["expGo", "expCancel"]) ($(id) as HTMLButtonElement).disabled = busy;
+  $("expGo").textContent = label;
+  $("scrim").querySelector(".modal")!.classList.toggle("busy", busy);
+}
+function closeExport() { if (!expBusy) $("scrim").hidden = true; }
+
 $("exportBtn").addEventListener("click", () => {
   if (looksGenerated(doc.seedId) && !legacyGeneratedDesign && !generationReview?.canDownload) {
     toast("A versão precisa ser aprovada antes do download.");
@@ -2853,20 +3260,11 @@ $("exportBtn").addEventListener("click", () => {
   renderExport();
   $("scrim").hidden = false;
 });
-$("expCancel").addEventListener("click", () => { $("scrim").hidden = true; });
-$("expCopyMarkup").addEventListener("click", async () => {
-  if (!await ensureCanDownload()) return;
-  const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
-  $("scrim").hidden = true;
-  await document.fonts.ready;
-  const html = await buildScreensHtml(doc.pages, name, expScale);
-  navigator.clipboard?.writeText(html).then(() => toast("Markup copiado"))
-    .catch(() => toast("Não foi possível copiar — o navegador recusou o clipboard"));
-});
-$("scrim").addEventListener("click", (e) => { if (e.target === $("scrim")) $("scrim").hidden = true; });
+$("expCancel").addEventListener("click", closeExport);
+$("scrim").addEventListener("click", (e) => { if (e.target === $("scrim")) closeExport(); });
 $("scrim").addEventListener("click", (e) => {
-  const f = e.target.closest("[data-fmt]"); if (f) { expFmt = f.dataset.fmt; renderExport(); }
-  const s = e.target.closest("[data-scale]"); if (s) { expScale = +s.dataset.scale; renderExport(); }
+  if (expBusy) return;
+  const sc = e.target.closest("[data-scope]"); if (sc) { expScope = sc.dataset.scope; renderExportScope(); }
 });
 $("expGo").addEventListener("click", doExport);
 
@@ -3262,12 +3660,12 @@ async function drawEl(x: CanvasRenderingContext2D, e: any) {
   }
 }
 
-/** Todas as páginas não-ocultas, renderizadas e empurradas numa página HTML estática só —
- *  usado pela exportação em HTML e por "Copiar markup" (mesmo conteúdo, destino diferente:
- *  arquivo baixado ou clipboard). */
-async function buildScreensHtml(pages: Page[], title: string, scale: number): Promise<string> {
+/** As páginas dadas, renderizadas e empurradas numa página HTML estática só — usado pela
+ *  exportação em HTML do design e de uma versão do histórico. */
+async function buildScreensHtml(pages: Page[], title: string, scale: number, onPage?: (done: number) => void): Promise<string> {
   const imgs = [];
-  for (const p of pages.filter((p) => !p.hidden)) {
+  for (const p of pages) {
+    onPage?.(imgs.length);
     const c = await renderPageCanvas(p, scale);
     imgs.push(`<img src="${c.toDataURL("image/png")}" width="${p.w}" height="${p.h}" style="display:block;max-width:100%;height:auto;margin:0 auto 24px;box-shadow:0 1px 8px rgba(0,0,0,.15)">`);
   }
@@ -3298,9 +3696,15 @@ async function ensureCanDownload(): Promise<boolean> {
 }
 
 async function doExport() {
-  if (!await ensureCanDownload()) return;
+  if (expBusy || !await ensureCanDownload()) return;
   const name = (doc.name || "design").replace(/[^\w \-]/g, "").trim() || "design";
   const saver = downloads ?? { save: browserDownload };
+  const pages = exportPages();
+  const progress = (done: number) => {
+    if (pages.length > 1) $("expGo").textContent = `Gerando ${Math.min(done + 1, pages.length)}/${pages.length}…`;
+  };
+  let saving = expFmt;
+  setExportBusy(true, "Gerando…");
   try {
     await document.fonts.ready;
     if (expFmt === "json") {
@@ -3309,28 +3713,62 @@ async function doExport() {
     }
     if (expFmt === "pdf") {
       const pgs = [];
-      for (const p of doc.pages.filter((p) => !p.hidden)) {
+      for (const p of pages) {
+        progress(pgs.length);
         const c = await renderPageCanvas(p, expScale);
         const b64 = c.toDataURL("image/jpeg", 0.92).split(",")[1];
         pgs.push({ bytes: b64ToBytes(b64), pw: c.width, ph: c.height, w: p.w, h: p.h });
       }
       $("expGo").textContent = "Salvando…";
       await saver.save({ filename: `${name}.pdf`, data: buildPDF(pgs) });
+      toast(pages.length > 1 ? `PDF com ${pages.length} páginas salvo` : "Salvo"); return;
+    }
+    if (expFmt === "html") {
+      // Uma página HTML estática com as telas empilhadas — pra abrir/compartilhar sem
+      // precisar do editor nem de um PDF, um arquivo só por design em vez de um por página.
+      const html = await buildScreensHtml(pages, name, expScale, progress);
+      $("expGo").textContent = "Salvando…";
+      await saver.save({ filename: `${name}.html`, data: html });
       toast("Salvo"); return;
     }
-    const p = page();
-    const c = await renderPageCanvas(p, expScale, { transparent: expTransparent && expFmt === "png" });
     const mime = expFmt === "jpg" ? "image/jpeg" : "image/png";
-    const blob = await new Promise((r) => c.toBlob(r, mime, 0.94));
-    await saver.save({ filename: `${name}-page-${doc.active + 1}.${expFmt}`, data: blob });
-    toast("Salvo");
+    const renderBlob = async (p: Page) => {
+      const c = await renderPageCanvas(p, expScale, { transparent: expTransparent && expFmt === "png" });
+      return new Promise<Blob>((res, rej) => c.toBlob((b) => b ? res(b) : rej(new Error("canvas vazio")), mime, 0.94));
+    };
+    if (pages.length === 1) {
+      const p = pages[0];
+      const blob = await renderBlob(p);
+      await saver.save({ filename: `${name}-page-${doc.pages.indexOf(p) + 1}.${expFmt}`, data: blob });
+      toast("Salvo"); return;
+    }
+    // Várias imagens → um .zip só (como o Canva). Numeração sequencial na ordem exportada,
+    // pra que 01…N seja a ordem de postagem mesmo com páginas ocultas no meio.
+    const pad = Math.max(2, String(pages.length).length);
+    const entries = [];
+    for (const p of pages) {
+      progress(entries.length);
+      const blob = await renderBlob(p);
+      entries.push({ name: `${name}-${String(entries.length + 1).padStart(pad, "0")}.${expFmt}`, data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+    saving = "zip";
+    $("expGo").textContent = "Compactando…";
+    await saver.save({ filename: `${name}.zip`, data: buildZip(entries) });
+    toast(`${pages.length} páginas salvas em ${name}.zip`);
   } catch (err) {
     const code = err?.code;
     if (code === "declined") return;
-    if (code === "extension_not_enabled") { toast("PDF não está habilitado aqui — use PNG ou JPG."); return; }
+    if (code === "extension_not_enabled") {
+      toast(saving === "zip" ? "ZIP não está habilitado aqui — exporte só a página atual ou em PDF."
+        : `${saving.toUpperCase()} não está habilitado aqui — use PNG ou JPG.`);
+      return;
+    }
     if (code === "too_large") { toast("Muito grande — tente uma escala menor."); return; }
     if (code === "rate_limited") { toast("Um download por vez — tente de novo em instantes."); return; }
     toast("Falha ao exportar: " + (err?.message || code || "desconhecido"));
+  } finally {
+    setExportBusy(false);
+    closeExport();
   }
 }
 
@@ -3804,10 +4242,33 @@ $("zoomSlider").addEventListener("input", (ev) => {
   const r = $("stage").getBoundingClientRect();
   zoomAt(r.left + r.width / 2, r.top + r.height / 2, Number(ev.target.value) / 100);
 });
-$("zoomval").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); };
-$("zoomin").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom * 1.2); };
-$("zoomout").onclick = () => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom / 1.2); };
-$("zoomfit").onclick = zoomFit;
+const zoomCenter = (nz: number) => { const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, nz); };
+/** Preencher: a página ocupa a largura (ou altura) inteira do canvas, sem margem. */
+function zoomFill() {
+  const s = $("stage").getBoundingClientRect(); const p = page();
+  if (!s.width || !s.height) return;
+  zoomCenter(Math.max(s.width / p.w, s.height / p.h));
+  scrollToPage(doc.active); applyWorld(); renderOverlay();
+}
+function setZoomMenu(open: boolean) {
+  const m = $("zoomMenu"), b = $("zoomval");
+  m.hidden = !open; b.setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  // A bottombar rola no eixo x, então o menu é fixo na viewport e abre para cima.
+  const r = b.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.left + r.width / 2 - m.offsetWidth / 2)) + "px";
+  m.style.top = Math.max(8, r.top - m.offsetHeight - 6) + "px";
+}
+$("zoomval").onclick = () => setZoomMenu($("zoomMenu").hidden);
+$("zoomMenu").addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest<HTMLElement>("[data-zoom]"); if (!b) return;
+  const z = b.dataset.zoom!;
+  if (z === "fit") zoomFit(); else if (z === "fill") zoomFill(); else zoomCenter(+z);
+  setZoomMenu(false);
+});
+window.addEventListener("pointerdown", (ev) => {
+  if (!$("zoomMenu").hidden && !(ev.target as HTMLElement).closest("#zoomMenu, #zoomval")) setZoomMenu(false);
+}, true);
 $("docname").addEventListener("input", (e) => {
   doc.name = e.target.value;
   // A aba guarda o nome que tinha quando o design foi aberto. Sem isto, renomear deixava a
@@ -3872,8 +4333,8 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "d") { e.preventDefault(); duplicateSel(); return; }
   if (mod && k === "g") { e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
   if (mod && k === "a") { e.preventDefault(); sel = page().els.filter((x) => !x.hidden).map((x) => x.id); renderAll(); return; }
-  if (mod && (k === "=" || k === "+")) { e.preventDefault(); $("zoomin").click(); return; }
-  if (mod && k === "-") { e.preventDefault(); $("zoomout").click(); return; }
+  if (mod && (k === "=" || k === "+")) { e.preventDefault(); zoomCenter(zoom * 1.2); return; }
+  if (mod && k === "-") { e.preventDefault(); zoomCenter(zoom / 1.2); return; }
   if (mod && k === "0") { e.preventDefault(); zoomFit(); return; }
   if (mod && k === "1") { e.preventDefault(); const r = $("stage").getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); return; }
   if (mod && e.key === "]") { e.preventDefault(); order("up"); return; }
@@ -3907,11 +4368,23 @@ window.addEventListener("keyup", (e) => {
 });
 
 let toastTimer;
-function toast(msg) {
+type ToastOpts = { kind?: "ok" | "error" | "info"; action?: { label: string; fn: () => void } };
+const TOAST_ICON = {
+  ok: `<path d="M21.8 10A10 10 0 1 1 17 3.3"/><path d="m9 11 3 3L22 4"/>`,
+  error: `<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>`,
+};
+/** Sem `kind`, adivinha pelo texto: mensagens de falha ganham o ícone de alerta. */
+function toast(msg: string, opts: ToastOpts = {}) {
   const t = $("toast");
-  t.textContent = msg; t.hidden = false;
+  const kind = opts.kind ?? (/^(não|falha|erro|muito grande|um download)/i.test(msg) ? "error" : "info");
+  const icon = kind === "info" ? "" : `<svg class="toasticon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TOAST_ICON[kind]}</svg>`;
+  t.innerHTML = `${icon}<span>${esc(msg)}</span>${opts.action ? `<button class="toastaction" type="button">${esc(opts.action.label)}</button>` : ""}`;
+  t.dataset.kind = kind;
+  t.hidden = false;
+  const act = t.querySelector(".toastaction") as HTMLButtonElement | null;
+  if (act && opts.action) { const fn = opts.action.fn; act.onclick = () => { t.hidden = true; fn(); }; }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
 }
 
 

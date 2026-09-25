@@ -1,8 +1,8 @@
-import { FilePlus2, Loader2 } from "lucide-react";
+import { FilePlus2, FileUp, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { StarterPreview } from "./DocPreview";
-import { STARTERS, closeNewDesign, createFromStarter, useConsole, type Starter } from "./store";
+import { STARTERS, closeNewDesign, goToView, createFromStarter, useConsole, type Starter } from "./store";
 
 function StarterCard({ starter }: { starter: Starter }) {
   const s = useConsole();
@@ -38,15 +38,13 @@ function StarterCard({ starter }: { starter: Starter }) {
         <span className="text-xs leading-relaxed text-faint">{starter.hint}</span>
       </div>
 
-      {/* Os campos são a promessa do produto — é o que a API vai preencher —, então
-          aparecem na escolha, não só depois de abrir o design. */}
-      <div className="flex flex-wrap gap-1">
-        {starter.fields.map((field) => (
-          <span key={field} className="rounded-[5px] bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-            {field}
-          </span>
-        ))}
-      </div>
+      {/* Os campos continuam acessíveis (a API preenche exatamente eles), mas sem
+          ocupar o card de quem só quer desenhar. */}
+      {starter.fields.length > 0 && (
+        <span className="text-[11px] text-faint" title={`Campos: ${starter.fields.join(", ")}`}>
+          {starter.fields.length} {starter.fields.length === 1 ? "campo editável" : "campos editáveis"} pela API
+        </span>
+      )}
     </button>
   );
 }
@@ -58,9 +56,9 @@ export function NewDesignDialog() {
     <Dialog open={s.newDesignOpen} onOpenChange={(open) => !open && closeNewDesign()}>
       <DialogContent className="max-w-[1040px]">
         <div className="flex flex-col gap-1.5 pr-8">
-          <DialogTitle className="text-[17px]">Começar por um modelo</DialogTitle>
+          <DialogTitle className="text-[17px]">Criar um design</DialogTitle>
           <DialogDescription>
-            Cada modelo já vem com as camadas nomeadas — são elas que a API preenche depois.
+            Escolha um formato para começar
           </DialogDescription>
         </div>
 
@@ -74,7 +72,7 @@ export function NewDesignDialog() {
 
         <div className="flex items-center gap-3 border-t border-line pt-4">
           <span className="flex-1 text-xs text-faint">
-            Prefere montar do zero? O canvas em branco continua aí.
+            Prefere montar do zero ou trazer algo pronto?
           </span>
           <button
             type="button"
@@ -84,6 +82,18 @@ export function NewDesignDialog() {
           >
             {s.creating === "blank" ? <Loader2 size={13} className="animate-spin" /> : <FilePlus2 size={13} strokeWidth={1.5} />}
             Começar em branco
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(s.creating)}
+            onClick={() => {
+              closeNewDesign();
+              goToView("import");
+            }}
+            className="flex items-center gap-2 rounded-sm border border-line bg-surface-2 px-3.5 py-2 text-xs text-muted hover:border-line-strong hover:text-text disabled:opacity-50"
+          >
+            <FileUp size={13} strokeWidth={1.5} />
+            Importar PDF do Canva
           </button>
         </div>
       </DialogContent>

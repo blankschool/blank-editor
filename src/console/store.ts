@@ -39,7 +39,7 @@ const DEFAULT_VIEW: View = "designs";
  * Chaves), o que descrevia a API e não o produto. Agora vivem sob Conta, e a
  * navegação marca "Conta" como ativa enquanto qualquer uma delas está aberta.
  */
-export const DEV_VIEWS: View[] = ["playground", "import", "keys"];
+export const DEV_VIEWS: View[] = ["playground", "keys"];
 
 /** Rotas que existiam antes da reorganização, para link antigo e favorito não caírem em 404 silencioso. */
 const VIEW_ALIASES: Record<string, View> = { templates: "designs" };
@@ -69,6 +69,10 @@ export interface State {
    *  de "processando": só existe o request em voo, ou o resultado dele. */
   pdfImportStatus: "idle" | "processando" | "pronto" | "erro";
   pdfImportError: { message: string; codigo?: "achatado" } | null;
+  /** Arquivo em envio/processamento, para o cartão de progresso mostrar nome e tamanho. */
+  pdfImportFile: { name: string; size: number } | null;
+  /** Porcentagem real do upload (0–100); null quando o navegador não informa. */
+  pdfUploadPct: number | null;
   pdfImportResult: { id: string; name: string; pageCount: number; layerCount: number; fontCount: number; flaggedPages: number[]; fontSubstitutions?: Array<{ original: string; replacement: string; reason: string }> } | null;
   tab: "preview" | "response";
   lang: Lang;
@@ -120,12 +124,15 @@ export const state: State = {
   apiKeyLoading: false,
   apiKeyError: null,
   layers: [],
-  collapsed: false,
+  // Em tela de celular o menu começa recolhido — aberto, ele ocupa 240px de 390.
+  collapsed: typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 640px)").matches,
   sort: "Ordem",
   period: "Todos",
   lastAdded: "",
   pdfImportStatus: "idle",
   pdfImportError: null,
+  pdfImportFile: null,
+  pdfUploadPct: null,
   pdfImportResult: null,
   tab: "preview",
   lang: "JavaScript",
@@ -662,26 +669,76 @@ export type { Starter };
  * design. Síncrono como a rota — a chamada só volta quando o design existir ou a extração
  * tiver falhado, sem polling.
  */
+export function isPdfFile(file: File) {
+  return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+}
+
+/** Volta o fluxo de importação ao começo ("Importar outro PDF"). */
+export function resetPdfImport() {
+  state.pdfImportStatus = "idle";
+  state.pdfImportError = null;
+  state.pdfImportResult = null;
+  state.pdfImportFile = null;
+  state.pdfUploadPct = null;
+  notify();
+}
+
+/** Recusa no cliente, antes de enviar: arquivo que não é PDF. */
+export function rejectPdfImport(message: string) {
+  state.pdfImportStatus = "erro";
+  state.pdfImportError = { message };
+  state.pdfImportResult = null;
+  notify();
+}
+
+function postPdf(form: FormData): Promise<{ ok: boolean; body: any }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/imports/pdf");
+    xhr.upload.onprogress = (event) => {
+      state.pdfUploadPct = event.lengthComputable ? Math.round((event.loaded / event.total) * 100) : null;
+      notify();
+    };
+    xhr.onload = () => {
+      let body: any = {};
+      try {
+        body = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        body = {};
+      }
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, body });
+    };
+    xhr.onerror = () => reject(new Error("rede"));
+    xhr.send(form);
+  });
+}
+
 export async function importTemplatePdf(file: File) {
+  if (!isPdfFile(file)) {
+    rejectPdfImport("Esse arquivo não é um PDF.");
+    return;
+  }
   state.pdfImportStatus = "processando";
   state.pdfImportError = null;
   state.pdfImportResult = null;
+  state.pdfImportFile = { name: file.name, size: file.size };
+  state.pdfUploadPct = 0;
   notify();
 
   const form = new FormData();
   form.append("pdf", file);
 
-  let res: Response;
+  let res: { ok: boolean; body: any };
   try {
-    res = await fetch("/api/v1/imports/pdf", { method: "POST", body: form });
+    res = await postPdf(form);
   } catch {
     state.pdfImportStatus = "erro";
-    state.pdfImportError = { message: "Falha de rede ao enviar o PDF." };
+    state.pdfImportError = { message: "Falha de rede ao enviar o PDF. Confira a conexão e tente de novo." };
     notify();
     return;
   }
 
-  const body = await res.json().catch(() => ({}));
+  const body = res.body;
   if (!res.ok) {
     state.pdfImportStatus = "erro";
     state.pdfImportError = {
@@ -697,6 +754,16 @@ export async function importTemplatePdf(file: File) {
   state.pdfImportResult = body;
   state.lastAdded = `PDF importado como o design “${body.name}”.`;
   notify();
+
+  // Sem avisos, o arquivo importado já abre como design (como no Canva). Com avisos,
+  // fica o cartão de resultado para a pessoa revisar antes.
+  const clean = !(body.flaggedPages?.length) && !(body.fontSubstitutions?.length);
+  if (clean && body.id) {
+    await openTemplateById(body.id);
+    resetPdfImport();
+  } else if (state.view !== "import") {
+    goToView("import");
+  }
 }
 
 export function startRenaming(id: string | null) {

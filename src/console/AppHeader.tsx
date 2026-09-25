@@ -1,4 +1,4 @@
-import { LogOut, Settings, UserRound } from "lucide-react";
+import { CircleUserRound, LogOut, UserRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,7 +52,7 @@ export function AppHeader() {
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>{name}</DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => goToView("account")}>
-            <Settings size={16} strokeWidth={1.5} />
+            <CircleUserRound size={16} strokeWidth={1.5} />
             Conta
           </DropdownMenuItem>
           <DropdownMenuSeparator />

@@ -112,12 +112,24 @@
   max-width: none;
   flex: 1 1 200px;
   text-overflow: ellipsis;
-  margin-left: 12px;
+  margin-left: 4px;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 #view-editor .topbar .docname:hover { border-color: #ffffff50; }
 #view-editor .topbar .docname:focus { background: #ffffff15; border-color: white; }
 #view-editor .topbar > .spacer { display: none; }
-#view-editor .savestatus { font-size: 11px; color: #ffffffc7; white-space: nowrap; padding: 0 6px; }
+#view-editor .savestatus { display: inline-flex; align-items: center; gap: 6px; height: 32px; font-size: 11px; color: #ffffffd9; white-space: nowrap; padding: 0 6px; }
+#view-editor .savestatus svg { flex: none; }
+#view-editor .savestatus .spin { animation: savespin 1s linear infinite; }
+@keyframes savespin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #view-editor .savestatus .spin { animation: none; } }
+#view-editor .topbar .tsep { width: 1px; height: 20px; background: rgba(255,255,255,.3); flex: none; margin: 0 4px; }
+#view-editor .topbar .tbtn .chev { margin-left: 2px; opacity: .85; }
+#view-editor .topbar #resizeBtn { display: inline-flex; align-items: center; gap: 6px; }
+#view-editor #undoBtn, #view-editor #redoBtn { width: 32px; height: 32px; }
+#view-editor #undoBtn:disabled, #view-editor #redoBtn:disabled { opacity: .45; }
 #view-editor .savestatus[data-state="error"] { color: #fff; font-weight: 600; }
 #view-editor .dropmenu { color: var(--text); }
 #view-editor .body { position: relative; min-width: 0; }
@@ -189,8 +201,8 @@
 #view-editor .plabel2 { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 #view-editor .plabel2 small { font-size: 12px; font-weight: 400; color: var(--faint); }
 #view-editor .pageminis { gap: 2px; }
-#view-editor .pmini { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--muted); }
-#view-editor .pmini svg { width: 17px; height: 17px; }
+#view-editor .pmini { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--text); }
+#view-editor .pmini svg { width: 16px; height: 16px; }
 #view-editor .pmini:hover:not(:disabled) { background: var(--border); color: var(--text); }
 #view-editor .pmini:disabled { opacity: .3; cursor: default; }
 #view-editor .pagehead.compact .page-secondary { display: none; }
@@ -200,8 +212,9 @@
   font-size: calc(13px * var(--page-unscale, 1));
   border-radius: calc(8px * var(--page-unscale, 1));
   gap: calc(8px * var(--page-unscale, 1));
-  border-style: solid;
+  border: 1px dashed var(--border-strong);
 }
+#view-editor .addpagebtn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 #view-editor .addpagebtn svg { width: calc(18px * var(--page-unscale, 1)); height: calc(18px * var(--page-unscale, 1)); }
 #view-editor .seltoolbar { transform: none; border-radius: 10px; }
 #view-editor .proppop { transform: none; max-width: calc(100% - 24px); max-height: calc(100% - 24px); }
@@ -224,16 +237,17 @@
   scrollbar-width: thin;
 }
 #view-editor .canvas-tools { display: flex; gap: 2px; }
-#view-editor .canvas-hint { font-size: 11px; color: var(--faint); white-space: nowrap; }
 #view-editor .bbtn { height: 32px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
 #view-editor .bbtn.iconbtn { width: 32px; padding: 0; }
 #view-editor .bbtn svg { width: 19px; height: 19px; }
 #view-editor #thumbViewBtn { width: auto; padding: 0 8px; }
-#view-editor #docViewBtn { display: none; }
+#view-editor .bsep { width: 1px; height: 20px; background: var(--border); flex: none; }
+#view-editor .zoommenu { position: fixed; top: auto; left: auto; min-width: 150px; z-index: 70; }
+#view-editor .zoommenu .dropitem { display: flex; align-items: center; }
 #view-editor .zoomctl { gap: 3px; }
 #view-editor .zoomctl button { height: 30px; min-width: 28px; flex-shrink: 0; }
 #view-editor .zoomctl .zoomval { min-width: 45px; font-size: 12px; color: var(--text); }
-#view-editor #zoomSlider { width: 100px; height: 20px; margin: 0 5px; cursor: pointer; }
+#view-editor #zoomSlider { width: 120px; height: 20px; margin: 0 5px; cursor: pointer; }
 #view-editor .thumbstrip {
   position: relative;
   inset: auto;
@@ -263,7 +277,6 @@
 
 /* Container queries also cover editors embedded in a narrow app/browser panel. */
 @container (max-width: 1200px) {
-  #view-editor .canvas-hint { display: none; }
 }
 @container (max-width: 960px) {
   #view-editor .panel { width: 240px; }
@@ -287,7 +300,6 @@
   #view-editor .topbar .docname { min-width: 40px; }
   #view-editor #undoBtn, #view-editor #redoBtn { width: 28px; min-width: 28px; }
   #view-editor .canvas-tools { display: none; }
-  #view-editor #zoomfit { padding: 0 4px; }
   #view-editor .zoomctl { gap: 0; }
   #view-editor .zoomctl button { min-width: 24px; }
   #view-editor .zoomctl .zoomval { min-width: 40px; }
@@ -338,3 +350,68 @@
 .review-status[data-state="pending"] { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); background:var(--accent-soft); }
 .review-status[data-state="approved"] { color:#23a26d; border-color:color-mix(in srgb, #23a26d 45%, var(--line)); background:color-mix(in srgb, #23a26d 10%, transparent); }
 .review-status[data-state="changes_requested"], .review-status[data-state="rejected"] { color:var(--danger); }
+
+/* Painéis laterais: tiles padronizados (grid3, 88px, ícone de contorno 36px, rótulo 11.5px). */
+#view-editor .ptiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 4px; }
+#view-editor .ptiles .tile { height: 88px; min-width: 0; gap: 8px; font-size: 11.5px; padding: 0 4px; }
+#view-editor .ptiles .tile span { max-width: 100%; text-align: center; line-height: 1.2; overflow-wrap: anywhere; }
+#view-editor .ptiles + .sec { margin-top: 14px; }
+#view-editor .ptiles .tile svg { width: 36px; height: 36px; }
+#view-editor .ptiles .tile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+#view-editor .sizetile { height: 52px; gap: 2px; font-size: 11.5px; }
+#view-editor .sizetile .num { font-size: 10.5px; color: var(--faint); }
+#view-editor .colorfield { display: flex; align-items: center; gap: 8px; }
+#view-editor .colorfield .hexval { font-size: 11.5px; color: var(--muted); letter-spacing: .02em; }
+#view-editor #panel .sec h4 { display: flex; align-items: center; justify-content: space-between; }
+#view-editor #panel .pval { font-size: 11px; color: var(--muted); font-weight: 500; }
+#view-editor #panel input[type="range"] { width: 100%; }
+#view-editor .pdraw { width: 100%; height: 40px; margin-top: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+#view-editor #panel .fontsearch { margin-bottom: 12px; }
+
+/* Toolbar rolável no celular: fade nas bordas indica que há mais controles. */
+#view-editor .toolbar.is-scroll-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent); }
+#view-editor .toolbar.is-scroll-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px); mask-image: linear-gradient(90deg, transparent, #000 36px); }
+#view-editor .toolbar.is-scroll-l.is-scroll-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(90deg, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
+@media (pointer: coarse) { #view-editor .toolbar { scrollbar-width: none; -webkit-overflow-scrolling: touch; } }
+
+/* Menu de contexto com ícones à esquerda. */
+.ctxicon { flex: none; color: var(--muted); }
+.ctxitem.danger .ctxicon { color: currentColor; }
+.ctxitem:disabled .ctxicon { opacity: .5; }
+
+/* Toast com ícone de tipo e ação (ex.: Desfazer). */
+.toast { display: flex; align-items: center; gap: 10px; bottom: 64px; }
+.toast .toasticon { flex: none; }
+.toast[data-kind="ok"] .toasticon { color: #4ade80; }
+.toast[data-kind="error"] .toasticon { color: #f87171; }
+.toast .toastaction { color: inherit; font-weight: 700; font-size: 12px; padding: 2px 6px; margin-left: 4px; border-radius: 6px; text-decoration: underline; text-underline-offset: 2px; }
+.toast .toastaction:hover { background: rgba(127,127,127,.25); }
+
+/* Exportar como painel ancorado sob o botão, como o "Baixar" do Canva. */
+#scrim { background: transparent; place-items: start end; padding: 56px 16px 16px; }
+#scrim .expmodal { width: 360px; }
+.expselect { width: 100%; height: 36px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 0 10px; background: var(--surface); color: var(--text); font-size: 13px; }
+#scrim #scales { width: 100%; }
+.modal.busy .expselect, .modal.busy #scales { pointer-events: none; opacity: .55; }
+
+/* rail: ícones maiores + pílula ativa */
+#view-editor .railbtn { gap: 4px; font-size: 10.5px; font-weight: 600; }
+#view-editor .railbtn svg { width: 22px; height: 22px; padding: 4px 10px; box-sizing: content-box; border-radius: 10px; }
+#view-editor .railbtn[aria-pressed="true"] { background: transparent; color: var(--accent); }
+#view-editor .railbtn[aria-pressed="true"] svg { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* Organizar em 2x2 */
+#view-editor .order-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* Avançados: rótulos + unidade + trava de proporção */
+#view-editor .adv-grid { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 6px; align-items: center; }
+#view-editor .adv-grid .field { position: relative; }
+#view-editor .adv-grid .field label { min-width: auto; padding-right: 4px; }
+#view-editor .adv-grid .unit { font-size: 11px; color: var(--faint); padding-right: 8px; }
+#view-editor .ratiolock { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--muted, var(--faint)); }
+#view-editor .ratiolock[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+/* Camadas: filtro + ações só no hover, exceto bloqueada/oculta */
+#view-editor .layer-filter { display: flex; gap: 6px; margin: 0 0 8px; }
+#view-editor .layer-filter .chip { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; background: transparent; color: var(--text); }
+#view-editor .layer-filter .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+#view-editor .layer .mini { opacity: 0; }
+#view-editor .layer:hover .mini, #view-editor .layer:focus-within .mini, #view-editor .layer .mini.on { opacity: 1; }
+#view-editor .lrename { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--accent); border-radius: 5px; }

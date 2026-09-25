@@ -1,5 +1,4 @@
-import { ChevronLeft, ChevronRight, FileDown, KeyRound, LogOut, TerminalSquare } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ChevronLeft, ChevronRight, KeyRound, LogOut, TerminalSquare } from "lucide-react";
 import { navigate } from "../router";
 import { clearSession, initials, useSession } from "../session";
 import { goToView, useConsole, type View } from "./store";
@@ -18,12 +17,6 @@ const DEV_ENTRIES: ReadonlyArray<{
     icon: TerminalSquare,
   },
   {
-    view: "import",
-    label: "Importar PDF",
-    hint: "Enviar um PDF exportado do Canva e receber um design editável.",
-    icon: FileDown,
-  },
-  {
     view: "keys",
     label: "Chaves de API",
     hint: "Criar e revogar as chaves que autorizam o render.",
@@ -32,7 +25,7 @@ const DEV_ENTRIES: ReadonlyArray<{
 ];
 
 /**
- * Cabeçalho das três telas de desenvolvedor. Elas saíram do menu principal, então
+ * Cabeçalho das duas telas de desenvolvedor. Elas saíram do menu principal, então
  * precisam dizer de onde vieram e como voltar — sem isso, playground e chaves
  * ficariam acessíveis só por URL, sem contexto na tela.
  */
@@ -81,9 +74,9 @@ export function AccountView() {
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[11px] uppercase tracking-[0.08em] text-faint">Desenvolvedor</h2>
-          <span className="text-xs leading-relaxed text-faint">
-            O que os designs viram do lado da API. Você não precisa disso para desenhar.
+          <h2 className="text-[13px] font-semibold text-text">Integração via API</h2>
+          <span className="text-xs leading-relaxed text-muted">
+            Gere imagens dos seus designs por código: teste chamadas e gerencie as chaves.
           </span>
         </div>
 
@@ -113,21 +106,16 @@ export function AccountView() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 rounded-lg border border-line px-4 py-3.5">
-        <span className="flex-1 text-xs text-faint">
-          Sair encerra a sessão deste navegador e devolve à tela de login.
-        </span>
-        <Button
-          variant="dangerGhost"
-          size="md"
-          onClick={() => {
-            void clearSession().then(() => navigate("login"));
-          }}
-        >
-          <LogOut size={14} strokeWidth={1.5} />
-          Sair
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={() => {
+          void clearSession().then(() => navigate("login"));
+        }}
+        className="flex items-center gap-1.5 self-start rounded-sm px-1 py-1 text-xs text-faint hover:text-danger"
+      >
+        <LogOut size={13} strokeWidth={1.6} />
+        Sair desta conta
+      </button>
     </div>
   );
 }
