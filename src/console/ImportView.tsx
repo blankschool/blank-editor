@@ -26,9 +26,9 @@ const STEPS = ["Enviando", "Lendo páginas", "Reconstruindo textos e fontes", "C
 function ExportSteps() {
   const chips = ["Compartilhar", "Baixar", "Tipo de arquivo: PDF para impressão"];
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="flex flex-col items-center gap-2.5 text-center">
       <span className="text-xs font-medium text-muted">Como exportar do Canva</span>
-      <ol className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
+      <ol className="m-0 flex list-none flex-wrap items-center justify-center gap-1.5 p-0">
         {chips.map((chip, index) => (
           <li key={chip} className="flex items-center gap-1.5">
             {index > 0 && <ChevronRight size={12} strokeWidth={1.8} className="text-faint" aria-hidden />}
@@ -39,7 +39,7 @@ function ExportSteps() {
           </li>
         ))}
       </ol>
-      <span className="flex items-start gap-1.5 text-xs leading-relaxed text-faint">
+      <span className="flex items-start justify-center gap-1.5 text-xs leading-relaxed text-faint">
         <Info size={14} strokeWidth={1.8} className="mt-px flex-none" aria-hidden />
         Não use PDF Padrão: as páginas saem como imagem e o texto deixa de ser editável.
       </span>
@@ -67,18 +67,21 @@ function DropZone({ onPick }: { onPick: () => void }) {
         onPick();
       }}
       className={cn(
-        "flex min-h-[220px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-line px-6 py-8 text-center transition-colors hover:border-line-strong",
+        "flex min-h-[280px] w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed border-line bg-surface-2/40 px-6 py-10 text-center transition-colors hover:border-accent/60 hover:bg-accent-soft/40",
         over && "border-accent bg-accent-soft",
       )}
     >
-      <FileUp size={32} strokeWidth={1.6} className={over ? "text-accent" : "text-muted"} aria-hidden />
+      <span className={cn("grid size-16 place-items-center rounded-full bg-accent-soft", over && "scale-105")}>
+        <FileUp size={30} strokeWidth={1.6} className="text-accent" aria-hidden />
+      </span>
       <div className="flex flex-col gap-1">
-        <span className="font-display text-[15px] font-semibold">Arraste seu PDF aqui</span>
-        <span className="text-xs text-faint">ou clique para escolher um arquivo · até 50 MB</span>
+        <span className="font-display text-[17px] font-semibold">Arraste seu PDF aqui</span>
+        <span className="text-xs text-faint">ou</span>
       </div>
-      <Button size="lg" type="button" tabIndex={-1} className="pointer-events-none">
+      <Button size="lg" type="button" tabIndex={-1} className="pointer-events-none px-6">
         Escolher PDF
       </Button>
+      <span className="text-xs text-faint">Até 50 MB</span>
     </label>
   );
 }
@@ -234,20 +237,21 @@ export function ImportView() {
   const pick = () => fileInput.current?.click();
 
   return (
-    <div className="flex max-w-[640px] flex-col gap-5 p-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => goToView("designs")}
-          className="flex items-center gap-1 rounded-sm py-1 pl-1 pr-2 text-xs text-faint hover:bg-surface-2 hover:text-text"
-        >
-          <ChevronLeft size={14} strokeWidth={1.6} />
-          Designs
-        </button>
-        <span aria-hidden className="text-faint">
-          /
-        </span>
-        <h1 className="font-display text-[15px] font-semibold -tracking-[0.01em]">Importar PDF</h1>
+    // Layout decidido com o Jev: coluna de 720px centralizada (horizontal e vertical no
+    // desktop), título + subtítulo, área de soltar grande, e os passos do Canva embaixo.
+    <div className="relative flex min-h-full w-full flex-col p-5 md:px-8 md:py-6">
+      <button
+        type="button"
+        onClick={() => goToView("designs")}
+        className="flex items-center gap-1 self-start rounded-sm py-1 pl-1 pr-2 text-xs text-faint hover:bg-surface-2 hover:text-text"
+      >
+        <ChevronLeft size={14} strokeWidth={1.6} />
+        Voltar para designs
+      </button>
+      <div className="mx-auto flex w-full max-w-[720px] flex-1 flex-col justify-center gap-6 py-6 md:py-10">
+      <div className="flex flex-col items-center gap-1.5 text-center">
+        <h1 className="font-display text-[26px] font-semibold -tracking-[0.02em] md:text-[30px]">Importe seu design do Canva</h1>
+        <p className="m-0 text-sm text-muted">Envie o PDF e edite tudo aqui: textos, fontes e imagens.</p>
       </div>
 
       <input
@@ -268,11 +272,12 @@ export function ImportView() {
         <Result />
       ) : (
         <>
-          <ExportSteps />
           <ErrorBlock onPick={pick} />
           <DropZone onPick={pick} />
+          <ExportSteps />
         </>
       )}
+      </div>
     </div>
   );
 }
