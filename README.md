@@ -260,12 +260,11 @@ atual para `draft`, bloqueia seu download e preserva a versão aprovada anterior
 estático, o servidor precisa de Node + Postgres. Veja `server/Dockerfile` e
 `server/.env.example`.
 
-Em produção (`renderapi.blankbr.com`) os dois vivem em lugares
-diferentes, e vale saber qual é qual antes de deployar:
+Em produção, os dois serviços vivem no projeto Railway `blank-editor-server`:
 
 | parte | onde roda | como publica |
 | --- | --- | --- |
-| frontend | serviço Docker Swarm `blank-editor-frontend` no VPS, roteado por um arquivo Traefik à mão, imagem taggeada pelo commit | `ssh painel-vps 'cd /root/blank-editor && deploy/frontend/deploy.sh'` |
-| API | serviço EasyPanel `sites_blank-editor-api-v2` (projeto `sites`), build do path `/server` | painel do EasyPanel — `autoDeploy` está desligado |
+| frontend | serviço Railway `blank-editor-frontend`, domínio `render.blankbr.com` | `railway up --service blank-editor-frontend --environment production --detach` |
+| API | serviço Railway `blank-editor-server`, domínio `renderapi.blankbr.com` | `railway up --service blank-editor-server --environment production --detach` |
 
-O `Dockerfile` e o `nginx.conf` do frontend estão em `deploy/frontend/`.
+O deploy lê o commit enviado ao GitHub. Depois de publicar, acompanhe o deployment até `SUCCESS` com `railway deployment list`.
