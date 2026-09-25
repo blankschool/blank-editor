@@ -189,6 +189,11 @@ def _letter_spacing(spans, avanco_natural):
         return 0.0
     ls = median(diffs)
     tam = max(s["size"] for s in spans)
+    # Tracking real do Canva fica bem abaixo de 0.2em; acima disso o avanço "natural" veio de
+    # métricas que não batem com o glifo (visto em produção: 0.58em num título sem tracking),
+    # e aplicar faria a linha estourar a caixa e quebrar.
+    if abs(ls) > 0.2 * tam:
+        return 0.0
     return ls if abs(ls) > 0.01 * tam else 0.0
 
 

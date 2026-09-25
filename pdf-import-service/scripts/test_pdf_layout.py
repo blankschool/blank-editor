@@ -66,6 +66,10 @@ class Layout(unittest.TestCase):
         s = span("abcdef", 0, 50, seqno=1, adv=0.6)  # natural 0.5 -> +0.1*20 = 2pt por letra
         self.assertAlmostEqual(extrair([s])[0]["ls"], 2.0, places=2)
 
+    def test_letter_spacing_implausivel_descartado(self):
+        s = span("abcdef", 0, 50, seqno=1, adv=1.2)  # +0.7em: métrica errada, não tracking
+        self.assertEqual(extrair([s])[0]["ls"], 0.0)
+
     def test_rotacao_horaria_e_centro_preservado(self):
         ang = math.radians(-30)
         el = extrair([span("Titulo", 100, 300, seqno=1, ang=ang)])[0]
