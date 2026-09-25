@@ -472,7 +472,11 @@ export async function upsertFontFace(sql: Sql, input: FontFaceInput): Promise<Fo
       ${input.postscriptName ?? null}, ${input.weight}, ${input.style}, ${input.stretch ?? null},
       ${input.os2FsType ?? null}, ${input.sfntPath}, ${input.woff2Path}
     )
-    on conflict (owner_id, sha256) do update set sfnt_path = excluded.sfnt_path
+    -- Reenviar o mesmo arquivo corrige família/peso/estilo (antes só o caminho mudava, e um nome
+    -- lido errado numa versão antiga ficava para sempre).
+    on conflict (owner_id, sha256) do update set
+      sfnt_path = excluded.sfnt_path, woff2_path = excluded.woff2_path,
+      internal_family = excluded.internal_family, weight = excluded.weight, style = excluded.style
     returning ${sql.unsafe(FONT_FACE_COLUMNS)}
   `;
   return rows[0];

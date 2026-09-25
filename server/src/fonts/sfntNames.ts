@@ -61,23 +61,46 @@ export function readFamilyNames(bytes: Buffer): string[] {
   return [...nomes];
 }
 
-const STYLE_WORDS = /[\s-]+(?:Thin|Hairline|ExtraLight|Extra Light|UltraLight|Light|Book|Regular|Normal|Medium|SemiBold|Semi Bold|DemiBold|Demi|Bold|ExtraBold|Extra Bold|UltraBold|Black|Heavy|Italic|Oblique)$/i;
+// Palavra de estilo no fim do nome -> o que ela significa. Só é cortada do nome da família quando
+// o próprio arquivo (OS/2) confirma: "Arial Rounded MT Bold" declara peso 400, então "Bold" ali é
+// parte do nome; "Noto Sans Old Italic" não é itálico (é o nome de uma escrita).
+const STYLE_WORD_WEIGHT: Array<[RegExp, number | "italic"]> = [
+  [/[\s-]+(?:Hairline|Thin)$/i, 100], [/[\s-]+(?:ExtraLight|Extra Light|UltraLight|Ultra Light)$/i, 200],
+  [/[\s-]+Light$/i, 300], [/[\s-]+(?:Regular|Normal|Book|Roman)$/i, 400], [/[\s-]+Medium$/i, 500],
+  [/[\s-]+(?:SemiBold|Semi Bold|DemiBold|Demi Bold|Demi)$/i, 600], [/[\s-]+(?:ExtraBold|Extra Bold|UltraBold|Ultra Bold)$/i, 800],
+  [/[\s-]+Bold$/i, 700], [/[\s-]+(?:Black|Heavy)$/i, 900], [/[\s-]+(?:Italic|Oblique)$/i, "italic"],
+];
 
-/** Nome da FAMÍLIA para agrupar os pesos: o "Typographic Family" (nameID 16) quando o arquivo
- *  tem, senão o nameID 1 sem o estilo no fim. Sem isso, "New Spirit Bold" (nameID 1 de muitas
- *  fontes comerciais) virava uma família separada de "New Spirit", e subir o Regular depois nunca
- *  completava o Bold. */
+/** Nome da FAMÍLIA para agrupar os pesos. Ordem (OpenType `name`): WWS family (21), typographic
+ *  family (16), e por último family (1) sem o estilo no fim — só quando o OS/2 confirma que o
+ *  estilo é mesmo esse. Sem isso "New Spirit Bold" (nameID 1 de muitas fontes comerciais) virava
+ *  uma família separada de "New Spirit", e subir o Regular depois nunca completava o Bold. */
 export function preferredFamilyName(bytes: Buffer): string | undefined {
   const nomes = readFamilyNamesById(bytes);
+  if (nomes.wws) return nomes.wws;
   if (nomes.typographic) return nomes.typographic;
   let nome = nomes.family;
   if (!nome) return undefined;
-  for (let i = 0; i < 3 && STYLE_WORDS.test(nome); i++) nome = nome.replace(STYLE_WORDS, "");
+  const { weight, italic } = readOs2WeightAndItalic(bytes);
+  const w = normalizeWeight(weight);
+  for (let i = 0; i < 3; i++) {
+    const hit = STYLE_WORD_WEIGHT.find(([re, v]) => re.test(nome!) && (v === "italic" ? italic : w !== null && Math.abs(v - w) <= 50));
+    if (!hit) break;
+    nome = nome.replace(hit[0], "");
+  }
   return nome || nomes.family;
 }
 
-function readFamilyNamesById(bytes: Buffer): { family?: string; typographic?: string } {
-  const out: { family?: string; typographic?: string } = {};
+/** usWeightClass: fontes antigas usam a escala 1–9 (5 = 500). Fora de 1–1000 = desconhecido. */
+export function normalizeWeight(weight: number | null): number | null {
+  if (weight === null || !Number.isFinite(weight)) return null;
+  if (weight >= 1 && weight <= 9) return weight * 100;
+  if (weight < 1 || weight > 1000) return null;
+  return weight;
+}
+
+function readFamilyNamesById(bytes: Buffer): { family?: string; typographic?: string; wws?: string } {
+  const out: { family?: string; typographic?: string; wws?: string } = {};
   if (bytes.length < 12 || bytes.toString("latin1", 0, 4) === "ttcf") return out;
   const numTables = bytes.readUInt16BE(4);
   let nameOffset = 0;
@@ -93,13 +116,15 @@ function readFamilyNamesById(bytes: Buffer): { family?: string; typographic?: st
     const rec = nameOffset + 6 + i * 12;
     if (rec + 12 > bytes.length) break;
     const nameId = bytes.readUInt16BE(rec + 6);
-    if (nameId !== NAME_ID_FAMILY && nameId !== NAME_ID_TYPOGRAPHIC_FAMILY) continue;
+    if (nameId !== NAME_ID_FAMILY && nameId !== NAME_ID_TYPOGRAPHIC_FAMILY && nameId !== 21) continue;
     const length = bytes.readUInt16BE(rec + 8);
     const offset = stringOffset + bytes.readUInt16BE(rec + 10);
     if (offset + length > bytes.length) continue;
     const valor = decodeName(bytes.subarray(offset, offset + length), bytes.readUInt16BE(rec)).replace(/\0/g, "").trim();
     if (!valor) continue;
-    if (nameId === NAME_ID_TYPOGRAPHIC_FAMILY) out.typographic ??= valor; else out.family ??= valor;
+    if (nameId === NAME_ID_TYPOGRAPHIC_FAMILY) out.typographic ??= valor;
+    else if (nameId === 21) out.wws ??= valor;
+    else out.family ??= valor;
   }
   return out;
 }

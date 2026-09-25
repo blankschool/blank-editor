@@ -12,7 +12,7 @@ import { buildZip } from "./zip";
 import type { Doc, DocFont, El, Page } from "./types";
 import { cropToBackgroundStyle, cropToSourceRect } from "./imageCrop";
 import { copyStyle, distribute, pasteStyle, toggleBullets, type CopiedStyle } from "./editorActions.ts";
-import { applyFontToOriginal, familyKey, missingPdfFonts, missingWeights } from "./missingFonts.ts";
+import { applyFontToOriginal, familyKey, missingPdfFonts, missingWeights, weightLabel } from "./missingFonts.ts";
 import { applyStyleToRange, rangeEvery, runsFromPieces, type StyleOverride } from "./richText";
 import { createTweetTemplateDocument, TWEET_TEMPLATE_ID } from "./tweetTemplateDoc";
 import {
@@ -2274,7 +2274,7 @@ async function importarFonte(file: File, forOriginal: string | null = null, asFa
     const res = await fetch("/api/v1/fonts/upload", { method: "POST", body: form, credentials: "include" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      toast(body.error || `Não foi possível importar ${file.name}.`);
+      toast(body.error ? `${file.name}: ${body.error}` : `Não conseguimos enviar ${file.name}. Tente de novo.`);
       return;
     }
     const raw: RegisteredFontFace = await res.json();
@@ -2286,7 +2286,7 @@ async function importarFonte(file: File, forOriginal: string | null = null, asFa
     }
     doc.fonts = [...(doc.fonts ?? []).filter(f => f.sha256 !== face.sha256), face];
     try { await loadDesignFonts(doc); }
-    catch { toast("Fonte salva, mas não foi possível carregá-la agora."); }
+    catch { toast("A fonte foi salva, mas o navegador não conseguiu abri-la agora. Recarregue a página."); }
     if (doc !== target) return;
     const pedida = forOriginal;
     if (pedida) {
@@ -2298,9 +2298,9 @@ async function importarFonte(file: File, forOriginal: string | null = null, asFa
     }
     renderFontList();
     renderToolbar();
-    toast(`Fonte "${fontLabel(face.family)}" importada.`);
+    toast(`Fonte ${fontLabel(face.family)} ${weightLabel(face.weight, /italic/i.test(face.style || ""))} adicionada.`);
   } catch {
-    toast(`Não foi possível importar ${file.name}.`);
+    toast(`Não conseguimos enviar ${file.name}. Verifique a conexão e tente de novo.`);
   } finally {
     fontUploadBusy = false;
     renderPanel();
@@ -2428,8 +2428,8 @@ function renderPanel() {
   if (activeTab === "fonts") {
     ensureFontCatalogLoaded();
     el.innerHTML = `<h4 class="ptitle" title="Clique numa fonte para aplicar ao texto selecionado">Fontes</h4>
-      <button class="dropzone" id="pickFont" aria-busy="${fontUploadBusy}" title="Importar um arquivo .ttf ou .otf">
-        ${fontUploadBusy ? "Importando…" : "Importar fonte (.ttf/.otf)…"}</button>
+      <button class="dropzone" id="pickFont" aria-busy="${fontUploadBusy}" title="Enviar arquivos de fonte (.ttf, .otf, .woff, .woff2) — dá para escolher vários">
+        ${fontUploadBusy ? "Enviando…" : "Enviar fonte…"}</button>
       <input class="fontsearch" id="fontSearch" type="search" placeholder="Buscar fonte…" aria-label="Buscar fonte" value="${esc(fontQuery)}">
       <div class="fontcats">${[{ id: null, label: "Todas" }, ...FONT_CATEGORIES].map((c) => `
         <button class="fontcat" data-fontcat="${c.id ?? ""}" aria-pressed="${fontCategory === c.id}">${c.label}</button>`).join("")}</div>
@@ -4210,7 +4210,7 @@ $("fileFont").addEventListener("change", async (ev) => {
   const familia = weightsTarget;
   missingFontTarget = null; weightsTarget = null;
   for (const file of files) {
-    if (!/\.(ttf|otf)$/i.test(file.name)) { toast(`${file.name}: envie um arquivo .ttf ou .otf.`); continue; }
+    if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) { toast(`${file.name} não é um arquivo de fonte. Use .ttf, .otf, .woff ou .woff2.`); continue; }
     if (file.size > 20_000_000) { toast(`${file.name} é grande demais (máximo 20 MB).`); continue; }
     await importarFonte(file, pedida, familia);
   }
@@ -4469,7 +4469,7 @@ function renderMissingWeights(bar: HTMLElement) {
   bar.className = "fontMissing";
   bar.innerHTML = fmCard({
     title: `Quase lá! Falta ${arquivos.length === 1 ? "um arquivo" : `${arquivos.length} arquivos`} da fonte`,
-    text: `Parte do texto usa ${arquivos.length === 1 ? "este estilo" : "estes estilos"}. Envie o arquivo .ttf ou .otf — dá para selecionar vários de uma vez.`,
+    text: `Parte do texto usa ${arquivos.length === 1 ? "este estilo" : "estes estilos"}. Envie o arquivo da fonte — dá para selecionar vários de uma vez.`,
     chips: arquivos,
     action: `<button class="fm-add" data-fm-weights="${esc(m.family)}">Enviar arquivo${arquivos.length > 1 ? "s" : ""}</button>`,
     later: "data-fm-later-weights",

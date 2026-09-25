@@ -53,8 +53,14 @@ export async function loadDesignFonts(doc: Doc): Promise<void> {
     document.fonts.add(face);
     loaded.add(id);
   }));
-  // Keep subset precedence identical to the API's ordered @font-face declarations.
-  for (const font of doc.fonts ?? []) await loadOne(font);
+  // Keep subset precedence identical to the API's ordered @font-face declarations. Uma face
+  // quebrada não impede as outras de carregar (antes a primeira falha abortava o resto do
+  // design); o erro só é relatado depois de tentar todas.
+  const failed: string[] = [];
+  for (const font of doc.fonts ?? []) {
+    try { await loadOne(font); } catch { failed.push(font.family); }
+  }
+  if (failed.length) throw new Error(`Nao foi possivel carregar: ${[...new Set(failed)].join(", ")}.`);
 }
 
 /**

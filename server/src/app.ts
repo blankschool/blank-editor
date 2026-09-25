@@ -9,7 +9,8 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractBearerToken, hashApiKey } from "./auth.ts";
-import { familyMatchesFile, preferredFamilyName, readFamilyNames, readOs2WeightAndItalic } from "./fonts/sfntNames.ts";
+import { familyMatchesFile } from "./fonts/sfntNames.ts";
+import { ACCEPTED_FONT_EXT, FontUploadError, faceMetadata, toSfnt } from "./fonts/fontUpload.ts";
 import { compress as woff2Compress } from "wawoff2";
 import { parseLayers, type Layers } from "./render/layers.ts";
 import { DEFAULT_FONT_FAMILY, pageCount, resolvePageIndex } from "./render/editableTweetTemplate.ts";
@@ -1323,31 +1324,29 @@ export function buildApp(
         campos[part.fieldname] = part.value;
       }
     }
-    if (!arquivo) return reply.code(400).send({ error: "envie o arquivo da fonte no campo 'font'" });
-    if (!/\.(ttf|otf)$/i.test(arquivo.filename)) {
-      return reply.code(400).send({ error: "envie um arquivo .ttf ou .otf" });
+    if (!arquivo) return reply.code(400).send({ error: "Escolha um arquivo de fonte para enviar." });
+    if (!ACCEPTED_FONT_EXT.test(arquivo.filename)) {
+      return reply.code(400).send({ error: "Envie um arquivo de fonte .ttf, .otf, .woff ou .woff2." });
     }
-
-    const nomesNoArquivo = readFamilyNames(arquivo.bytes);
-    const internalFamily = (campos.family || "").trim() || preferredFamilyName(arquivo.bytes) || nomesNoArquivo[0];
-    if (!internalFamily) {
-      return reply.code(400).send({
-        error: "não foi possível ler o nome da família no arquivo; informe o campo 'family'",
-      });
+    let sfnt: Buffer, ext: "ttf" | "otf", meta;
+    try {
+      ({ sfnt, ext } = await toSfnt(arquivo.bytes));
+      meta = faceMetadata(sfnt, { family: campos.family, weight: campos.weight, style: campos.style });
+    } catch (err) {
+      if (err instanceof FontUploadError) return reply.code(400).send({ error: err.message });
+      throw err;
     }
-    const detectado = readOs2WeightAndItalic(arquivo.bytes);
-    const weight = campos.weight ? Number(campos.weight) : (detectado.weight ?? 400);
-    if (!Number.isFinite(weight)) return reply.code(400).send({ error: "'weight' inválido" });
-    const style = campos.style || (detectado.italic ? "Italic" : "Regular");
+    let woff2Bytes: Buffer;
+    try { woff2Bytes = Buffer.from(await woff2Compress(sfnt)); }
+    catch { return reply.code(400).send({ error: "Não conseguimos preparar essa fonte para o navegador. Tente outro arquivo da mesma fonte." }); }
 
-    const sha256 = createHash("sha256").update(arquivo.bytes).digest("hex");
-    const ext = arquivo.filename.toLowerCase().endsWith(".otf") ? "otf" : "ttf";
-    const woff2Bytes = Buffer.from(await woff2Compress(arquivo.bytes));
-    const { sfntPath, woff2Path } = await uploadFontFace(
-      storage.client, sha256, { ext, bytes: arquivo.bytes }, woff2Bytes);
+    // sha256 dos bytes SFNT (não do .woff enviado): o mesmo arquivo em formatos diferentes é a
+    // mesma face.
+    const sha256 = createHash("sha256").update(sfnt).digest("hex");
+    const { sfntPath, woff2Path } = await uploadFontFace(storage.client, sha256, { ext, bytes: sfnt }, woff2Bytes);
     const face = await deps.upsertFontFace({
-      id: randomUUID(), ownerId, sha256, internalFamily,
-      postscriptName: null, weight, style,
+      id: randomUUID(), ownerId, sha256, internalFamily: meta.family,
+      postscriptName: null, weight: meta.weight, style: meta.style,
       stretch: null, os2FsType: null,
       sfntPath, woff2Path,
     });
